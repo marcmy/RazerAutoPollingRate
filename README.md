@@ -79,17 +79,19 @@ Valid polling rates:
 125 250 500 1000 2000 4000 8000
 ```
 
-Example:
+Example config:
 
 ```text
-# Generic Apex DX12 rule
-r5apex_dx12.exe 2000
-
-# Specific Steam Apex DX12 install path wins over the generic rule
+# Apex Legends
+r5apex.exe 1000
+r5apex_dx12.exe 4000
 "C:\Program Files (x86)\Steam\steamapps\common\Apex Legends\r5apex_dx12.exe" 4000
 
-# Quake Live
-quake_live_x64.exe 1000
+# Counter-Strike
+cs2.exe 4000
+
+# Arc Raiders
+"C:\Program Files (x86)\Steam\steamapps\common\Arc Raiders\PioneerGame.exe" 1000
 ```
 
 Matching rules:
