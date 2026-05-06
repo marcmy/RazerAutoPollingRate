@@ -48,12 +48,15 @@ Example config:
 
 ```text
 # Apex Legends
-r5apex.exe 4000
-r5apex_dx12.exe 2000
+r5apex.exe 1000
+r5apex_dx12.exe 4000
 "C:\Program Files (x86)\Steam\steamapps\common\Apex Legends\r5apex_dx12.exe" 4000
 
 # Counter-Strike
 cs2.exe 4000
+
+# Arc Raiders
+"C:\Program Files (x86)\Steam\steamapps\common\Arc Raiders\PioneerGame.exe" 1000
 ```
 
 Blank lines are allowed. Comments beginning with `#` are allowed. Extra spaces and tabs are allowed. Full paths containing spaces must be quoted. Invalid entries are ignored and logged instead of silently becoming `undefined` or falling back to 500 Hz.
