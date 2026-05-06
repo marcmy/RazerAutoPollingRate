@@ -12,10 +12,10 @@ jobs:
   test:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm test
@@ -24,10 +24,10 @@ jobs:
     runs-on: windows-latest
     needs: test
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run make
@@ -40,7 +40,7 @@ jobs:
               $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName
               "$($hash.Hash.ToLower())  $($_.FullName.Substring((Resolve-Path out/make).Path.Length + 1).Replace('\', '/'))"
             } | Set-Content -Encoding ASCII SHA256SUMS.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: windows-x64-artifacts
           path: |

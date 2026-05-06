@@ -7,7 +7,7 @@
   "description": "Automatically adjust polling rate",
   "scripts": {
     "start": "electron-forge start",
-    "test": "node --test test/*.test.js",
+    "test": "node --test \"test/**/*.test.js\"",
     "package": "electron-forge package",
     "make": "electron-forge make"
   },
