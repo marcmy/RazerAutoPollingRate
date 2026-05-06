@@ -1,12 +1,13 @@
 {
   "name": "razerautopollingrate",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "main": "src/main.js",
   "author": "Philip B, Neil C",
   "license": "ISC",
   "description": "Automatically adjust polling rate",
   "scripts": {
     "start": "electron-forge start",
+    "test": "node --test test/*.test.js",
     "package": "electron-forge package",
     "make": "electron-forge make"
   },
@@ -19,8 +20,9 @@
   "devDependencies": {
     "@electron-forge/cli": "^6.4.2",
     "@electron-forge/maker-squirrel": "^6.4.2",
-    "electron": "^22.3.27",
-    "electron-forge": "^5.2.4"
+    "electron": "^42.0.0",
+    "electron-forge": "^5.2.4",
+    "node-abi": "^4.30.0"
   },
   "repository": {
     "type": "git",

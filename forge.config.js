@@ -18,9 +18,10 @@ module.exports = {
       name: '@electron-forge/publisher-github',
       config: {
         repository: {
-          owner: 'nchaudhury',
+          owner: process.env.GITHUB_REPOSITORY_OWNER || 'marcmy',
           name: 'RazerAutoPollingRate'
         },
+        draft: true,
         prerelease: false
       }
     }
