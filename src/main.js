@@ -1,419 +1,445 @@
 if (require('electron-squirrel-startup')) return;
 
 const {
-    app,
-    Tray,
-    Menu,
-    nativeImage,
+  app,
+  Tray,
+  Menu,
+  nativeImage,
+  shell,
 } = require('electron');
 
 const { WebUSB } = require('usb');
 const fs = require('fs');
 const Store = require('electron-store');
 const path = require('path');
-const app_path = app.getAppPath();
-const store = new Store();
 const AutoLaunch = require('auto-launch');
-const execSync = require('child_process').execSync;
+const { execFileSync } = require('child_process');
+
+const { createCheckGuard } = require('./lib/checkGuard');
+const { parseProcessConfig } = require('./lib/config');
+const { parseTasklistCsv, selectTargetPollingRate } = require('./lib/processes');
+const {
+  getRateForReportByte,
+  getReportByteForRate,
+  parsePollingRate,
+  resolveSupportedPollingRate,
+} = require('./lib/rates');
+const { getRazerReport } = require('./lib/razerReports');
+
+const appPath = app.getAppPath();
+const store = new Store();
 
 function log(out, error = false) {
-    const date = new Date().toLocaleTimeString('en-US', { hour12: false, hour: "numeric", minute: "numeric" });
-    fs.appendFileSync(path.join(app.getPath('userData'), 'error.log'), "[ " + date + " ] " + (error ? "ERROR: " : "LOG: ") + out + "\n");
+  const date = new Date().toLocaleTimeString('en-US', { hour12: false, hour: 'numeric', minute: 'numeric' });
+  fs.appendFileSync(path.join(app.getPath('userData'), 'error.log'), `[ ${date} ] ${error ? 'ERROR: ' : 'LOG: '}${out}\n`);
 }
 
-const models_ = {
-    None: 0,
-    HyperPollingDongle: 1,
-    ViperSE: 2,
-    DockPro: 3,
-}
-
-const dongles = {
-    0x009F: {
-        model: models_.ViperSE,
-        is_8k_compatible: true,
-    },
-    0x00B3: {
-        model: models_.HyperPollingDongle,
-        is_8k_compatible: true,
-    },
-    0x00C3: {
-        model: models_.HyperPollingDongle,
-        is_8k_compatible: true,
-    },
-    0x00A4: {
-        model: models_.DockPro,
-        is_8k_compatible: true,
-    },
-}
-
-let tray;
-let check_interval;
-let autostart_enabled;
-let autolaunch;
-let context_menu;
-let current_model;
-let set_rate = [0, false];
-
-function is_8k_compatible() {
-    return current_model.is_8k_compatible;
-}
-
-let assets_folder = 'src/assets/';
-
-let lower_rate = 500;
-let higher_rate = 4000;
-
-function handle_context_menu() {
-context_menu.items[0].submenu.items.forEach(function (item) {
-        item.enabled = parseInt(item.label) < higher_rate;
-    });
-
+const models = {
+  None: 0,
+  HyperPollingDongle: 1,
+  ViperSE: 2,
+  DockPro: 3,
 };
 
-app.whenReady().then(() => {
-    if (!store.has('autostart'))
-        store.set('autostart', true)
+const dongles = {
+  0x009F: {
+    model: models.ViperSE,
+    is8kCompatible: true,
+  },
+  0x00B3: {
+    model: models.HyperPollingDongle,
+    is8kCompatible: true,
+  },
+  0x00C3: {
+    model: models.HyperPollingDongle,
+    is8kCompatible: true,
+  },
+  0x00A4: {
+    model: models.DockPro,
+    is8kCompatible: true,
+  },
+};
 
-    autostart_enabled = store.get('autostart');
-
-    autolaunch = new AutoLaunch({
-        name: 'Razer Auto Polling Rate',
-    });
-
-    update_autostart();
-
-    if (store.has('lower_rate'))
-        lower_rate = store.get('lower_rate');
-
-    if (store.has('higher_rate'))
-        higher_rate = store.get('higher_rate');
-
-    if (!fs.existsSync(path.join(app.getPath('userData'), 'cfg')))
-        fs.mkdirSync(path.join(app.getPath('userData'), 'cfg'));
-
-    fs.closeSync(fs.openSync(path.join(app.getPath('userData'), 'cfg/processlist.cfg'), 'a'));
-
-    context_menu = Menu.buildFromTemplate([
-        {
-            label: 'Inactive polling rate', type: 'submenu',
-            submenu: [
-                { label: '125hz', type: 'radio', click: handle_inactive, checked: lower_rate == 125 },
-                { label: '250hz', type: 'radio', click: handle_inactive, checked: lower_rate == 250 },
-                { label: '500hz', type: 'radio', click: handle_inactive, checked: lower_rate == 500 },
-                { label: '1000hz', type: 'radio', click: handle_inactive, checked: lower_rate == 1000 },
-            ]
-        },
-        { label: 'Open process list', type: 'normal', click: open_process_list },
-        { label: 'Autostart', type: 'checkbox', click: handle_autostart, checked: autostart_enabled },
-        { label: 'Quit', type: 'normal', click: quit }
-    ]);
-
-    handle_context_menu();
-
-    const icon = nativeImage.createFromPath(path.join(app_path, assets_folder + 'loading.png'));
-    tray = new Tray(icon);
-
-    tray.on("click", () => {
-        tray.popUpContextMenu();
-    });
-
-    tray.setToolTip('Searching for dongle');
-    tray.setTitle('Razer auto polling rate');
-    tray.setContextMenu(context_menu);
-
-    run_loop();
-})
-
-let has_stopped = false;
+let tray;
+let autostartEnabled;
+let autolaunch;
+let contextMenu;
+let currentModel;
+let setRate = [0, false];
+let lowerRate = 500;
+let hasStopped = false;
 let stop = false;
+const assetsFolder = 'src/assets/';
+const checkGuard = createCheckGuard();
 
-async function run_loop() {
-    await check_polling_rate(true);
+function getConfigDirectory() {
+  return path.join(app.getPath('userData'), 'cfg');
+}
 
-    while (true) {
-        await new Promise(res => setTimeout(res, 3000));
-        if (stop)
-            break;
+function getProcessListPath() {
+  return path.join(getConfigDirectory(), 'processlist.cfg');
+}
 
-        await check_polling_rate();
+function ensureConfigFile() {
+  fs.mkdirSync(getConfigDirectory(), { recursive: true });
+  fs.closeSync(fs.openSync(getProcessListPath(), 'a'));
+}
+
+function is8kCompatible() {
+  return Boolean(currentModel && currentModel.is8kCompatible);
+}
+
+function setTrayStatus(status) {
+  if (!tray) {
+    return;
+  }
+
+  const iconName = status.icon || 'loading.png';
+  tray.setImage(nativeImage.createFromPath(path.join(appPath, assetsFolder + iconName)));
+  tray.setToolTip(status.tooltip);
+}
+
+function getPollingRateIcon(pollingRate, isActive) {
+  if (pollingRate === 8000) {
+    return '8000a.png';
+  }
+
+  return `${pollingRate}${isActive ? 'a' : ''}.png`;
+}
+
+function handleContextMenu() {
+  contextMenu.items[0].submenu.items.forEach((item) => {
+    item.enabled = parseInt(item.label, 10) < 8000;
+  });
+}
+
+app.whenReady().then(() => {
+  if (!store.has('autostart')) {
+    store.set('autostart', true);
+  }
+
+  autostartEnabled = store.get('autostart');
+
+  autolaunch = new AutoLaunch({
+    name: 'Razer Auto Polling Rate',
+  });
+
+  updateAutostart();
+
+  if (store.has('lower_rate')) {
+    const storedLowerRate = parsePollingRate(store.get('lower_rate'));
+    if (storedLowerRate && storedLowerRate <= 1000) {
+      lowerRate = storedLowerRate;
+    }
+  }
+
+  ensureConfigFile();
+
+  contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Inactive polling rate',
+      type: 'submenu',
+      submenu: [
+        { label: '125hz', type: 'radio', click: handleInactive, checked: lowerRate === 125 },
+        { label: '250hz', type: 'radio', click: handleInactive, checked: lowerRate === 250 },
+        { label: '500hz', type: 'radio', click: handleInactive, checked: lowerRate === 500 },
+        { label: '1000hz', type: 'radio', click: handleInactive, checked: lowerRate === 1000 },
+      ],
+    },
+    { label: 'Open process list', type: 'normal', click: openProcessList },
+    { label: 'Autostart', type: 'checkbox', click: handleAutostart, checked: autostartEnabled },
+    { label: 'Quit', type: 'normal', click: quit },
+  ]);
+
+  handleContextMenu();
+
+  tray = new Tray(nativeImage.createFromPath(path.join(appPath, assetsFolder + 'loading.png')));
+
+  tray.on('click', () => {
+    tray.popUpContextMenu();
+  });
+
+  tray.setToolTip('Searching for Razer HyperPolling dongle');
+  tray.setTitle('Razer auto polling rate');
+  tray.setContextMenu(contextMenu);
+
+  runLoop();
+});
+
+async function runLoop() {
+  await guardedCheckPollingRate(true);
+
+  while (true) {
+    await new Promise((res) => setTimeout(res, 3000));
+    if (stop) {
+      break;
     }
 
-    has_stopped = true;
+    await guardedCheckPollingRate();
+  }
+
+  hasStopped = true;
 }
 
 async function quit() {
-    stop = true;
-    while (!has_stopped)
-        await new Promise(res => setTimeout(res, 500));
-    if (process.platform !== 'darwin')
-        app.quit();
-};
+  stop = true;
+  while (!hasStopped) {
+    await new Promise((res) => setTimeout(res, 500));
+  }
 
-function open_process_list() {
-    require('child_process').exec('start "" "' + path.join(app.getPath('userData'), 'cfg') + '"');
-};
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
+}
 
-function update_autostart() {
-    store.set('autostart', autostart_enabled)
-    autolaunch.isEnabled().then((enabled) => {
-        if (!enabled && autostart_enabled) { autolaunch.enable(); log('enabled autostart'); }
-        else if (enabled && !autostart_enabled) { autolaunch.disable(); log('disabled autostart'); }
+function openProcessList() {
+  shell.openPath(getConfigDirectory());
+}
+
+function updateAutostart() {
+  store.set('autostart', autostartEnabled);
+  autolaunch.isEnabled().then((enabled) => {
+    if (!enabled && autostartEnabled) {
+      autolaunch.enable();
+      log('enabled autostart');
+    } else if (enabled && !autostartEnabled) {
+      autolaunch.disable();
+      log('disabled autostart');
+    }
+  }).catch((error) => {
+    log(`autostart update failed: ${error.message}`, true);
+  });
+}
+
+function handleAutostart(menuItem) {
+  autostartEnabled = menuItem.checked;
+  updateAutostart();
+}
+
+function handleInactive(menuItem) {
+  lowerRate = parseInt(menuItem.label, 10);
+  store.set('lower_rate', lowerRate);
+  handleContextMenu();
+}
+
+async function getDongle() {
+  const webUsb = new WebUSB({
+    devicesFound: (devices) => devices.find((device) => device.vendorId === 0x1532 && dongles[device.productId] !== undefined),
+  });
+
+  try {
+    const device = await webUsb.requestDevice({ filters: [{}] });
+    if (!device) {
+      throw new Error('No compatible Razer HyperPolling dongle found');
+    }
+
+    currentModel = dongles[device.productId];
+    if (!currentModel) {
+      throw new Error('No compatible Razer HyperPolling dongle found');
+    }
+
+    return device;
+  } catch (error) {
+    if (error.name === 'NotFoundError') {
+      throw new Error('No compatible Razer HyperPolling dongle found');
+    }
+
+    throw error;
+  }
+}
+
+async function prepareDongle(dongle) {
+  await dongle.open();
+  if (dongle.configuration === null) {
+    await dongle.selectConfiguration(1);
+  }
+
+  const firstInterface = dongle.configuration.interfaces[0];
+  await dongle.claimInterface(firstInterface.interfaceNumber);
+  return firstInterface.interfaceNumber;
+}
+
+async function cleanupDongle(dongle, claimedInterfaceNumber) {
+  if (!dongle) {
+    return;
+  }
+
+  if (claimedInterfaceNumber !== null && claimedInterfaceNumber !== undefined) {
+    try {
+      await dongle.releaseInterface(claimedInterfaceNumber);
+    } catch (error) {
+      log(`releaseInterface failed: ${error.message}`, true);
+    }
+  }
+
+  try {
+    await dongle.close();
+  } catch (error) {
+    log(`close failed: ${error.message}`, true);
+  }
+}
+
+async function getPollingRate(dongle) {
+  await dongle.controlTransferOut({
+    requestType: 'class',
+    recipient: 'interface',
+    request: 0x09,
+    value: 0x300,
+    index: 0x00,
+  }, getRazerReport(0x1F, 0x00, 0xC0, 0x01, 0x00, 0x00));
+
+  await new Promise((res) => setTimeout(res, 100));
+
+  const reply = await dongle.controlTransferIn({
+    requestType: 'class',
+    recipient: 'interface',
+    request: 0x01,
+    value: 0x300,
+    index: 0x00,
+  }, 90);
+
+  const pollingRate = getRateForReportByte(reply.data.getInt8(9));
+  if (!pollingRate) {
+    throw new Error('Dongle returned an unknown polling-rate response');
+  }
+
+  return pollingRate;
+}
+
+async function setPollingRate(dongle, pollingRate) {
+  const resolved = resolveSupportedPollingRate(pollingRate, { is8kCompatible: is8kCompatible() });
+  if (!resolved.rate) {
+    throw new Error(resolved.warning);
+  }
+
+  if (resolved.warning) {
+    log(resolved.warning, true);
+  }
+
+  const rate = getReportByteForRate(resolved.rate);
+
+  await dongle.controlTransferOut({
+    requestType: 'class',
+    recipient: 'interface',
+    request: 0x09,
+    value: 0x300,
+    index: 0x00,
+  }, getRazerReport(0x1F, 0x00, 0x40, 0x02, 0x00, rate));
+
+  await new Promise((res) => setTimeout(res, 100));
+
+  await dongle.controlTransferIn({
+    requestType: 'class',
+    recipient: 'interface',
+    request: 0x01,
+    value: 0x300,
+    index: 0x00,
+  }, 90);
+
+  await new Promise((res) => setTimeout(res, 100));
+
+  await dongle.controlTransferOut({
+    requestType: 'class',
+    recipient: 'interface',
+    request: 0x09,
+    value: 0x300,
+    index: 0x00,
+  }, getRazerReport(is8kCompatible() ? 0x1F : 0xFF, 0x00, 0x40, 0x02, 0x01, rate));
+
+  await new Promise((res) => setTimeout(res, 100));
+
+  await dongle.controlTransferIn({
+    requestType: 'class',
+    recipient: 'interface',
+    request: 0x01,
+    value: 0x300,
+    index: 0x00,
+  }, 90);
+
+  await new Promise((res) => setTimeout(res, 100));
+
+  return getPollingRate(dongle);
+}
+
+function getRunningProcesses() {
+  const output = execFileSync('tasklist', ['/fo', 'csv', '/nh'], { encoding: 'utf8' });
+  return parseTasklistCsv(output);
+}
+
+async function guardedCheckPollingRate(firstRun) {
+  const result = await checkGuard.run(() => checkPollingRate(firstRun));
+  if (result.skipped) {
+    log('polling check skipped because the previous check is still running');
+  }
+}
+
+async function checkPollingRate(firstRun) {
+  let dongle;
+  let claimedInterfaceNumber = null;
+
+  try {
+    ensureConfigFile();
+
+    const { entries } = parseProcessConfig(fs.readFileSync(getProcessListPath(), 'utf8'), {
+      warn: (message) => log(message, true),
     });
-};
+    const runningProcesses = getRunningProcesses();
+    const selected = selectTargetPollingRate(entries, runningProcesses, lowerRate);
+    const requestedTarget = selected.targetRate;
 
-function handle_autostart(menuItem) {
-    autostart_enabled = menuItem.checked;
-    update_autostart();
-};
+    dongle = await getDongle();
+    claimedInterfaceNumber = await prepareDongle(dongle);
 
-function handle_inactive(menuItem) {
-    lower_rate = parseInt(menuItem.label);
-    store.set('lower_rate', lower_rate)
-    handle_context_menu();
-};
-
-function handle_active(menuItem) {
-    higher_rate = parseInt(menuItem.label);
-    store.set('higher_rate', higher_rate)
-    handle_context_menu();
-};
-
-function get_razer_report(transaction_id, command_class, command_id, data_size, argument0, argument1) {
-    let msg = Buffer.from([0x00, transaction_id, 0x00, 0x00, 0x00, data_size, command_class, command_id, argument0, argument1]);
-    msg = Buffer.concat([msg, Buffer.alloc(78)])
-
-    let crc = 0;
-    for (let i = 2; i < 88; i++) {
-        crc = crc ^ msg[i];
+    const resolvedTarget = resolveSupportedPollingRate(requestedTarget, { is8kCompatible: is8kCompatible() });
+    if (!resolvedTarget.rate) {
+      throw new Error(resolvedTarget.warning);
     }
 
-    msg = Buffer.concat([msg, Buffer.from([crc, 0])]);
+    if (resolvedTarget.warning) {
+      log(resolvedTarget.warning, true);
+    }
 
-    return msg;
-};
+    let pollingRate = await getPollingRate(dongle);
+    const targetRate = resolvedTarget.rate;
+    const matchedText = selected.matchedProcess ? `matched ${selected.matchedProcess}` : 'inactive';
 
-async function get_dongle() {
-    const dev = new WebUSB({
-        devicesFound: devices => {
-            devices.forEach(function (dev) {
-                if (dev.vendorId == 0x1532)
-                    console.log(dev.productId + ' name: ' + dev.productName);
-            });
-            return devices.find(device => device.vendorId == 0x1532 && (dongles[device.productId] !== undefined));
-        }
+    if (firstRun) {
+      const active = Boolean(selected.matchedProcess && pollingRate === targetRate);
+      setTrayStatus({
+        icon: getPollingRateIcon(pollingRate, active),
+        tooltip: `Current ${pollingRate} Hz; target ${targetRate} Hz (${matchedText})`,
+      });
+    }
+
+    if (targetRate !== pollingRate) {
+      pollingRate = await setPollingRate(dongle, targetRate);
+    }
+
+    const isActive = Boolean(selected.matchedProcess && pollingRate === targetRate);
+    if (setRate[0] !== pollingRate || setRate[1] !== isActive) {
+      if (pollingRate !== targetRate) {
+        setTrayStatus({
+          icon: 'loading.png',
+          tooltip: `Failed to set target ${targetRate} Hz; current ${pollingRate} Hz (${matchedText})`,
+        });
+        setRate = [0, false];
+      } else {
+        setTrayStatus({
+          icon: getPollingRateIcon(pollingRate, isActive),
+          tooltip: `Current ${pollingRate} Hz; target ${targetRate} Hz (${matchedText})`,
+        });
+        setRate = [pollingRate, isActive];
+      }
+    }
+  } catch (error) {
+    setTrayStatus({
+      icon: 'loading.png',
+      tooltip: `Razer Auto Polling Rate error: ${error.message}`,
     });
-
-    try {
-        const device = await dev.requestDevice({
-            filters: [{}]
-        })
-
-        if (device)
-            return device;
-
-    } catch (error) {
-        if (error.name !== 'NotFoundError')
-            throw error;
-    }
-
-    throw new Error('No compatible Razer Dongle found');
-};
-
-async function get_polling_rate(dongle) {
-    try {
-        await dongle.controlTransferOut({
-            requestType: 'class',
-            recipient: 'interface',
-            request: 0x09,
-            value: 0x300,
-            index: 0x00
-        }, get_razer_report(0x1F, 0x00, 0xC0, 0x01, 0x00, 0x00))
-
-        await new Promise(res => setTimeout(res, 100));
-
-        reply = await dongle.controlTransferIn({
-            requestType: 'class',
-            recipient: 'interface',
-            request: 0x01,
-            value: 0x300,
-            index: 0x00
-        }, 90)
-
-        switch (reply.data.getInt8(9)) {
-            case 0x01:
-                polling_rate = 8000;
-                break;
-            case 0x02:
-                polling_rate = 4000;
-                break;
-            case 0x04:
-                polling_rate = 2000;
-                break;
-            case 0x08:
-                polling_rate = 1000;
-                break;
-            case 0x10:
-                polling_rate = 500;
-                break;
-            case 0x20:
-                polling_rate = 250;
-                break;
-            case 0x40:
-                polling_rate = 125;
-                break;
-        };
-
-        return polling_rate;
-
-    } catch (error) {
-        throw error;
-    }
-};
-
-async function set_polling_rate(dongle, polling_rate) {
-    try {
-        rate = 0x10;
-
-        switch (polling_rate) {
-            case 8000:
-                rate = is_8k_compatible() ? 0x01 : 0x02;
-                break;
-            case 4000:
-                rate = 0x02;
-                break;
-            case 2000:
-                rate = 0x04;
-                break;
-            case 1000:
-                rate = 0x08;
-                break;
-            case 500:
-                rate = 0x10;
-                break;
-            case 250:
-                rate = 0x20;
-                break;
-            case 125:
-                rate = 0x40;
-                break;
-            default:
-                break;
-        }
-
-        await dongle.controlTransferOut({
-            requestType: 'class',
-            recipient: 'interface',
-            request: 0x09,
-            value: 0x300,
-            index: 0x00
-        }, get_razer_report(0x1F, 0x00, 0x40, 0x02, 0x00, rate))
-
-        await new Promise(res => setTimeout(res, 100));
-
-        reply = await dongle.controlTransferIn({
-            requestType: 'class',
-            recipient: 'interface',
-            request: 0x01,
-            value: 0x300,
-            index: 0x00
-        }, 90)
-
-        await new Promise(res => setTimeout(res, 100));
-
-        await dongle.controlTransferOut({
-            requestType: 'class',
-            recipient: 'interface',
-            request: 0x09,
-            value: 0x300,
-            index: 0x00
-        }, get_razer_report(is_8k_compatible() ? 0x1F : 0xFF, 0x00, 0x40, 0x02, 0x01, rate))
-
-        await new Promise(res => setTimeout(res, 100));
-
-        reply = await dongle.controlTransferIn({
-            requestType: 'class',
-            recipient: 'interface',
-            request: 0x01,
-            value: 0x300,
-            index: 0x00
-        }, 90)
-
-        await new Promise(res => setTimeout(res, 100));
-
-        return await get_polling_rate(dongle);
-
-    } catch (error) {
-        throw error;
-    }
-};
-let runningApp = "";
-function is_running(names) {
-    stdout = execSync('tasklist /fo csv /nh').toString();
-    ret = names.some(term => stdout.toLowerCase().includes('"' + term.toLowerCase() + '"')? runningApp = term : runningApp = "");   
-    return ret;
-};
-
-async function check_polling_rate(first_run) {
-    try {
-        if (!fs.existsSync(path.join(app.getPath('userData'), 'cfg')))
-            fs.mkdirSync(path.join(app.getPath('userData'), 'cfg'));
-
-        fs.closeSync(fs.openSync(path.join(app.getPath('userData'), 'cfg/processlist.cfg'), 'a'));
-
-        var processarray = fs.readFileSync(path.join(app.getPath('userData'), 'cfg/processlist.cfg')).toString().split('\r\n');
-        const array = processarray.map(n => n.split(" ").shift());
-        const running = is_running(array);
-        const dongle = await get_dongle();
-        current_model = dongles[dongle.productId];
-        if (current_model === undefined)
-            throw new Error('No compatible Razer Dongle found');
-
-        context_menu.items[0].submenu.items[context_menu.items[0].submenu.items.length - 1].visible = is_8k_compatible();
-
-        await dongle.open();
-        if (dongle.configuration === null)
-            await dongle.selectConfiguration(1);
-
-        await dongle.claimInterface(dongle.configuration.interfaces[0].interfaceNumber);
-        let target_rate;
-        if(running){
-            var arrayContainsApps = array.indexOf(runningApp);
-            if(arrayContainsApps > -1 )
-            {
-                let inputToken = processarray[arrayContainsApps].split(" ");
-                target_rate = Number(inputToken[1]);
-                higher_rate = target_rate;
-            }
-        }
-        else
-            target_rate = lower_rate;
-        polling_rate = await get_polling_rate(dongle);
-        if (first_run) {
-            tray.setImage(nativeImage.createFromPath(path.join(app_path, assets_folder + polling_rate + (polling_rate == higher_rate ? 'a.png' : '.png'))));
-            tray.setToolTip(polling_rate + 'hz');
-        }
-
-        if (target_rate != polling_rate)
-            polling_rate = await set_polling_rate(dongle, target_rate);
-
-        if (set_rate[0] != polling_rate || set_rate[1] != (polling_rate == higher_rate)) {
-            if (polling_rate != target_rate) {
-                tray.setToolTip(polling_rate == 8000 ? '8k is not supported on your device, please update drivers in synapse' : 'failed to set polling rate');
-                tray.setImage(nativeImage.createFromPath(path.join(app_path, assets_folder + 'loading.png')));
-                set_rate = [0, false];
-            } else {
-                tray.setImage(nativeImage.createFromPath(path.join(app_path, assets_folder + polling_rate + (polling_rate == higher_rate ? 'a.png' : '.png'))));
-                tray.setToolTip(polling_rate + 'hz');
-                set_rate = [polling_rate, polling_rate == higher_rate];
-            }
-        }
-
-    } catch (error) {
-        tray.setToolTip(error.message);
-        tray.setImage(nativeImage.createFromPath(path.join(app_path, assets_folder + 'loading.png')));
-        set_rate = [0, false];
-        console.error(error);
-        log(error.toString(), true);
-    }
-};
+    setRate = [0, false];
+    console.error(error);
+    log(error.toString(), true);
+  } finally {
+    await cleanupDongle(dongle, claimedInterfaceNumber);
+  }
+}

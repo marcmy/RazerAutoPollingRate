@@ -1,36 +1,99 @@
-# Automatic Razer HyperPolling Dongle polling rate changer FORK 
-## Added support for inline cfg polling rate setting
+# Automatic Razer HyperPolling Dongle Polling Rate Changer
+
+Maintained fork of `RazerAutoPollingRate` with safer per-process polling-rate configuration, automated tests, CI, and Windows release packaging.
+
+Original project credit is preserved for Philip B and the upstream fork by Neil C / nchaudhury. This fork keeps the nchaudhury per-process polling-rate behavior: each configured executable can request its own polling rate while it is running.
 
 ## Behavior
-Polling rate will be limited to the inactive one when not running the processes in the process list to conserve battery.
 
-It will automatically switch to the active one as soon as an added process is running.
+The app runs in the Windows tray and checks the configured process list. If one or more configured processes are running, the first matching entry in `processlist.cfg` wins. When no configured process is running, the app targets the inactive polling rate selected from the tray menu.
 
-Any polling rate changes in Razer Synapse will be overwritten but will **not** display in it's menu.
+Detection is based on running process names, not the focused foreground window. If a configured game remains running in the background, it can still match.
 
-## Instructions
-- Install the application from the latest release
-- Right click the tray icon to select the inactive and active polling rates (default is 500hz and 4000hz)
-- Right click the tray icon to open the process list (processlist.cfg):
-    - add any process name including the .exe ending (case insensitive)
-    - you can add multiple processes by simply adding their name to a new line
-- Processes.CFG requires strict formatting, and no input validation is done. Example:
+Razer Synapse does not need to be running. Synapse may display stale polling-rate information while this app is controlling the dongle. If Synapse is running and also tries to control polling rate, the two apps may fight over the current setting.
 
-application.exe space polling-rate
+The app does not include telemetry, analytics, auto-update networking, or remote calls.
 
+## Process Config
 
-Discovery.exe 2000
+Open the process-list folder from the tray menu. The file is:
 
-FPSAimTrainer-Win64-Shipping.exe 2000
+```text
+%APPDATA%\RazerAutoPollingRate\cfg\processlist.cfg
+```
 
-DOOMEternalx64vk.exe 8000
+Each non-comment entry uses:
 
-LatMon.exe 8000
+```text
+process.exe pollingRate
+```
 
-FortniteClient-Win64-Shipping.exe 2000
+Valid polling rates are:
 
-## Additional Information
-- Razer Synapse does not have to be running
-- Available polling rates are 125hz, 250hz, 500hz, 1000hz, 2000hz, 4000hz and 8000hz (only for the Viper Mini SE). (250hz will work even though it is not an option in Razer Synapse)
-- The lower the inactive polling rate is set to the more battery you will save. (Halving polling rate roughly halves power consuption)
+```text
+125 250 500 1000 2000 4000 8000
+```
 
+Example Apex / Quake-style config:
+
+```text
+# Apex Legends
+r5apex.exe 4000
+r5apex_dx12.exe 4000
+
+# Quake Live
+quake_live_x64.exe 1000
+```
+
+Blank lines are allowed. Comments beginning with `#` are allowed. Extra spaces and tabs are allowed. Invalid entries are ignored and logged instead of silently becoming `undefined` or falling back to 500 Hz.
+
+If 8000 Hz is requested on unsupported hardware, the app falls back to 4000 Hz and logs/shows a warning.
+
+## Install And Development
+
+Install from a release build, then launch the tray app.
+
+For development:
+
+```powershell
+npm ci
+npm test
+npm run package
+npm run make
+```
+
+## Troubleshooting
+
+Dongle not found:
+Make sure the Razer HyperPolling Wireless Dongle is connected and not blocked by another process. The tray tooltip should show an error instead of crashing the app.
+
+Synapse fighting with the app:
+Close Razer Synapse or stop changing polling rate in Synapse while this app is running. Synapse does not need to be running for this app to work.
+
+8000 Hz unsupported:
+Some dongle/mouse combinations or drivers may not support 8000 Hz. The app will not blindly write 8000 Hz when the detected device is not compatible; it falls back to 4000 Hz.
+
+App stuck or error tray icon:
+Check the tray tooltip and the app log at:
+
+```text
+%APPDATA%\RazerAutoPollingRate\error.log
+```
+
+Invalid config entries, dongle access failures, and USB cleanup warnings are logged there.
+
+## Manual Hardware Test Checklist
+
+Automated tests mock the parsing, matching, rate-selection, and compatibility logic. Real Razer dongle behavior still needs manual hardware verification:
+
+- Start the app with the dongle unplugged and confirm it stays running with a useful tray error.
+- Plug in a supported dongle and confirm the tray shows current and target polling rate.
+- Configure `processlist.cfg` with a known running process and confirm the app switches to that process polling rate.
+- Close the configured process and confirm the app returns to the inactive polling rate.
+- Add an invalid config line and confirm it is ignored and logged.
+- Request 8000 Hz on unsupported hardware, if available, and confirm it falls back safely.
+- Run with Razer Synapse open and confirm any conflict is understandable from tray/log status.
+
+## License
+
+ISC. See `package.json` for project metadata.

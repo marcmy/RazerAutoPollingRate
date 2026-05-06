@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'marc/**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  build-windows:
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run make
+      - name: Generate SHA256 hashes
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path out/make -Recurse -File |
+            Where-Object { $_.Name -notlike '*.blockmap' } |
+            ForEach-Object {
+              $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName
+              "$($hash.Hash.ToLower())  $($_.Name)"
+            } | Set-Content -Encoding ASCII SHA256SUMS.txt
+      - uses: actions/upload-artifact@v6
+        with:
+          name: windows-x64-artifacts
+          path: |
+            out/make/**
+            SHA256SUMS.txt
