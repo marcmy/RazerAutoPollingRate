@@ -77,6 +77,7 @@ let stop = false;
 let ruleEditorWindow = null;
 const assetsFolder = 'src/assets/';
 const checkGuard = createCheckGuard();
+const SAFE_ADOPTABLE_INACTIVE_RATES = new Set([500, 1000]);
 
 function getConfigDirectory() {
   return path.join(app.getPath('userData'), 'cfg');
@@ -117,6 +118,32 @@ function handleContextMenu() {
   contextMenu.items[0].submenu.items.forEach((item) => {
     item.enabled = parseInt(item.label, 10) < 8000;
   });
+}
+
+function syncInactivePollingRateMenu() {
+  if (!contextMenu) {
+    return;
+  }
+
+  contextMenu.items[0].submenu.items.forEach((item) => {
+    item.checked = parseInt(item.label, 10) === lowerRate;
+  });
+}
+
+function maybeAdoptCurrentPollingRateAsInactive(pollingRate) {
+  if (store.has('lower_rate')) {
+    return false;
+  }
+
+  if (!SAFE_ADOPTABLE_INACTIVE_RATES.has(pollingRate)) {
+    return false;
+  }
+
+  lowerRate = pollingRate;
+  store.set('lower_rate', lowerRate);
+  syncInactivePollingRateMenu();
+  log(`set inactive polling rate from current dongle rate: ${lowerRate}`);
+  return true;
 }
 
 function getDetectionMode() {
@@ -235,8 +262,8 @@ app.whenReady().then(() => {
       label: 'Detection mode',
       type: 'submenu',
       submenu: [
-        { label: 'Running processes', type: 'radio', click: () => handleDetectionMode('running'), checked: detectionMode === 'running' },
         { label: 'Foreground window', type: 'radio', click: () => handleDetectionMode('foreground'), checked: detectionMode === 'foreground' },
+        { label: 'Running processes', type: 'radio', click: () => handleDetectionMode('running'), checked: detectionMode === 'running' },
       ],
     },
     { label: 'Edit polling rules', type: 'normal', click: openRuleEditor },
@@ -270,7 +297,7 @@ async function runLoop() {
   await guardedCheckPollingRate(true);
 
   while (true) {
-    await new Promise((res) => setTimeout(res, 3000));
+    await new Promise((res) => setTimeout(res, 1500));
     if (stop) {
       break;
     }
@@ -516,10 +543,15 @@ async function checkPollingRate(firstRun) {
     const selected = mode === 'foreground'
       ? selectForegroundPollingRate(entries, getForegroundProcess(), lowerRate)
       : selectTargetPollingRate(entries, getRunningProcesses(), lowerRate);
-    const requestedTarget = selected.targetRate;
+    let requestedTarget = selected.targetRate;
 
     dongle = await getDongle();
     claimedInterfaceNumber = await prepareDongle(dongle);
+
+    let pollingRate = await getPollingRate(dongle);
+    if (maybeAdoptCurrentPollingRateAsInactive(pollingRate) && !selected.matchedProcess) {
+      requestedTarget = lowerRate;
+    }
 
     const resolvedTarget = resolveSupportedPollingRate(requestedTarget, { is8kCompatible: is8kCompatible() });
     if (!resolvedTarget.rate) {
@@ -530,7 +562,6 @@ async function checkPollingRate(firstRun) {
       log(resolvedTarget.warning, true);
     }
 
-    let pollingRate = await getPollingRate(dongle);
     const targetRate = resolvedTarget.rate;
     const matchedText = selected.matchedProcess ? `matched ${selected.matchedProcess}` : 'inactive';
     const modeText = getDetectionModeLabel();
