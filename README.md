@@ -8,7 +8,7 @@ Original project credit is preserved for Philip B and the upstream fork by Neil 
 
 The app runs in the Windows tray and checks the configured process list. If one or more configured processes are running, the first matching entry in `processlist.cfg` wins. When no configured process is running, the app targets the inactive polling rate selected from the tray menu.
 
-Running-process detection remains the default. Foreground-window detection can be selected from the tray menu. In foreground mode, the app only matches the currently focused process and switches to the inactive polling rate when the focused process does not match a configured rule.
+Foreground-window detection is the default for new installs. Running-process detection remains available from the tray menu. In foreground mode, the app only matches the currently focused process and switches to the inactive polling rate when the focused process does not match a configured rule.
 
 Rules can match either a bare executable name or a full executable path. Full path matches beat bare process-name matches. When rules have the same specificity, config order remains the priority. Windows path matching is case-insensitive.
 

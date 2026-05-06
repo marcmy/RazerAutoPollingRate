@@ -71,7 +71,7 @@ let contextMenu;
 let currentModel;
 let setRate = [0, false];
 let lowerRate = 500;
-let detectionMode = 'running';
+let detectionMode = 'foreground';
 let hasStopped = false;
 let stop = false;
 let ruleEditorWindow = null;
@@ -199,7 +199,7 @@ app.whenReady().then(() => {
   }
 
   if (!store.has('detection_mode')) {
-    store.set('detection_mode', 'running');
+    store.set('detection_mode', 'foreground');
   }
 
   autostartEnabled = store.get('autostart');
@@ -315,6 +315,8 @@ function openRuleEditor() {
       sandbox: true,
     },
   });
+
+  ruleEditorWindow.setMenu(null);
 
   ruleEditorWindow.once('ready-to-show', () => {
     ruleEditorWindow.show();
