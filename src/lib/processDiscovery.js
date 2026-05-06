@@ -11,6 +11,18 @@ function parseJsonOutput(output) {
   return Array.isArray(parsed) ? parsed : [parsed];
 }
 
+function normalizeDiscoveredProcess(item) {
+  const processName = item.Name || item.processName || item.name;
+  if (!processName) {
+    return null;
+  }
+
+  return {
+    processName,
+    executablePath: item.ExecutablePath || item.executablePath || null,
+  };
+}
+
 function getRunningProcesses() {
   try {
     const output = execFileSync('powershell.exe', [
@@ -21,17 +33,25 @@ function getRunningProcesses() {
       'Get-CimInstance Win32_Process | Select-Object Name,ExecutablePath | ConvertTo-Json -Compress',
     ], { encoding: 'utf8', windowsHide: true });
 
-    return parseJsonOutput(output).map((item) => ({
-      processName: item.Name,
-      executablePath: item.ExecutablePath || null,
-    }));
+    return parseJsonOutput(output)
+      .map(normalizeDiscoveredProcess)
+      .filter(Boolean);
   } catch (error) {
     const output = execFileSync('tasklist', ['/fo', 'csv', '/nh'], { encoding: 'utf8', windowsHide: true });
     return parseTasklistCsv(output);
   }
 }
 
-function getForegroundProcess() {
+function parseForegroundProcessOutput(output) {
+  const processes = parseJsonOutput(output);
+  if (processes.length === 0) {
+    return null;
+  }
+
+  return normalizeDiscoveredProcess(processes[0]);
+}
+
+function getForegroundProcess(commandRunner = execFileSync) {
   const command = `
 Add-Type @"
 using System;
@@ -51,27 +71,24 @@ $process = Get-Process -Id $processId -ErrorAction Stop
 [pscustomobject]@{ Name = ($process.ProcessName + ".exe"); ExecutablePath = $process.Path } | ConvertTo-Json -Compress
 `;
 
-  const output = execFileSync('powershell.exe', [
-    '-NoProfile',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-Command',
-    command,
-  ], { encoding: 'utf8', windowsHide: true });
+  try {
+    const output = commandRunner('powershell.exe', [
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      command,
+    ], { encoding: 'utf8', windowsHide: true });
 
-  const processes = parseJsonOutput(output);
-  if (processes.length === 0) {
+    return parseForegroundProcessOutput(output);
+  } catch (error) {
     return null;
   }
-
-  return {
-    processName: processes[0].Name,
-    executablePath: processes[0].ExecutablePath || null,
-  };
 }
 
 module.exports = {
   getForegroundProcess,
   getRunningProcesses,
+  parseForegroundProcessOutput,
   parseJsonOutput,
 };
