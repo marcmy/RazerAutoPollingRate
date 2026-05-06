@@ -44,7 +44,7 @@ Valid polling rates are:
 125 250 500 1000 2000 4000 8000
 ```
 
-Example Apex / Quake-style config:
+Example config:
 
 ```text
 # Apex Legends
@@ -52,8 +52,8 @@ r5apex.exe 4000
 r5apex_dx12.exe 2000
 "C:\Program Files (x86)\Steam\steamapps\common\Apex Legends\r5apex_dx12.exe" 4000
 
-# Quake Live
-quake_live_x64.exe 1000
+# Counter-Strike
+cs2.exe 4000
 ```
 
 Blank lines are allowed. Comments beginning with `#` are allowed. Extra spaces and tabs are allowed. Full paths containing spaces must be quoted. Invalid entries are ignored and logged instead of silently becoming `undefined` or falling back to 500 Hz.
