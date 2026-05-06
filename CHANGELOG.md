@@ -11,4 +11,6 @@
 - Updated the packaged Electron runtime and `node-abi` support while preserving native `usb` rebuild compatibility.
 - Improved USB error handling and cleanup so missing, busy, unplugged, or unavailable dongles should not crash the tray app.
 - Improved tray status text to show current rate, target rate, matched process, or error state.
+- Real hardware smoke tested on a Razer HyperPolling Wireless Dongle (`VID_1532&PID_00B3`): read 1000 Hz, wrote the same 1000 Hz rate back, read back 1000 Hz, then released the interface and closed the USB handle.
 - Known limitation: detection is based on running processes, not the foreground window.
+- Known limitation: hardware smoke was a conservative USB smoke test, not extended gameplay or focused-window validation.

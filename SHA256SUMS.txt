@@ -1,3 +1,0 @@
-d5d31e03dd58900ac5b89c0826ce53fb62c1d72cc92f4641fbb0dd1fb2330616  squirrel.windows/x64/razerautopollingrate-1.2.6 Setup.exe
-654d121bacbd38c8d015a43764375f5063840dfca4479c1d4eb85f4c90db5ea8  squirrel.windows/x64/razerautopollingrate-1.2.6-full.nupkg
-03830805500515f2cd9063403429eb7064acb64497edca6e81737aa8e889cb1b  squirrel.windows/x64/RELEASES

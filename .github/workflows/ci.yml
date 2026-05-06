@@ -38,7 +38,7 @@ jobs:
             Where-Object { $_.Name -notlike '*.blockmap' } |
             ForEach-Object {
               $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName
-              "$($hash.Hash.ToLower())  $($_.FullName.Substring((Resolve-Path out/make).Path.Length + 1).Replace('\', '/'))"
+              "$($hash.Hash.ToLower())  $($_.Name)"
             } | Set-Content -Encoding ASCII SHA256SUMS.txt
       - uses: actions/upload-artifact@v6
         with:
