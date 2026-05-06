@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Polling rules</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: Canvas;
+      color: CanvasText;
+    }
+
+    body {
+      margin: 0;
+      min-width: 720px;
+    }
+
+    header,
+    footer {
+      align-items: center;
+      display: flex;
+      gap: 8px;
+      justify-content: space-between;
+      padding: 12px 16px;
+    }
+
+    header {
+      border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, Canvas);
+    }
+
+    footer {
+      border-top: 1px solid color-mix(in srgb, CanvasText 18%, Canvas);
+    }
+
+    h1 {
+      font-size: 18px;
+      font-weight: 600;
+      margin: 0;
+    }
+
+    main {
+      padding: 12px 16px;
+    }
+
+    table {
+      border-collapse: collapse;
+      table-layout: fixed;
+      width: 100%;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
+      padding: 8px 4px;
+      text-align: left;
+      vertical-align: middle;
+    }
+
+    th {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    input,
+    select,
+    button {
+      font: inherit;
+    }
+
+    input,
+    select {
+      box-sizing: border-box;
+      padding: 6px 8px;
+      width: 100%;
+    }
+
+    button {
+      min-height: 32px;
+      padding: 5px 10px;
+    }
+
+    .target-column {
+      width: 56%;
+    }
+
+    .rate-column {
+      width: 110px;
+    }
+
+    .actions-column {
+      width: 270px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .status {
+      min-height: 20px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .status.error {
+      color: #b42318;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Polling rules</h1>
+    <button id="add-rule" type="button">Add rule</button>
+  </header>
+  <main>
+    <table>
+      <thead>
+        <tr>
+          <th class="target-column">Executable</th>
+          <th class="rate-column">Rate</th>
+          <th class="actions-column">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="rules"></tbody>
+    </table>
+  </main>
+  <footer>
+    <div id="status" class="status"></div>
+    <button id="save" type="button">Save</button>
+  </footer>
+
+  <script>
+    const validRates = [125, 250, 500, 1000, 2000, 4000, 8000];
+    const rulesBody = document.getElementById('rules');
+    const statusElement = document.getElementById('status');
+
+    function setStatus(message, isError = false) {
+      statusElement.textContent = message;
+      statusElement.classList.toggle('error', isError);
+    }
+
+    function createRateSelect(value) {
+      const select = document.createElement('select');
+      validRates.forEach((rate) => {
+        const option = document.createElement('option');
+        option.value = String(rate);
+        option.textContent = `${rate} Hz`;
+        option.selected = Number(value) === rate;
+        select.appendChild(option);
+      });
+      return select;
+    }
+
+    function readRulesFromForm() {
+      return Array.from(rulesBody.querySelectorAll('tr')).map((row) => ({
+        target: row.querySelector('[data-field="target"]').value,
+        pollingRate: Number(row.querySelector('[data-field="rate"]').value),
+      }));
+    }
+
+    function moveRow(row, direction) {
+      if (direction < 0 && row.previousElementSibling) {
+        rulesBody.insertBefore(row, row.previousElementSibling);
+      } else if (direction > 0 && row.nextElementSibling) {
+        rulesBody.insertBefore(row.nextElementSibling, row);
+      }
+    }
+
+    function addRule(rule = {}) {
+      const row = document.createElement('tr');
+      const targetCell = document.createElement('td');
+      const rateCell = document.createElement('td');
+      const actionsCell = document.createElement('td');
+      const targetInput = document.createElement('input');
+      const rateSelect = createRateSelect(rule.pollingRate || 1000);
+      const actions = document.createElement('div');
+
+      targetInput.dataset.field = 'target';
+      targetInput.placeholder = 'process.exe or C:\\path\\process.exe';
+      targetInput.value = rule.target || '';
+      rateSelect.dataset.field = 'rate';
+      actions.className = 'actions';
+
+      [
+        ['Browse', async () => {
+          const selectedPath = await window.ruleEditor.browseExecutable();
+          if (selectedPath) {
+            targetInput.value = selectedPath;
+          }
+        }],
+        ['Up', () => moveRow(row, -1)],
+        ['Down', () => moveRow(row, 1)],
+        ['Delete', () => row.remove()],
+      ].forEach(([label, handler]) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = label;
+        button.addEventListener('click', handler);
+        actions.appendChild(button);
+      });
+
+      targetCell.appendChild(targetInput);
+      rateCell.appendChild(rateSelect);
+      actionsCell.appendChild(actions);
+      row.append(targetCell, rateCell, actionsCell);
+      rulesBody.appendChild(row);
+    }
+
+    async function loadRules() {
+      const result = await window.ruleEditor.loadRules();
+      rulesBody.textContent = '';
+      result.rules.forEach(addRule);
+      setStatus(result.warnings && result.warnings.length ? result.warnings.join(' ') : '');
+    }
+
+    async function saveRules() {
+      const result = await window.ruleEditor.saveRules(readRulesFromForm());
+      if (!result.ok) {
+        setStatus(result.warnings.join(' '), true);
+        return;
+      }
+
+      window.close();
+    }
+
+    document.getElementById('add-rule').addEventListener('click', () => addRule());
+    document.getElementById('save').addEventListener('click', saveRules);
+    loadRules().catch((error) => setStatus(error.message, true));
+  </script>
+</body>
+</html>

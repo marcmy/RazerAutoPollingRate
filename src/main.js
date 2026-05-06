@@ -2,6 +2,9 @@ if (require('electron-squirrel-startup')) return;
 
 const {
   app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
   Tray,
   Menu,
   nativeImage,
@@ -13,11 +16,11 @@ const fs = require('fs');
 const Store = require('electron-store');
 const path = require('path');
 const AutoLaunch = require('auto-launch');
-const { execFileSync } = require('child_process');
 
 const { createCheckGuard } = require('./lib/checkGuard');
-const { parseProcessConfig } = require('./lib/config');
-const { parseTasklistCsv, selectTargetPollingRate } = require('./lib/processes');
+const { formatRuleTarget, parseProcessConfig } = require('./lib/config');
+const { getForegroundProcess, getRunningProcesses } = require('./lib/processDiscovery');
+const { selectForegroundPollingRate, selectTargetPollingRate } = require('./lib/processes');
 const {
   getRateForReportByte,
   getReportByteForRate,
@@ -25,6 +28,7 @@ const {
   resolveSupportedPollingRate,
 } = require('./lib/rates');
 const { getRazerReport } = require('./lib/razerReports');
+const { readRules, writeRules } = require('./lib/ruleStore');
 
 const appPath = app.getAppPath();
 const store = new Store();
@@ -67,10 +71,13 @@ let contextMenu;
 let currentModel;
 let setRate = [0, false];
 let lowerRate = 500;
+let detectionMode = 'foreground';
 let hasStopped = false;
 let stop = false;
+let ruleEditorWindow = null;
 const assetsFolder = 'src/assets/';
 const checkGuard = createCheckGuard();
+const SAFE_ADOPTABLE_INACTIVE_RATES = new Set([500, 1000]);
 
 function getConfigDirectory() {
   return path.join(app.getPath('userData'), 'cfg');
@@ -113,12 +120,117 @@ function handleContextMenu() {
   });
 }
 
+function syncInactivePollingRateMenu() {
+  if (!contextMenu) {
+    return;
+  }
+
+  contextMenu.items[0].submenu.items.forEach((item) => {
+    item.checked = parseInt(item.label, 10) === lowerRate;
+  });
+}
+
+function maybeAdoptCurrentPollingRateAsInactive(pollingRate) {
+  if (store.has('lower_rate')) {
+    return false;
+  }
+
+  if (!SAFE_ADOPTABLE_INACTIVE_RATES.has(pollingRate)) {
+    return false;
+  }
+
+  lowerRate = pollingRate;
+  store.set('lower_rate', lowerRate);
+  syncInactivePollingRateMenu();
+  log(`set inactive polling rate from current dongle rate: ${lowerRate}`);
+  return true;
+}
+
+function getDetectionMode() {
+  return detectionMode === 'foreground' ? 'foreground' : 'running';
+}
+
+function getDetectionModeLabel() {
+  return getDetectionMode() === 'foreground' ? 'foreground window' : 'running processes';
+}
+
+function editorRulesFromEntries(entries) {
+  return entries.map((entry) => ({
+    target: entry.rawTarget || entry.executablePath || entry.rawProcessName || entry.processName,
+    pollingRate: entry.pollingRate,
+    isPathRule: Boolean(entry.executablePath),
+  }));
+}
+
+function buildEditorConfigText(rules) {
+  if (!Array.isArray(rules)) {
+    throw new Error('Rules must be an array');
+  }
+
+  return rules.map((rule) => {
+    const target = String(rule.target || '').trim();
+    const pollingRate = String(rule.pollingRate || '').trim();
+    if (!target || !pollingRate) {
+      throw new Error('Each rule needs an executable and polling rate');
+    }
+
+    return `${formatRuleTarget(target)} ${pollingRate}`;
+  }).join('\n');
+}
+
+function setupRuleEditorIpc() {
+  ipcMain.handle('rules:load', () => {
+    ensureConfigFile();
+    const { entries, warnings } = readRules(getProcessListPath(), (message) => log(message, true));
+    return { rules: editorRulesFromEntries(entries), warnings };
+  });
+
+  ipcMain.handle('rules:save', (_event, rules) => {
+    try {
+      const text = buildEditorConfigText(rules);
+      const { entries, warnings } = parseProcessConfig(text);
+      if (warnings.length > 0 || entries.length !== rules.length) {
+        return { ok: false, warnings };
+      }
+
+      writeRules(getProcessListPath(), entries);
+      return { ok: true, rules: editorRulesFromEntries(entries), warnings: [] };
+    } catch (error) {
+      return { ok: false, warnings: [error.message] };
+    }
+  });
+
+  ipcMain.handle('rules:browse', async () => {
+    const options = {
+      title: 'Choose executable',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Executables', extensions: ['exe'] },
+      ],
+    };
+    const result = ruleEditorWindow
+      ? await dialog.showOpenDialog(ruleEditorWindow, options)
+      : await dialog.showOpenDialog(options);
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    return result.filePaths[0];
+  });
+}
+
 app.whenReady().then(() => {
   if (!store.has('autostart')) {
     store.set('autostart', true);
   }
 
+  if (!store.has('detection_mode')) {
+    store.set('detection_mode', 'foreground');
+  }
+
   autostartEnabled = store.get('autostart');
+  detectionMode = store.get('detection_mode') === 'foreground' ? 'foreground' : 'running';
 
   autolaunch = new AutoLaunch({
     name: 'Razer Auto Polling Rate',
@@ -146,7 +258,16 @@ app.whenReady().then(() => {
         { label: '1000hz', type: 'radio', click: handleInactive, checked: lowerRate === 1000 },
       ],
     },
-    { label: 'Open process list', type: 'normal', click: openProcessList },
+    {
+      label: 'Detection mode',
+      type: 'submenu',
+      submenu: [
+        { label: 'Foreground window', type: 'radio', click: () => handleDetectionMode('foreground'), checked: detectionMode === 'foreground' },
+        { label: 'Running processes', type: 'radio', click: () => handleDetectionMode('running'), checked: detectionMode === 'running' },
+      ],
+    },
+    { label: 'Edit polling rules', type: 'normal', click: openRuleEditor },
+    { label: 'Open config folder', type: 'normal', click: openProcessList },
     { label: 'Autostart', type: 'checkbox', click: handleAutostart, checked: autostartEnabled },
     { label: 'Quit', type: 'normal', click: quit },
   ]);
@@ -166,11 +287,17 @@ app.whenReady().then(() => {
   runLoop();
 });
 
+setupRuleEditorIpc();
+
+app.on('window-all-closed', (event) => {
+  event.preventDefault();
+});
+
 async function runLoop() {
   await guardedCheckPollingRate(true);
 
   while (true) {
-    await new Promise((res) => setTimeout(res, 3000));
+    await new Promise((res) => setTimeout(res, 1500));
     if (stop) {
       break;
     }
@@ -194,6 +321,37 @@ async function quit() {
 
 function openProcessList() {
   shell.openPath(getConfigDirectory());
+}
+
+function openRuleEditor() {
+  ensureConfigFile();
+  if (ruleEditorWindow && !ruleEditorWindow.isDestroyed()) {
+    ruleEditorWindow.focus();
+    return;
+  }
+
+  ruleEditorWindow = new BrowserWindow({
+    width: 840,
+    height: 560,
+    title: 'Polling rules',
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'ruleEditorPreload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  ruleEditorWindow.setMenu(null);
+
+  ruleEditorWindow.once('ready-to-show', () => {
+    ruleEditorWindow.show();
+  });
+  ruleEditorWindow.on('closed', () => {
+    ruleEditorWindow = null;
+  });
+  ruleEditorWindow.loadFile(path.join(__dirname, 'ruleEditor.html'));
 }
 
 function updateAutostart() {
@@ -220,6 +378,11 @@ function handleInactive(menuItem) {
   lowerRate = parseInt(menuItem.label, 10);
   store.set('lower_rate', lowerRate);
   handleContextMenu();
+}
+
+function handleDetectionMode(mode) {
+  detectionMode = mode === 'foreground' ? 'foreground' : 'running';
+  store.set('detection_mode', detectionMode);
 }
 
 async function getDongle() {
@@ -361,11 +524,6 @@ async function setPollingRate(dongle, pollingRate) {
   return getPollingRate(dongle);
 }
 
-function getRunningProcesses() {
-  const output = execFileSync('tasklist', ['/fo', 'csv', '/nh'], { encoding: 'utf8' });
-  return parseTasklistCsv(output);
-}
-
 async function guardedCheckPollingRate(firstRun) {
   const result = await checkGuard.run(() => checkPollingRate(firstRun));
   if (result.skipped) {
@@ -380,15 +538,20 @@ async function checkPollingRate(firstRun) {
   try {
     ensureConfigFile();
 
-    const { entries } = parseProcessConfig(fs.readFileSync(getProcessListPath(), 'utf8'), {
-      warn: (message) => log(message, true),
-    });
-    const runningProcesses = getRunningProcesses();
-    const selected = selectTargetPollingRate(entries, runningProcesses, lowerRate);
-    const requestedTarget = selected.targetRate;
+    const { entries } = readRules(getProcessListPath(), (message) => log(message, true));
+    const mode = getDetectionMode();
+    const selected = mode === 'foreground'
+      ? selectForegroundPollingRate(entries, getForegroundProcess(), lowerRate)
+      : selectTargetPollingRate(entries, getRunningProcesses(), lowerRate);
+    let requestedTarget = selected.targetRate;
 
     dongle = await getDongle();
     claimedInterfaceNumber = await prepareDongle(dongle);
+
+    let pollingRate = await getPollingRate(dongle);
+    if (maybeAdoptCurrentPollingRateAsInactive(pollingRate) && !selected.matchedProcess) {
+      requestedTarget = lowerRate;
+    }
 
     const resolvedTarget = resolveSupportedPollingRate(requestedTarget, { is8kCompatible: is8kCompatible() });
     if (!resolvedTarget.rate) {
@@ -399,15 +562,15 @@ async function checkPollingRate(firstRun) {
       log(resolvedTarget.warning, true);
     }
 
-    let pollingRate = await getPollingRate(dongle);
     const targetRate = resolvedTarget.rate;
     const matchedText = selected.matchedProcess ? `matched ${selected.matchedProcess}` : 'inactive';
+    const modeText = getDetectionModeLabel();
 
     if (firstRun) {
       const active = Boolean(selected.matchedProcess && pollingRate === targetRate);
       setTrayStatus({
         icon: getPollingRateIcon(pollingRate, active),
-        tooltip: `Current ${pollingRate} Hz; target ${targetRate} Hz (${matchedText})`,
+        tooltip: `Current ${pollingRate} Hz; target ${targetRate} Hz; ${modeText}; ${matchedText}`,
       });
     }
 
@@ -420,13 +583,13 @@ async function checkPollingRate(firstRun) {
       if (pollingRate !== targetRate) {
         setTrayStatus({
           icon: 'loading.png',
-          tooltip: `Failed to set target ${targetRate} Hz; current ${pollingRate} Hz (${matchedText})`,
+          tooltip: `Failed to set target ${targetRate} Hz; current ${pollingRate} Hz; ${modeText}; ${matchedText}`,
         });
         setRate = [0, false];
       } else {
         setTrayStatus({
           icon: getPollingRateIcon(pollingRate, isActive),
-          tooltip: `Current ${pollingRate} Hz; target ${targetRate} Hz (${matchedText})`,
+          tooltip: `Current ${pollingRate} Hz; target ${targetRate} Hz; ${modeText}; ${matchedText}`,
         });
         setRate = [pollingRate, isActive];
       }
