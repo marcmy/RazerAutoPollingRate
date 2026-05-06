@@ -5,6 +5,7 @@ const { parseProcessConfig } = require('../src/lib/config');
 const {
   findFirstMatchingProcess,
   parseTasklistCsv,
+  selectForegroundPollingRate,
   selectTargetPollingRate,
 } = require('../src/lib/processes');
 
@@ -37,4 +38,66 @@ test('tasklist matching is case-insensitive and exact by executable name', () =>
 
   assert.equal(findFirstMatchingProcess(entries, running).processName, 'r5apex.exe');
   assert.equal(findFirstMatchingProcess(entries, ['not-r5apex.exe']), null);
+});
+
+test('full executable path match beats bare process-name match', () => {
+  const { entries } = parseProcessConfig([
+    'r5apex_dx12.exe 2000',
+    '"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Apex Legends\\r5apex_dx12.exe" 4000',
+  ].join('\n'));
+
+  const selected = selectTargetPollingRate(entries, [{
+    processName: 'r5apex_dx12.exe',
+    executablePath: 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Apex Legends\\r5apex_dx12.exe',
+  }], 500);
+
+  assert.equal(selected.targetRate, 4000);
+});
+
+test('same specificity uses config order priority', () => {
+  const { entries } = parseProcessConfig([
+    '"C:\\Games\\Apex\\r5apex_dx12.exe" 2000',
+    '"D:\\Games\\Apex\\r5apex_dx12.exe" 4000',
+  ].join('\n'));
+
+  const selected = selectTargetPollingRate(entries, [
+    { processName: 'r5apex_dx12.exe', executablePath: 'D:\\Games\\Apex\\r5apex_dx12.exe' },
+    { processName: 'r5apex_dx12.exe', executablePath: 'C:\\Games\\Apex\\r5apex_dx12.exe' },
+  ], 500);
+
+  assert.equal(selected.targetRate, 2000);
+});
+
+test('full executable path matching is case-insensitive on Windows paths', () => {
+  const { entries } = parseProcessConfig('"C:\\Games\\Apex\\r5apex_dx12.exe" 4000');
+  const selected = selectTargetPollingRate(entries, [{
+    processName: 'R5APEX_DX12.EXE',
+    executablePath: 'c:\\games\\apex\\R5APEX_DX12.EXE',
+  }], 500);
+
+  assert.equal(selected.targetRate, 4000);
+});
+
+test('foreground mode switches to inactive rate when focused process does not match', () => {
+  const { entries } = parseProcessConfig('r5apex_dx12.exe 4000');
+  const selected = selectForegroundPollingRate(entries, {
+    processName: 'notepad.exe',
+    executablePath: 'C:\\Windows\\System32\\notepad.exe',
+  }, 500);
+
+  assert.equal(selected.targetRate, 500);
+  assert.equal(selected.matchedProcess, null);
+});
+
+test('foreground mode matches exact full executable path', () => {
+  const { entries } = parseProcessConfig([
+    'r5apex_dx12.exe 2000',
+    '"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Apex Legends\\r5apex_dx12.exe" 4000',
+  ].join('\n'));
+  const selected = selectForegroundPollingRate(entries, {
+    processName: 'r5apex_dx12.exe',
+    executablePath: 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Apex Legends\\r5apex_dx12.exe',
+  }, 500);
+
+  assert.equal(selected.targetRate, 4000);
 });

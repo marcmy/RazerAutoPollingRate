@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { parseProcessConfig } = require('../src/lib/config');
+const { parseProcessConfig, serializeProcessConfig } = require('../src/lib/config');
 
 test('valid config lines parse correctly', () => {
   const { entries, warnings } = parseProcessConfig('r5apex.exe 4000\nquake_live_x64.exe 1000');
@@ -53,4 +53,28 @@ test('inline comments after entries are ignored', () => {
 
   assert.equal(entries.length, 1);
   assert.equal(entries[0].pollingRate, 4000);
+});
+
+test('quoted full executable paths with spaces parse correctly', () => {
+  const { entries, warnings } = parseProcessConfig('"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Apex Legends\\r5apex_dx12.exe" 4000');
+
+  assert.deepEqual(warnings, []);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].processName, 'r5apex_dx12.exe');
+  assert.equal(entries[0].executablePath, 'c:\\program files (x86)\\steam\\steamapps\\common\\apex legends\\r5apex_dx12.exe');
+  assert.equal(entries[0].isPathRule, true);
+  assert.equal(entries[0].pollingRate, 4000);
+});
+
+test('unquoted paths with spaces are rejected', () => {
+  const { entries, warnings } = parseProcessConfig('C:\\Program Files\\Game\\game.exe 4000');
+
+  assert.equal(entries.length, 0);
+  assert.match(warnings[0], /expected "process.exe pollingRate"/);
+});
+
+test('full executable paths serialize with quotes', () => {
+  const { entries } = parseProcessConfig('"C:\\Program Files\\Game\\game.exe" 2000');
+
+  assert.equal(serializeProcessConfig(entries), '"C:\\Program Files\\Game\\game.exe" 2000');
 });

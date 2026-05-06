@@ -1,13 +1,13 @@
 {
   "name": "razerautopollingrate",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "main": "src/main.js",
   "author": "Philip B, Neil C",
   "license": "ISC",
   "description": "Automatically adjust polling rate",
   "scripts": {
     "start": "electron-forge start",
-    "test": "node --test \"test/**/*.test.js\"",
+    "test": "node --test test/run-tests.js",
     "package": "electron-forge package",
     "make": "electron-forge make"
   },
