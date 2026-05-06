@@ -224,9 +224,7 @@
         return;
       }
 
-      rulesBody.textContent = '';
-      result.rules.forEach(addRule);
-      setStatus('Saved');
+      window.close();
     }
 
     document.getElementById('add-rule').addEventListener('click', () => addRule());

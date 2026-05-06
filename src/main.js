@@ -262,6 +262,10 @@ app.whenReady().then(() => {
 
 setupRuleEditorIpc();
 
+app.on('window-all-closed', (event) => {
+  event.preventDefault();
+});
+
 async function runLoop() {
   await guardedCheckPollingRate(true);
 
