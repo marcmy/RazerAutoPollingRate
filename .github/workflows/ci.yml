@@ -21,7 +21,7 @@ jobs:
       - run: npm test
 
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     needs: test
     steps:
       - uses: actions/checkout@v6
