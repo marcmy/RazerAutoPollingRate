@@ -19,3 +19,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+
+  build-windows:
+    runs-on: windows-2022
+    needs: test
+    steps:
+      - name: Release builds moved to manual workflow
+        shell: pwsh
+        run: |
+          Write-Host "CI verifies tests only."
+          Write-Host "Windows release artifacts are built by the manual Draft Windows Release workflow."
