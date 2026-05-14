@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.2.8
+
+- Improved foreground-window detection for elevated or protected apps so bare process-name rules can still match when Windows does not expose the executable path.
+- Simplified GitHub Actions: CI now verifies tests only, while the manual draft release workflow is the single path that builds Windows release assets, SHA256 hashes, and tags/releases.
+- Updated the draft release workflow default tag to `v1.2.8-maintained`.
+
 ## v1.2.7
 
 - Added foreground-window detection mode as the default for new installs while keeping running-process detection available from the tray menu.
