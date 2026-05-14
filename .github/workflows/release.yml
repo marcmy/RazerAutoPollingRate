@@ -6,7 +6,7 @@ on:
       tag:
         description: Release tag
         required: true
-        default: v1.2.6-maintained
+        default: v1.2.8-maintained
 
 permissions:
   contents: write
@@ -42,12 +42,12 @@ jobs:
           Maintained fork release.
 
           Highlights:
-          - Hardened config parser with comments, blank lines, CRLF/LF, whitespace handling, and polling-rate validation.
+          - Adds foreground-window detection while keeping running-process detection available.
+          - Supports full executable path rules and a tray GUI rule editor.
+          - Improves elevated/protected foreground-process handling so bare process-name rules can still match when Windows hides the executable path.
           - Preserves per-process polling-rate behavior from the nchaudhury fork.
-          - Adds tests, CI, and a Windows release workflow.
-          - Improves USB cleanup and tray error/status reporting.
+          - Builds Windows x64 artifacts and SHA256 hashes from this workflow run.
           - Hardware limitation: automated tests use mocked logic; real dongle behavior still needs manual hardware verification.
-          - Detection limitation: process-running based, not foreground-window based.
           "@
           gh release create $env:RELEASE_TAG --draft --title $env:RELEASE_TAG --notes $notes
           Get-ChildItem -Path out/make -Recurse -File | ForEach-Object {

@@ -8,9 +8,7 @@ Original project credit is preserved for Philip B and the upstream fork by Neil 
 
 ## Download
 
-Get the latest Windows build from the Releases page:
-
-- [v1.2.7-maintained](https://github.com/marcmy/RazerAutoPollingRate/releases/tag/v1.2.7-maintained)
+Get the latest Windows build from the [Releases page](https://github.com/marcmy/RazerAutoPollingRate/releases).
 
 The Windows build is unsigned, so SmartScreen may warn on first run.
 
@@ -161,6 +159,8 @@ npm run make
 ```
 
 The project includes Node test coverage for config parsing, process/path matching, foreground-process lookup behavior, rate mapping, 8 kHz compatibility fallback, and polling-check overlap protection.
+
+CI runs the automated test suite on pushes and pull requests. Official Windows installers are built only by the manual `Draft Windows Release` workflow, which creates a draft release, release tag, artifacts, and `SHA256SUMS.txt`.
 
 ## Manual Hardware Test Checklist
 
