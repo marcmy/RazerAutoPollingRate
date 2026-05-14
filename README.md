@@ -71,6 +71,12 @@ Full-path rule:
 "C:\Program Files (x86)\Steam\steamapps\common\Apex Legends\r5apex_dx12.exe" pollingRate
 ```
 
+Elevated or protected games may hide their full executable path from unelevated apps. If a full-path rule does not match an elevated game, add a bare `.exe` rule for the same game:
+
+```text
+r5apex_dx12.exe 4000
+```
+
 Valid polling rates:
 
 ```text
@@ -98,6 +104,7 @@ Matching rules:
 - When rules have the same specificity, config order wins.
 - Windows path matching is case-insensitive.
 - Paths with spaces must be quoted.
+- Bare `.exe` rules are the recommended fallback for elevated/protected games when Windows hides the full path.
 - Invalid entries are ignored and logged instead of crashing the app.
 
 ## Detection Modes
@@ -119,7 +126,7 @@ Use this only when you specifically want background-running processes to hold th
 ## Notes And Limitations
 
 - Foreground-window detection depends on Windows exposing the focused process path.
-- Some elevated or protected apps may only be matchable by bare process name.
+- Some elevated or protected apps may only be matchable by bare process name; full-path rules are best-effort unless the app can read the target process path.
 - Razer Synapse may display stale polling-rate values while this app controls the dongle.
 - If Synapse also tries to change polling rate, the two apps may fight over the setting.
 - If 8000 Hz is requested on unsupported hardware, the app falls back to 4000 Hz and logs/shows a warning.

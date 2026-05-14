@@ -3,6 +3,7 @@
 ## v1.2.8
 
 - Improved foreground-window detection for elevated or protected apps so bare process-name rules can still match when Windows does not expose the executable path.
+- Documented that elevated/protected games may need bare `.exe` rules because Windows can hide the full executable path from unelevated apps.
 - Simplified GitHub Actions: CI now verifies tests only, while the manual draft release workflow is the single path that builds Windows release assets, SHA256 hashes, and tags/releases.
 - Updated the draft release workflow default tag to `v1.2.8-maintained`.
 
