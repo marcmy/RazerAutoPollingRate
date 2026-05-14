@@ -31,3 +31,15 @@ test('foreground process command output can match by process name without path',
     executablePath: null,
   });
 });
+
+test('foreground process lookup includes tasklist fallback by pid', () => {
+  const foregroundProcess = getForegroundProcess((_command, args) => {
+    const script = args[4];
+    assert.match(script, /tasklist \/FI "PID eq \$processId"/);
+    assert.match(script, /ConvertFrom-Csv/);
+    return '{"Name":"ElevatedGame.exe","ExecutablePath":null}';
+  });
+
+  assert.equal(foregroundProcess.processName, 'ElevatedGame.exe');
+  assert.equal(foregroundProcess.executablePath, null);
+});
