@@ -55,13 +55,3 @@ jobs:
             gh release upload $env:RELEASE_TAG $_.FullName --clobber
           }
           gh release upload $env:RELEASE_TAG SHA256SUMS.txt --clobber
-      - name: Trigger scoop bucket Excavator
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN || secrets.GH_PAT || secrets.PAT }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
-            Write-Host "No cross-repo token secret configured; skipping scoop-bucket Excavator trigger. Add SCOOP_BUCKET_TOKEN, GH_PAT, or PAT with repo/workflow access to enable this."
-            exit 0
-          }
-          gh workflow run excavator.yml --repo marcmy/scoop-bucket --ref master
