@@ -22,3 +22,12 @@ test('foreground process with missing executable path still returns process name
     executablePath: null,
   });
 });
+
+test('foreground process command output can match by process name without path', () => {
+  const foregroundProcess = getForegroundProcess(() => '{"Name":"ElevatedGame.exe"}');
+
+  assert.deepEqual(foregroundProcess, {
+    processName: 'ElevatedGame.exe',
+    executablePath: null,
+  });
+});
