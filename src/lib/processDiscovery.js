@@ -87,6 +87,16 @@ if (-not $name) {
     }
   } catch {}
 }
+if (-not $name) {
+  try {
+    $rows = tasklist /FI "PID eq $processId" /FO CSV /NH 2>$null |
+      ConvertFrom-Csv -Header ImageName,PID,SessionName,SessionNumber,MemUsage
+    $row = $rows | Where-Object { $_.PID -eq [string]$processId } | Select-Object -First 1
+    if ($row -and $row.ImageName -and $row.ImageName -notmatch '^INFO:') {
+      $name = $row.ImageName
+    }
+  } catch {}
+}
 if (-not $name) { return }
 [pscustomobject]@{ Name = $name; ExecutablePath = $path } | ConvertTo-Json -Compress
 `;

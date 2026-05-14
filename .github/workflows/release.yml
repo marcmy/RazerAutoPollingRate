@@ -45,6 +45,7 @@ jobs:
           - Adds foreground-window detection while keeping running-process detection available.
           - Supports full executable path rules and a tray GUI rule editor.
           - Improves elevated/protected foreground-process handling so bare process-name rules can still match when Windows hides the executable path.
+          - Note: elevated/protected games may need bare .exe rules because full paths can be hidden from unelevated apps.
           - Preserves per-process polling-rate behavior from the nchaudhury fork.
           - Builds Windows x64 artifacts and SHA256 hashes from this workflow run.
           - Hardware limitation: automated tests use mocked logic; real dongle behavior still needs manual hardware verification.
