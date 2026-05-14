@@ -67,8 +67,28 @@ $handle = [Win32ForegroundWindow]::GetForegroundWindow()
 $processId = 0
 [void][Win32ForegroundWindow]::GetWindowThreadProcessId($handle, [ref]$processId)
 if ($processId -eq 0) { return }
-$process = Get-Process -Id $processId -ErrorAction Stop
-[pscustomobject]@{ Name = ($process.ProcessName + ".exe"); ExecutablePath = $process.Path } | ConvertTo-Json -Compress
+$name = $null
+$path = $null
+try {
+  $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction Stop
+  if ($processInfo) {
+    $name = $processInfo.Name
+    $path = $processInfo.ExecutablePath
+  }
+} catch {}
+if (-not $name) {
+  try {
+    $process = Get-Process -Id $processId -ErrorAction Stop
+    $name = $process.ProcessName + ".exe"
+    try {
+      $path = $process.Path
+    } catch {
+      $path = $null
+    }
+  } catch {}
+}
+if (-not $name) { return }
+[pscustomobject]@{ Name = $name; ExecutablePath = $path } | ConvertTo-Json -Compress
 `;
 
   try {
