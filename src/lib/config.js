@@ -57,7 +57,7 @@ function parseProcessConfig(contents, options = {}) {
 
     const parsedLine = parseRuleLine(withoutComment);
     if (!parsedLine) {
-      const message = `Ignoring processlist.cfg line ${lineNumber}: expected "process.exe pollingRate" or "\\"C:\\path\\process.exe\\" pollingRate".`;
+      const message = `Ignoring config rule line ${lineNumber}: expected "process.exe pollingRate" or "\\"C:\\path\\process.exe\\" pollingRate".`;
       warnings.push(message);
       warn(message);
       return;
@@ -69,21 +69,21 @@ function parseProcessConfig(contents, options = {}) {
     const normalizedPath = isPath ? normalizeExecutablePath(target) : null;
 
     if (/\s/.test(target) && !wasQuoted) {
-      const message = `Ignoring processlist.cfg line ${lineNumber}: paths with spaces must be quoted.`;
+      const message = `Ignoring config rule line ${lineNumber}: paths with spaces must be quoted.`;
       warnings.push(message);
       warn(message);
       return;
     }
 
     if (isPath && !wasQuoted && /\s/.test(target)) {
-      const message = `Ignoring processlist.cfg line ${lineNumber}: paths with spaces must be quoted.`;
+      const message = `Ignoring config rule line ${lineNumber}: paths with spaces must be quoted.`;
       warnings.push(message);
       warn(message);
       return;
     }
 
     if (!isPath && !/^[^\\/:*?"<>|]+\.exe$/i.test(target)) {
-      const message = `Ignoring processlist.cfg line ${lineNumber}: "${target}" is not an executable name ending in .exe or a quoted full .exe path.`;
+      const message = `Ignoring config rule line ${lineNumber}: "${target}" is not an executable name ending in .exe or a quoted full .exe path.`;
       warnings.push(message);
       warn(message);
       return;
@@ -91,7 +91,7 @@ function parseProcessConfig(contents, options = {}) {
 
     const pollingRate = parsePollingRate(rateValue);
     if (pollingRate === null) {
-      const message = `Ignoring processlist.cfg line ${lineNumber}: "${rateValue}" is not a valid polling rate (${VALID_POLLING_RATES.join(', ')}).`;
+      const message = `Ignoring config rule line ${lineNumber}: "${rateValue}" is not a valid polling rate (${VALID_POLLING_RATES.join(', ')}).`;
       warnings.push(message);
       warn(message);
       return;

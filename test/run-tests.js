@@ -1,3 +1,4 @@
+require('./appConfig.test');
 require('./checkGuard.test');
 require('./config.test');
 require('./processDiscovery.test');

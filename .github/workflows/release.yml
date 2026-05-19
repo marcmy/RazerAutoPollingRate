@@ -6,7 +6,7 @@ on:
       tag:
         description: Release tag
         required: true
-        default: v1.2.8-maintained
+        default: v1.2.9-maintained
 
 permissions:
   contents: write
@@ -42,8 +42,13 @@ jobs:
           Maintained fork release.
 
           Highlights:
+          - Adds a combined Settings window for persistent options and polling rules.
+          - Moves settings and rules into config.ini, with migration from processlist.cfg.
+          - Adds a runtime Enabled/Disabled tray toggle and Pick Window flow with F3.
+          - Adds a default game polling rate for newly picked apps.
+          - Improves autostart enablement by also updating Windows Startup Apps approved state.
           - Adds foreground-window detection while keeping running-process detection available.
-          - Supports full executable path rules and a tray GUI rule editor.
+          - Supports full executable path rules in the tray Settings window.
           - Improves elevated/protected foreground-process handling so bare process-name rules can still match when Windows hides the executable path.
           - Note: elevated/protected games may need bare .exe rules because full paths can be hidden from unelevated apps.
           - Preserves per-process polling-rate behavior from the nchaudhury fork.

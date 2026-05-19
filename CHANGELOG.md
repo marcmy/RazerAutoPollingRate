@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.2.9
+
+- Replaced the growing tray menu with a compact menu for Settings, Enabled/Disabled, Pick Window, and Exit.
+- Added a combined Settings window for inactive polling rate, default game polling rate, detection mode, autostart, polling rules, and opening `config.ini` in Notepad.
+- Moved settings and polling rules into a single `config.ini` file, with migration from the old `processlist.cfg` rule file.
+- Added a runtime detection toggle that is always enabled on app startup.
+- Added Pick Window mode: choose it from the tray, focus an app/game, press F3, and the focused process is added with the default game polling rate.
+- Added a default game polling rate setting, defaulting to 1000 Hz.
+- Improved autostart enablement by also updating the Windows Startup Apps approved state.
+
 ## v1.2.8
 
 - Improved foreground-window detection for elevated or protected apps so bare process-name rules can still match when Windows does not expose the executable path.

@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Razer Auto Polling Rate Settings</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: Canvas;
+      color: CanvasText;
+    }
+
+    body {
+      margin: 0;
+      min-width: 840px;
+    }
+
+    header,
+    footer {
+      align-items: center;
+      display: flex;
+      gap: 12px;
+      justify-content: space-between;
+      padding: 14px 18px;
+    }
+
+    header {
+      border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, Canvas);
+    }
+
+    footer {
+      border-top: 1px solid color-mix(in srgb, CanvasText 18%, Canvas);
+    }
+
+    h1,
+    h2 {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    h2 {
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    main {
+      display: grid;
+      gap: 18px;
+      padding: 16px 18px;
+    }
+
+    section {
+      display: grid;
+      gap: 12px;
+    }
+
+    .settings-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    label {
+      display: grid;
+      gap: 5px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    input,
+    select,
+    button {
+      font: inherit;
+    }
+
+    input,
+    select {
+      box-sizing: border-box;
+      padding: 7px 8px;
+      width: 100%;
+    }
+
+    button {
+      min-height: 32px;
+      padding: 5px 10px;
+    }
+
+    table {
+      border-collapse: collapse;
+      table-layout: fixed;
+      width: 100%;
+    }
+
+    th,
+    td {
+      border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
+      padding: 8px 4px;
+      text-align: left;
+      vertical-align: middle;
+    }
+
+    th {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .target-column {
+      width: 58%;
+    }
+
+    .rate-column {
+      width: 120px;
+    }
+
+    .actions-column {
+      width: 270px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .footer-left {
+      align-items: center;
+      display: flex;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .link-button {
+      background: none;
+      border: 0;
+      color: LinkText;
+      cursor: pointer;
+      padding: 0;
+      text-decoration: underline;
+    }
+
+    .status {
+      min-height: 20px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .status.error {
+      color: #b42318;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Settings</h1>
+    <button id="add-rule" type="button">Add rule</button>
+  </header>
+  <main>
+    <section>
+      <h2>Behavior</h2>
+      <div class="settings-grid">
+        <label>
+          Inactive polling rate
+          <select id="inactive-rate"></select>
+        </label>
+        <label>
+          Default game polling rate
+          <select id="default-game-rate"></select>
+        </label>
+        <label>
+          Detection mode
+          <select id="detection-mode">
+            <option value="foreground">Foreground window</option>
+            <option value="running">Running processes</option>
+          </select>
+        </label>
+        <label>
+          Autostart
+          <select id="autostart">
+            <option value="true">Enabled</option>
+            <option value="false">Disabled</option>
+          </select>
+        </label>
+      </div>
+    </section>
+    <section>
+      <h2>Polling Rules</h2>
+      <table>
+        <thead>
+          <tr>
+            <th class="target-column">Executable</th>
+            <th class="rate-column">Rate</th>
+            <th class="actions-column">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="rules"></tbody>
+      </table>
+    </section>
+  </main>
+  <footer>
+    <div class="footer-left">
+      <button id="open-config" class="link-button" type="button">Open config.ini in Notepad</button>
+      <div id="status" class="status"></div>
+    </div>
+    <button id="save" type="button">Save</button>
+  </footer>
+
+  <script>
+    const validRates = [125, 250, 500, 1000, 2000, 4000, 8000];
+    const inactiveRates = [125, 250, 500, 1000];
+    const rulesBody = document.getElementById('rules');
+    const statusElement = document.getElementById('status');
+    const inactiveRateSelect = document.getElementById('inactive-rate');
+    const defaultGameRateSelect = document.getElementById('default-game-rate');
+    const detectionModeSelect = document.getElementById('detection-mode');
+    const autostartSelect = document.getElementById('autostart');
+
+    function setStatus(message, isError = false) {
+      statusElement.textContent = message;
+      statusElement.classList.toggle('error', isError);
+    }
+
+    function fillRateSelect(select, rates, value) {
+      select.textContent = '';
+      rates.forEach((rate) => {
+        const option = document.createElement('option');
+        option.value = String(rate);
+        option.textContent = `${rate} Hz`;
+        option.selected = Number(value) === rate;
+        select.appendChild(option);
+      });
+    }
+
+    function createRateSelect(value) {
+      const select = document.createElement('select');
+      fillRateSelect(select, validRates, value);
+      return select;
+    }
+
+    function readRulesFromForm() {
+      return Array.from(rulesBody.querySelectorAll('tr')).map((row) => ({
+        target: row.querySelector('[data-field="target"]').value,
+        pollingRate: Number(row.querySelector('[data-field="rate"]').value),
+      }));
+    }
+
+    function readSettingsFromForm() {
+      return {
+        inactivePollingRate: Number(inactiveRateSelect.value),
+        defaultGamePollingRate: Number(defaultGameRateSelect.value),
+        detectionMode: detectionModeSelect.value,
+        autostart: autostartSelect.value === 'true',
+      };
+    }
+
+    function moveRow(row, direction) {
+      if (direction < 0 && row.previousElementSibling) {
+        rulesBody.insertBefore(row, row.previousElementSibling);
+      } else if (direction > 0 && row.nextElementSibling) {
+        rulesBody.insertBefore(row.nextElementSibling, row);
+      }
+    }
+
+    function addRule(rule = {}) {
+      const row = document.createElement('tr');
+      const targetCell = document.createElement('td');
+      const rateCell = document.createElement('td');
+      const actionsCell = document.createElement('td');
+      const targetInput = document.createElement('input');
+      const rateSelect = createRateSelect(rule.pollingRate || Number(defaultGameRateSelect.value) || 1000);
+      const actions = document.createElement('div');
+
+      targetInput.dataset.field = 'target';
+      targetInput.placeholder = 'process.exe or C:\\path\\process.exe';
+      targetInput.value = rule.target || '';
+      rateSelect.dataset.field = 'rate';
+      actions.className = 'actions';
+
+      [
+        ['Browse', async () => {
+          const selectedPath = await window.settingsApi.browseExecutable();
+          if (selectedPath) {
+            targetInput.value = selectedPath;
+          }
+        }],
+        ['Up', () => moveRow(row, -1)],
+        ['Down', () => moveRow(row, 1)],
+        ['Delete', () => row.remove()],
+      ].forEach(([label, handler]) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = label;
+        button.addEventListener('click', handler);
+        actions.appendChild(button);
+      });
+
+      targetCell.appendChild(targetInput);
+      rateCell.appendChild(rateSelect);
+      actionsCell.appendChild(actions);
+      row.append(targetCell, rateCell, actionsCell);
+      rulesBody.appendChild(row);
+    }
+
+    async function loadSettings() {
+      const result = await window.settingsApi.load();
+      fillRateSelect(inactiveRateSelect, inactiveRates, result.settings.inactivePollingRate);
+      fillRateSelect(defaultGameRateSelect, validRates, result.settings.defaultGamePollingRate);
+      detectionModeSelect.value = result.settings.detectionMode;
+      autostartSelect.value = String(Boolean(result.settings.autostart));
+      rulesBody.textContent = '';
+      result.rules.forEach(addRule);
+      setStatus(result.warnings && result.warnings.length ? result.warnings.join(' ') : '');
+    }
+
+    async function saveSettings() {
+      const result = await window.settingsApi.save({
+        settings: readSettingsFromForm(),
+        rules: readRulesFromForm(),
+      });
+      if (!result.ok) {
+        setStatus(result.warnings.join(' '), true);
+        return;
+      }
+
+      setStatus('Saved');
+    }
+
+    document.getElementById('add-rule').addEventListener('click', () => addRule());
+    document.getElementById('save').addEventListener('click', saveSettings);
+    document.getElementById('open-config').addEventListener('click', () => window.settingsApi.openConfig());
+    loadSettings().catch((error) => setStatus(error.message, true));
+  </script>
+</body>
+</html>
