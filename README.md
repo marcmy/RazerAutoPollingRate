@@ -2,7 +2,7 @@
 
 A Windows tray app for automatically switching a Razer HyperPolling dongle's polling rate based on the app or game you are using.
 
-This maintained fork adds foreground-window switching, full executable path rules, a tray GUI rule editor, safer config parsing, tests, CI, and Windows release packaging.
+This maintained fork adds foreground-window switching, full executable path rules, a tray settings GUI, safer config parsing, tests, CI, and Windows release packaging.
 
 Original project credit is preserved for Philip B and the upstream fork by Neil C / nchaudhury.
 
@@ -19,8 +19,10 @@ Razer Synapse can switch polling rates by app profile, but profiles can sometime
 Default behavior for new installs:
 
 - **Detection mode:** Foreground window
-- **Inactive polling rate:** 500 Hz, unless the app can safely adopt the dongle's current 500 Hz or 1000 Hz rate on first launch
-- **Rule editing:** Tray menu GUI, no manual text editing required
+- **Inactive polling rate:** 500 Hz
+- **Default game polling rate:** 1000 Hz for newly picked apps
+- **Detection enabled:** enabled each time the app starts
+- **Settings and rule editing:** tray menu GUI, no manual text editing required
 
 Razer Synapse does **not** need to be running. Synapse may show stale polling-rate information while this app controls the dongle.
 
@@ -36,26 +38,33 @@ Other brands are not supported.
 
 Right-click or click the tray icon to access:
 
-- **Inactive polling rate** — choose the fallback polling rate used when no rule matches
-- **Detection mode**
-  - **Foreground window** — default; only the focused app/game can match
-  - **Running processes** — legacy behavior; any running configured process can match
-- **Edit polling rules** — open the GUI rule editor
-- **Open config folder** — open the backend config location
-- **Autostart** — launch app at Windows login
-- **Quit** — exit the tray app
+- **Settings** — open all persistent settings and polling rules
+- **Enabled / Disabled** — temporarily enable or disable detection; this resets to enabled on every app start
+- **Pick Window (F3 in game)** — focus an app/game and press F3 to add it with the default game polling rate
+- **Exit** — exit the tray app
 
 The tray tooltip shows the current rate, target rate, detection mode, and matched rule/process.
 
-## Polling Rules
+## Settings
 
-Use **Edit polling rules** from the tray menu to add, edit, delete, reorder, browse for `.exe` files, choose polling rates, and save the rule list.
+Use **Settings** from the tray menu to manage:
+
+- Inactive polling rate
+- Default game polling rate
+- Detection mode
+- Autostart
+- Polling rules
+- Opening `config.ini` in Notepad
 
 The config file remains the backend storage, but normal use does not require opening it manually:
 
 ```text
-%APPDATA%\RazerAutoPollingRate\cfg\processlist.cfg
+%APPDATA%\RazerAutoPollingRate\cfg\config.ini
 ```
+
+Older `processlist.cfg` rules are migrated into `config.ini` the first time a new config is created.
+
+## Polling Rules
 
 Rules can match either a bare executable name or a quoted full executable path.
 
@@ -123,10 +132,17 @@ This keeps the older behavior. If any configured process is running, it can matc
 
 Use this only when you specifically want background-running processes to hold their configured polling rate.
 
+## Pick Window
+
+Choose **Pick Window (F3 in game)** from the tray menu, focus the app or game you want to add, then press F3. The app adds the focused process to `config.ini` using the default game polling rate and applies it on the next check immediately.
+
+If Windows exposes the full executable path, the picked rule uses the full path. If Windows hides the path, such as for some elevated or protected games, the picked rule falls back to the bare `.exe` name.
+
 ## Notes And Limitations
 
 - Foreground-window detection depends on Windows exposing the focused process path.
 - Some elevated or protected apps may only be matchable by bare process name; full-path rules are best-effort unless the app can read the target process path.
+- The tray Enabled/Disabled toggle is runtime-only and always starts enabled.
 - Razer Synapse may display stale polling-rate values while this app controls the dongle.
 - If Synapse also tries to change polling rate, the two apps may fight over the setting.
 - If 8000 Hz is requested on unsupported hardware, the app falls back to 4000 Hz and logs/shows a warning.
@@ -156,6 +172,10 @@ Check the tray tooltip and the app log:
 
 Invalid config entries, dongle access failures, and USB cleanup warnings are logged there.
 
+### Autostart is disabled in Windows Startup Apps
+
+Toggle Autostart off and back on in Settings. The app updates both the startup shortcut and Windows' Startup Apps approved state.
+
 ## Development
 
 ```powershell
@@ -175,10 +195,11 @@ Automated tests mock parsing, matching, rate-selection, and compatibility logic.
 
 - Start the app with the dongle unplugged and confirm it stays running with a useful tray error.
 - Plug in a supported dongle and confirm the tray shows current and target polling rate.
-- Add a foreground-window rule for a game and confirm focusing the game switches to the configured rate.
+- Add a foreground-window rule for a game in Settings and confirm focusing the game switches to the configured rate.
+- Use Pick Window, focus a game, press F3, and confirm a rule is added at the default game polling rate.
 - Alt-tab away and confirm the app returns to the inactive polling rate.
 - Add both a bare process rule and a full-path rule and confirm the full-path rule wins.
-- Save rules in the GUI and confirm the editor closes without exiting the tray app.
+- Save rules in Settings and confirm the settings window stays usable without exiting the tray app.
 - Add an invalid config line and confirm it is ignored and logged.
 - Request 8000 Hz on unsupported hardware, if available, and confirm it falls back safely.
 - Run with Razer Synapse open and confirm any conflict is understandable from tray/log status.

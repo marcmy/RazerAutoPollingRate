@@ -4,11 +4,11 @@ const {
   app,
   BrowserWindow,
   dialog,
+  globalShortcut,
   ipcMain,
   Tray,
   Menu,
   nativeImage,
-  shell,
 } = require('electron');
 
 const { WebUSB } = require('usb');
@@ -16,9 +16,21 @@ const fs = require('fs');
 const Store = require('electron-store');
 const path = require('path');
 const AutoLaunch = require('auto-launch');
+const { execFile } = require('child_process');
 
 const { createCheckGuard } = require('./lib/checkGuard');
-const { formatRuleTarget, parseProcessConfig } = require('./lib/config');
+const {
+  DEFAULT_SETTINGS,
+  configExists,
+  readAppConfig,
+  writeAppConfig,
+} = require('./lib/appConfig');
+const {
+  formatRuleTarget,
+  normalizeExecutablePath,
+  normalizeProcessName,
+  parseProcessConfig,
+} = require('./lib/config');
 const { getForegroundProcess, getRunningProcesses } = require('./lib/processDiscovery');
 const { selectForegroundPollingRate, selectTargetPollingRate } = require('./lib/processes');
 const {
@@ -28,10 +40,9 @@ const {
   resolveSupportedPollingRate,
 } = require('./lib/rates');
 const { getRazerReport } = require('./lib/razerReports');
-const { readRules, writeRules } = require('./lib/ruleStore');
 
 const appPath = app.getAppPath();
-const store = new Store();
+const legacyStore = new Store();
 
 function log(out, error = false) {
   const date = new Date().toLocaleTimeString('en-US', { hour12: false, hour: 'numeric', minute: 'numeric' });
@@ -71,25 +82,53 @@ let contextMenu;
 let currentModel;
 let setRate = [0, false];
 let lowerRate = 500;
+let defaultGamePollingRate = 1000;
 let detectionMode = 'foreground';
+let detectionEnabled = true;
+let pickingWindow = false;
 let hasStopped = false;
 let stop = false;
-let ruleEditorWindow = null;
+let settingsWindow = null;
 const assetsFolder = 'src/assets/';
 const checkGuard = createCheckGuard();
-const SAFE_ADOPTABLE_INACTIVE_RATES = new Set([500, 1000]);
 
 function getConfigDirectory() {
   return path.join(app.getPath('userData'), 'cfg');
 }
 
-function getProcessListPath() {
+function getConfigPath() {
+  return path.join(getConfigDirectory(), 'config.ini');
+}
+
+function getLegacyProcessListPath() {
   return path.join(getConfigDirectory(), 'processlist.cfg');
 }
 
 function ensureConfigFile() {
   fs.mkdirSync(getConfigDirectory(), { recursive: true });
-  fs.closeSync(fs.openSync(getProcessListPath(), 'a'));
+  if (configExists(getConfigPath())) {
+    return;
+  }
+
+  const settings = {
+    ...DEFAULT_SETTINGS,
+    autostart: legacyStore.has('autostart') ? Boolean(legacyStore.get('autostart')) : DEFAULT_SETTINGS.autostart,
+    detectionMode: legacyStore.get('detection_mode') === 'running' ? 'running' : DEFAULT_SETTINGS.detectionMode,
+  };
+  const storedLowerRate = legacyStore.has('lower_rate') ? parsePollingRate(legacyStore.get('lower_rate')) : null;
+  if (storedLowerRate && storedLowerRate <= 1000) {
+    settings.inactivePollingRate = storedLowerRate;
+  }
+
+  let entries = [];
+  const legacyProcessListPath = getLegacyProcessListPath();
+  if (fs.existsSync(legacyProcessListPath)) {
+    entries = parseProcessConfig(fs.readFileSync(legacyProcessListPath, 'utf8'), {
+      warn: (message) => log(message, true),
+    }).entries;
+  }
+
+  writeAppConfig(getConfigPath(), settings, entries);
 }
 
 function is8kCompatible() {
@@ -114,44 +153,61 @@ function getPollingRateIcon(pollingRate, isActive) {
   return `${pollingRate}${isActive ? 'a' : ''}.png`;
 }
 
-function handleContextMenu() {
-  contextMenu.items[0].submenu.items.forEach((item) => {
-    item.enabled = parseInt(item.label, 10) < 8000;
-  });
-}
-
-function syncInactivePollingRateMenu() {
-  if (!contextMenu) {
-    return;
-  }
-
-  contextMenu.items[0].submenu.items.forEach((item) => {
-    item.checked = parseInt(item.label, 10) === lowerRate;
-  });
-}
-
-function maybeAdoptCurrentPollingRateAsInactive(pollingRate) {
-  if (store.has('lower_rate')) {
-    return false;
-  }
-
-  if (!SAFE_ADOPTABLE_INACTIVE_RATES.has(pollingRate)) {
-    return false;
-  }
-
-  lowerRate = pollingRate;
-  store.set('lower_rate', lowerRate);
-  syncInactivePollingRateMenu();
-  log(`set inactive polling rate from current dongle rate: ${lowerRate}`);
-  return true;
-}
-
 function getDetectionMode() {
   return detectionMode === 'foreground' ? 'foreground' : 'running';
 }
 
 function getDetectionModeLabel() {
   return getDetectionMode() === 'foreground' ? 'foreground window' : 'running processes';
+}
+
+function getCurrentSettings() {
+  return {
+    inactivePollingRate: lowerRate,
+    defaultGamePollingRate,
+    detectionMode: getDetectionMode(),
+    autostart: Boolean(autostartEnabled),
+  };
+}
+
+function applySettings(settings) {
+  lowerRate = settings.inactivePollingRate;
+  defaultGamePollingRate = settings.defaultGamePollingRate;
+  detectionMode = settings.detectionMode === 'running' ? 'running' : 'foreground';
+  autostartEnabled = Boolean(settings.autostart);
+}
+
+function loadConfig(warn = (message) => log(message, true)) {
+  ensureConfigFile();
+  return readAppConfig(getConfigPath(), { warn });
+}
+
+function saveConfig(settings, entries) {
+  writeAppConfig(getConfigPath(), settings, entries);
+}
+
+function updateTrayMenu() {
+  if (!tray) {
+    return;
+  }
+
+  contextMenu = Menu.buildFromTemplate([
+    { label: 'Settings', type: 'normal', click: openSettingsWindow },
+    {
+      label: detectionEnabled ? 'Enabled' : 'Disabled',
+      type: 'checkbox',
+      checked: detectionEnabled,
+      click: handleDetectionEnabled,
+    },
+    {
+      label: pickingWindow ? 'Pick Window: press F3' : 'Pick Window (F3 in game)',
+      type: 'normal',
+      click: startPickWindow,
+      enabled: !pickingWindow,
+    },
+    { label: 'Exit', type: 'normal', click: quit },
+  ]);
+  tray.setContextMenu(contextMenu);
 }
 
 function editorRulesFromEntries(entries) {
@@ -178,29 +234,51 @@ function buildEditorConfigText(rules) {
   }).join('\n');
 }
 
-function setupRuleEditorIpc() {
-  ipcMain.handle('rules:load', () => {
-    ensureConfigFile();
-    const { entries, warnings } = readRules(getProcessListPath(), (message) => log(message, true));
-    return { rules: editorRulesFromEntries(entries), warnings };
+function setupSettingsIpc() {
+  ipcMain.handle('settings:load', () => {
+    const { settings, entries, warnings } = loadConfig((message) => log(message, true));
+    applySettings(settings);
+    return {
+      settings: getCurrentSettings(),
+      rules: editorRulesFromEntries(entries),
+      warnings,
+    };
   });
 
-  ipcMain.handle('rules:save', (_event, rules) => {
+  ipcMain.handle('settings:save', (_event, payload) => {
     try {
+      const settings = {
+        inactivePollingRate: parsePollingRate(payload.settings.inactivePollingRate) || DEFAULT_SETTINGS.inactivePollingRate,
+        defaultGamePollingRate: parsePollingRate(payload.settings.defaultGamePollingRate) || DEFAULT_SETTINGS.defaultGamePollingRate,
+        detectionMode: payload.settings.detectionMode === 'running' ? 'running' : 'foreground',
+        autostart: Boolean(payload.settings.autostart),
+      };
+      if (settings.inactivePollingRate > 1000) {
+        return { ok: false, warnings: ['Inactive polling rate must be 125, 250, 500, or 1000 Hz.'] };
+      }
+
+      const rules = Array.isArray(payload.rules) ? payload.rules : [];
       const text = buildEditorConfigText(rules);
       const { entries, warnings } = parseProcessConfig(text);
       if (warnings.length > 0 || entries.length !== rules.length) {
         return { ok: false, warnings };
       }
 
-      writeRules(getProcessListPath(), entries);
-      return { ok: true, rules: editorRulesFromEntries(entries), warnings: [] };
+      const autostartChanged = settings.autostart !== autostartEnabled;
+      applySettings(settings);
+      saveConfig(getCurrentSettings(), entries);
+      if (autostartChanged) {
+        updateAutostart();
+      }
+      updateTrayMenu();
+      guardedCheckPollingRate();
+      return { ok: true, settings: getCurrentSettings(), rules: editorRulesFromEntries(entries), warnings: [] };
     } catch (error) {
       return { ok: false, warnings: [error.message] };
     }
   });
 
-  ipcMain.handle('rules:browse', async () => {
+  ipcMain.handle('settings:browseExecutable', async () => {
     const options = {
       title: 'Choose executable',
       properties: ['openFile'],
@@ -208,8 +286,8 @@ function setupRuleEditorIpc() {
         { name: 'Executables', extensions: ['exe'] },
       ],
     };
-    const result = ruleEditorWindow
-      ? await dialog.showOpenDialog(ruleEditorWindow, options)
+    const result = settingsWindow
+      ? await dialog.showOpenDialog(settingsWindow, options)
       : await dialog.showOpenDialog(options);
 
     if (result.canceled || result.filePaths.length === 0) {
@@ -218,61 +296,25 @@ function setupRuleEditorIpc() {
 
     return result.filePaths[0];
   });
+
+  ipcMain.handle('settings:openConfig', () => {
+    ensureConfigFile();
+    execFile('notepad.exe', [getConfigPath()], { windowsHide: false }, (error) => {
+      if (error) {
+        log(`failed to open config.ini: ${error.message}`, true);
+      }
+    });
+  });
 }
 
 app.whenReady().then(() => {
-  if (!store.has('autostart')) {
-    store.set('autostart', true);
-  }
-
-  if (!store.has('detection_mode')) {
-    store.set('detection_mode', 'foreground');
-  }
-
-  autostartEnabled = store.get('autostart');
-  detectionMode = store.get('detection_mode') === 'foreground' ? 'foreground' : 'running';
-
   autolaunch = new AutoLaunch({
     name: 'Razer Auto Polling Rate',
   });
 
+  const { settings } = loadConfig((message) => log(message, true));
+  applySettings(settings);
   updateAutostart();
-
-  if (store.has('lower_rate')) {
-    const storedLowerRate = parsePollingRate(store.get('lower_rate'));
-    if (storedLowerRate && storedLowerRate <= 1000) {
-      lowerRate = storedLowerRate;
-    }
-  }
-
-  ensureConfigFile();
-
-  contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'Inactive polling rate',
-      type: 'submenu',
-      submenu: [
-        { label: '125hz', type: 'radio', click: handleInactive, checked: lowerRate === 125 },
-        { label: '250hz', type: 'radio', click: handleInactive, checked: lowerRate === 250 },
-        { label: '500hz', type: 'radio', click: handleInactive, checked: lowerRate === 500 },
-        { label: '1000hz', type: 'radio', click: handleInactive, checked: lowerRate === 1000 },
-      ],
-    },
-    {
-      label: 'Detection mode',
-      type: 'submenu',
-      submenu: [
-        { label: 'Foreground window', type: 'radio', click: () => handleDetectionMode('foreground'), checked: detectionMode === 'foreground' },
-        { label: 'Running processes', type: 'radio', click: () => handleDetectionMode('running'), checked: detectionMode === 'running' },
-      ],
-    },
-    { label: 'Edit polling rules', type: 'normal', click: openRuleEditor },
-    { label: 'Open config folder', type: 'normal', click: openProcessList },
-    { label: 'Autostart', type: 'checkbox', click: handleAutostart, checked: autostartEnabled },
-    { label: 'Quit', type: 'normal', click: quit },
-  ]);
-
-  handleContextMenu();
 
   tray = new Tray(nativeImage.createFromPath(path.join(appPath, assetsFolder + 'loading.png')));
 
@@ -282,15 +324,19 @@ app.whenReady().then(() => {
 
   tray.setToolTip('Searching for Razer HyperPolling dongle');
   tray.setTitle('Razer auto polling rate');
-  tray.setContextMenu(contextMenu);
+  updateTrayMenu();
 
   runLoop();
 });
 
-setupRuleEditorIpc();
+setupSettingsIpc();
 
 app.on('window-all-closed', (event) => {
   event.preventDefault();
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregister('F3');
 });
 
 async function runLoop() {
@@ -319,49 +365,56 @@ async function quit() {
   }
 }
 
-function openProcessList() {
-  shell.openPath(getConfigDirectory());
-}
-
-function openRuleEditor() {
+function openSettingsWindow() {
   ensureConfigFile();
-  if (ruleEditorWindow && !ruleEditorWindow.isDestroyed()) {
-    ruleEditorWindow.focus();
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    settingsWindow.focus();
     return;
   }
 
-  ruleEditorWindow = new BrowserWindow({
-    width: 840,
-    height: 560,
-    title: 'Polling rules',
+  settingsWindow = new BrowserWindow({
+    width: 960,
+    height: 680,
+    title: 'Razer Auto Polling Rate Settings',
     show: false,
     webPreferences: {
-      preload: path.join(__dirname, 'ruleEditorPreload.js'),
+      preload: path.join(__dirname, 'settingsPreload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
   });
 
-  ruleEditorWindow.setMenu(null);
+  settingsWindow.setMenu(null);
 
-  ruleEditorWindow.once('ready-to-show', () => {
-    ruleEditorWindow.show();
+  settingsWindow.once('ready-to-show', () => {
+    settingsWindow.show();
   });
-  ruleEditorWindow.on('closed', () => {
-    ruleEditorWindow = null;
+  settingsWindow.on('closed', () => {
+    settingsWindow = null;
   });
-  ruleEditorWindow.loadFile(path.join(__dirname, 'ruleEditor.html'));
+  settingsWindow.loadFile(path.join(__dirname, 'settings.html'));
 }
 
 function updateAutostart() {
-  store.set('autostart', autostartEnabled);
   autolaunch.isEnabled().then((enabled) => {
     if (!enabled && autostartEnabled) {
-      autolaunch.enable();
+      return autolaunch.enable().then(() => setStartupApprovedEnabled(true));
+    }
+
+    if (enabled && !autostartEnabled) {
+      return autolaunch.disable().then(() => setStartupApprovedEnabled(false));
+    }
+
+    if (autostartEnabled) {
+      return setStartupApprovedEnabled(true);
+    }
+
+    return Promise.resolve();
+  }).then(() => {
+    if (autostartEnabled) {
       log('enabled autostart');
-    } else if (enabled && !autostartEnabled) {
-      autolaunch.disable();
+    } else {
       log('disabled autostart');
     }
   }).catch((error) => {
@@ -369,20 +422,126 @@ function updateAutostart() {
   });
 }
 
-function handleAutostart(menuItem) {
-  autostartEnabled = menuItem.checked;
-  updateAutostart();
+function setStartupApprovedEnabled(enabled) {
+  return new Promise((resolve, reject) => {
+    const value = enabled
+      ? '@(2,0,0,0,0,0,0,0,0,0,0,0)'
+      : '@(3,0,0,0,0,0,0,0,0,0,0,0)';
+    const command = [
+      "$path = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\StartupApproved\\StartupFolder'",
+      'New-Item -Path $path -Force | Out-Null',
+      `$bytes = [byte[]]${value}`,
+      "New-ItemProperty -Path $path -Name 'Razer Auto Polling Rate.lnk' -PropertyType Binary -Value $bytes -Force | Out-Null",
+    ].join('; ');
+
+    execFile('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', command], { windowsHide: true }, (error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+
+      resolve();
+    });
+  });
 }
 
-function handleInactive(menuItem) {
-  lowerRate = parseInt(menuItem.label, 10);
-  store.set('lower_rate', lowerRate);
-  handleContextMenu();
+function handleDetectionEnabled(menuItem) {
+  detectionEnabled = Boolean(menuItem.checked);
+  updateTrayMenu();
+  guardedCheckPollingRate();
 }
 
-function handleDetectionMode(mode) {
-  detectionMode = mode === 'foreground' ? 'foreground' : 'running';
-  store.set('detection_mode', detectionMode);
+function stopPickWindow() {
+  pickingWindow = false;
+  globalShortcut.unregister('F3');
+  updateTrayMenu();
+}
+
+function startPickWindow() {
+  pickingWindow = true;
+  const registered = globalShortcut.register('F3', handlePickWindowShortcut);
+  if (!registered) {
+    pickingWindow = false;
+    setTrayStatus({
+      icon: 'loading.png',
+      tooltip: 'Could not register F3 for window picking',
+    });
+    log('failed to register F3 for window picking', true);
+    updateTrayMenu();
+    return;
+  }
+
+  setTrayStatus({
+    icon: 'loading.png',
+    tooltip: `Focus the app or game, then press F3 to add it at ${defaultGamePollingRate} Hz`,
+  });
+  updateTrayMenu();
+}
+
+function isSameRuleTarget(left, right) {
+  if (left.executablePath && right.executablePath) {
+    return normalizeExecutablePath(left.executablePath) === normalizeExecutablePath(right.executablePath);
+  }
+
+  if (!left.executablePath && !right.executablePath) {
+    return normalizeProcessName(left.processName) === normalizeProcessName(right.processName);
+  }
+
+  return false;
+}
+
+function createRuleEntry(target, pollingRate) {
+  const text = `${formatRuleTarget(target)} ${pollingRate}`;
+  const { entries, warnings } = parseProcessConfig(text);
+  if (warnings.length > 0 || entries.length !== 1) {
+    throw new Error(warnings[0] || `Could not add ${target}`);
+  }
+
+  return entries[0];
+}
+
+function upsertPickedRule(entries, newEntry) {
+  const existingIndex = entries.findIndex((entry) => isSameRuleTarget(entry, newEntry));
+  if (existingIndex === -1) {
+    return [...entries, newEntry];
+  }
+
+  const updated = entries.slice();
+  updated[existingIndex] = newEntry;
+  return updated;
+}
+
+async function handlePickWindowShortcut() {
+  if (!pickingWindow) {
+    return;
+  }
+
+  try {
+    const foregroundProcess = getForegroundProcess();
+    if (!foregroundProcess || !foregroundProcess.processName) {
+      throw new Error('Could not identify the focused process');
+    }
+
+    const target = foregroundProcess.executablePath || foregroundProcess.processName;
+    const { settings, entries } = loadConfig((message) => log(message, true));
+    applySettings(settings);
+    const newEntry = createRuleEntry(target, defaultGamePollingRate);
+    const updatedEntries = upsertPickedRule(entries, newEntry);
+    saveConfig(getCurrentSettings(), updatedEntries);
+    setTrayStatus({
+      icon: 'loading.png',
+      tooltip: `Added ${target} at ${defaultGamePollingRate} Hz`,
+    });
+    stopPickWindow();
+    await guardedCheckPollingRate();
+  } catch (error) {
+    setTrayStatus({
+      icon: 'loading.png',
+      tooltip: `Pick Window failed: ${error.message}`,
+    });
+    log(`Pick Window failed: ${error.message}`, true);
+    stopPickWindow();
+  }
 }
 
 async function getDongle() {
@@ -536,23 +695,20 @@ async function checkPollingRate(firstRun) {
   let claimedInterfaceNumber = null;
 
   try {
-    ensureConfigFile();
-
-    const { entries } = readRules(getProcessListPath(), (message) => log(message, true));
+    const { settings, entries } = loadConfig((message) => log(message, true));
+    applySettings(settings);
     const mode = getDetectionMode();
-    const selected = mode === 'foreground'
-      ? selectForegroundPollingRate(entries, getForegroundProcess(), lowerRate)
-      : selectTargetPollingRate(entries, getRunningProcesses(), lowerRate);
-    let requestedTarget = selected.targetRate;
+    const selected = detectionEnabled
+      ? (mode === 'foreground'
+        ? selectForegroundPollingRate(entries, getForegroundProcess(), lowerRate)
+        : selectTargetPollingRate(entries, getRunningProcesses(), lowerRate))
+      : { targetRate: lowerRate, matchedProcess: null, matchedRule: null };
+    const requestedTarget = selected.targetRate;
 
     dongle = await getDongle();
     claimedInterfaceNumber = await prepareDongle(dongle);
 
     let pollingRate = await getPollingRate(dongle);
-    if (maybeAdoptCurrentPollingRateAsInactive(pollingRate) && !selected.matchedProcess) {
-      requestedTarget = lowerRate;
-    }
-
     const resolvedTarget = resolveSupportedPollingRate(requestedTarget, { is8kCompatible: is8kCompatible() });
     if (!resolvedTarget.rate) {
       throw new Error(resolvedTarget.warning);
@@ -564,7 +720,7 @@ async function checkPollingRate(firstRun) {
 
     const targetRate = resolvedTarget.rate;
     const matchedText = selected.matchedProcess ? `matched ${selected.matchedProcess}` : 'inactive';
-    const modeText = getDetectionModeLabel();
+    const modeText = detectionEnabled ? getDetectionModeLabel() : 'detection disabled';
 
     if (firstRun) {
       const active = Boolean(selected.matchedProcess && pollingRate === targetRate);

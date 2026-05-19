@@ -1,17 +1,11 @@
-const fs = require('fs');
-const { parseProcessConfig, serializeProcessConfig } = require('./config');
+const { readAppConfig, writeAppConfig } = require('./appConfig');
 
 function readRules(filePath, warn) {
-  const contents = fs.existsSync(filePath) ? fs.readFileSync(filePath, 'utf8') : '';
-  return parseProcessConfig(contents, { warn });
+  return readAppConfig(filePath, { warn });
 }
 
-function writeRules(filePath, entries) {
-  const contents = serializeProcessConfig(entries);
-  const tempPath = `${filePath}.tmp`;
-
-  fs.writeFileSync(tempPath, `${contents}${contents ? '\n' : ''}`, 'utf8');
-  fs.renameSync(tempPath, filePath);
+function writeRules(filePath, entries, settings) {
+  writeAppConfig(filePath, settings, entries);
 }
 
 module.exports = {
