@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.2.10
+
+- Changed foreground-window detection to use one cached hidden watcher while foreground mode is active instead of launching a new PowerShell lookup every polling interval.
+- Stopped the foreground watcher when detection is disabled, running-process mode is selected, or the app exits.
+- Kept Pick Window on a one-shot foreground lookup so pressing F3 still captures the current focused process immediately.
+
 ## v1.2.9
 
 - Replaced the growing tray menu with a compact menu for Settings, Enabled/Disabled, Pick Window, and Exit.
