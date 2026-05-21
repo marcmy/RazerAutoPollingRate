@@ -31,7 +31,12 @@ const {
   normalizeProcessName,
   parseProcessConfig,
 } = require('./lib/config');
-const { getForegroundProcess, getRunningProcesses } = require('./lib/processDiscovery');
+const {
+  getForegroundProcess,
+  getForegroundProcessSnapshot,
+  getRunningProcesses,
+  stopForegroundProcessWatcher,
+} = require('./lib/processDiscovery');
 const { selectForegroundPollingRate, selectTargetPollingRate } = require('./lib/processes');
 const {
   getRateForReportByte,
@@ -337,6 +342,7 @@ app.on('window-all-closed', (event) => {
 
 app.on('will-quit', () => {
   globalShortcut.unregister('F3');
+  stopForegroundProcessWatcher();
 });
 
 async function runLoop() {
@@ -517,7 +523,7 @@ async function handlePickWindowShortcut() {
   }
 
   try {
-    const foregroundProcess = getForegroundProcess();
+    const foregroundProcess = getForegroundProcessSnapshot();
     if (!foregroundProcess || !foregroundProcess.processName) {
       throw new Error('Could not identify the focused process');
     }
@@ -698,11 +704,16 @@ async function checkPollingRate(firstRun) {
     const { settings, entries } = loadConfig((message) => log(message, true));
     applySettings(settings);
     const mode = getDetectionMode();
-    const selected = detectionEnabled
-      ? (mode === 'foreground'
-        ? selectForegroundPollingRate(entries, getForegroundProcess(), lowerRate)
-        : selectTargetPollingRate(entries, getRunningProcesses(), lowerRate))
-      : { targetRate: lowerRate, matchedProcess: null, matchedRule: null };
+    let selected;
+    if (!detectionEnabled) {
+      stopForegroundProcessWatcher();
+      selected = { targetRate: lowerRate, matchedProcess: null, matchedRule: null };
+    } else if (mode === 'foreground') {
+      selected = selectForegroundPollingRate(entries, getForegroundProcess(), lowerRate);
+    } else {
+      stopForegroundProcessWatcher();
+      selected = selectTargetPollingRate(entries, getRunningProcesses(), lowerRate);
+    }
     const requestedTarget = selected.targetRate;
 
     dongle = await getDongle();
