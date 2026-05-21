@@ -2,12 +2,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
-  getForegroundProcess,
+  getForegroundProcessSnapshot,
+  getForegroundWatcherCommand,
   parseForegroundProcessOutput,
 } = require('../src/lib/processDiscovery');
 
 test('foreground process lookup failure returns null', () => {
-  const foregroundProcess = getForegroundProcess(() => {
+  const foregroundProcess = getForegroundProcessSnapshot(() => {
     throw new Error('access denied');
   });
 
@@ -24,7 +25,7 @@ test('foreground process with missing executable path still returns process name
 });
 
 test('foreground process command output can match by process name without path', () => {
-  const foregroundProcess = getForegroundProcess(() => '{"Name":"ElevatedGame.exe"}');
+  const foregroundProcess = getForegroundProcessSnapshot(() => '{"Name":"ElevatedGame.exe"}');
 
   assert.deepEqual(foregroundProcess, {
     processName: 'ElevatedGame.exe',
@@ -33,7 +34,7 @@ test('foreground process command output can match by process name without path',
 });
 
 test('foreground process lookup includes tasklist fallback by pid', () => {
-  const foregroundProcess = getForegroundProcess((_command, args) => {
+  const foregroundProcess = getForegroundProcessSnapshot((_command, args) => {
     const script = args[4];
     assert.match(script, /tasklist \/FI "PID eq \$processId"/);
     assert.match(script, /ConvertFrom-Csv/);
@@ -42,4 +43,12 @@ test('foreground process lookup includes tasklist fallback by pid', () => {
 
   assert.equal(foregroundProcess.processName, 'ElevatedGame.exe');
   assert.equal(foregroundProcess.executablePath, null);
+});
+
+test('foreground watcher uses one persistent polling command', () => {
+  const command = getForegroundWatcherCommand(500);
+
+  assert.match(command, /while \(\$true\)/);
+  assert.match(command, /Start-Sleep -Milliseconds 500/);
+  assert.match(command, /tasklist \/FI "PID eq \$processId"/);
 });
