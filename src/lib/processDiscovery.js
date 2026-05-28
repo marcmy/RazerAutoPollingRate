@@ -4,6 +4,7 @@ const { parseTasklistCsv } = require('./processes');
 let foregroundWatcher = null;
 let foregroundBuffer = '';
 let latestForegroundProcess = null;
+const FOREGROUND_WATCH_INTERVAL_MS = 1000;
 
 function parseJsonOutput(output) {
   const trimmed = String(output || '').trim();
@@ -106,7 +107,7 @@ if (-not $name) { return }
 `;
 }
 
-function getForegroundWatcherCommand(pollMilliseconds = 500) {
+function getForegroundWatcherCommand(pollMilliseconds = FOREGROUND_WATCH_INTERVAL_MS) {
   return `
 Add-Type @"
 using System;
@@ -119,10 +120,14 @@ public class Win32ForegroundWindow {
 }
 "@
 
-function Get-ForegroundProcessJson {
+function Get-ForegroundProcessId {
   $handle = [Win32ForegroundWindow]::GetForegroundWindow()
   $processId = 0
   [void][Win32ForegroundWindow]::GetWindowThreadProcessId($handle, [ref]$processId)
+  return $processId
+}
+
+function Get-ProcessJsonById($processId) {
   if ($processId -eq 0) { return $null }
   $name = $null
   $path = $null
@@ -158,13 +163,29 @@ function Get-ForegroundProcessJson {
   [pscustomobject]@{ Name = $name; ExecutablePath = $path } | ConvertTo-Json -Compress
 }
 
+$lastProcessId = -1
+$lastJson = $null
+
 while ($true) {
   try {
-    $json = Get-ForegroundProcessJson
-    if ([string]::IsNullOrWhiteSpace($json)) {
-      [Console]::Out.WriteLine("{}")
-    } else {
-      [Console]::Out.WriteLine($json)
+    $processId = Get-ForegroundProcessId
+    if ($processId -eq 0) {
+      if ($lastProcessId -ne 0) {
+        [Console]::Out.WriteLine("{}")
+      }
+      $lastProcessId = 0
+      $lastJson = "{}"
+    } elseif ($processId -ne $lastProcessId -or [string]::IsNullOrWhiteSpace($lastJson)) {
+      $json = Get-ProcessJsonById $processId
+      if ([string]::IsNullOrWhiteSpace($json)) {
+        [Console]::Out.WriteLine("{}")
+        $lastProcessId = -1
+        $lastJson = $null
+      } else {
+        [Console]::Out.WriteLine($json)
+        $lastProcessId = $processId
+        $lastJson = $json
+      }
     }
   } catch {
     [Console]::Out.WriteLine("{}")

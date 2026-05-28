@@ -46,9 +46,17 @@ test('foreground process lookup includes tasklist fallback by pid', () => {
 });
 
 test('foreground watcher uses one persistent polling command', () => {
-  const command = getForegroundWatcherCommand(500);
+  const command = getForegroundWatcherCommand();
 
   assert.match(command, /while \(\$true\)/);
-  assert.match(command, /Start-Sleep -Milliseconds 500/);
+  assert.match(command, /Start-Sleep -Milliseconds 1000/);
   assert.match(command, /tasklist \/FI "PID eq \$processId"/);
+});
+
+test('foreground watcher caches process details by foreground pid', () => {
+  const command = getForegroundWatcherCommand();
+
+  assert.match(command, /\$lastProcessId = -1/);
+  assert.match(command, /\$processId -ne \$lastProcessId/);
+  assert.match(command, /Get-ProcessJsonById \$processId/);
 });
