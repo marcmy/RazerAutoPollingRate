@@ -4,7 +4,9 @@ const { parseTasklistCsv } = require('./processes');
 let foregroundWatcher = null;
 let foregroundBuffer = '';
 let latestForegroundProcess = null;
+let foregroundMissStartedAt = null;
 const FOREGROUND_WATCH_INTERVAL_MS = 1000;
+const FOREGROUND_MISS_GRACE_MS = 5000;
 
 function parseJsonOutput(output) {
   const trimmed = String(output || '').trim();
@@ -214,16 +216,50 @@ function getForegroundProcessSnapshot(commandRunner = execFileSync) {
   }
 }
 
-function handleForegroundWatcherLine(line) {
+function resetForegroundProcessCache() {
+  latestForegroundProcess = null;
+  foregroundMissStartedAt = null;
+}
+
+function getLatestForegroundProcess(now = Date.now()) {
+  if (foregroundMissStartedAt !== null && now - foregroundMissStartedAt >= FOREGROUND_MISS_GRACE_MS) {
+    resetForegroundProcessCache();
+  }
+
+  return latestForegroundProcess;
+}
+
+function handleForegroundWatcherLine(line, now = Date.now()) {
   const trimmed = String(line || '').trim();
   if (!trimmed) {
     return;
   }
 
   try {
-    latestForegroundProcess = parseForegroundProcessOutput(trimmed);
+    const foregroundProcess = parseForegroundProcessOutput(trimmed);
+    if (foregroundProcess) {
+      latestForegroundProcess = foregroundProcess;
+      foregroundMissStartedAt = null;
+      return;
+    }
+
+    if (latestForegroundProcess && foregroundMissStartedAt === null) {
+      foregroundMissStartedAt = now;
+      return;
+    }
+
+    if (!latestForegroundProcess) {
+      resetForegroundProcessCache();
+    }
   } catch (error) {
-    latestForegroundProcess = null;
+    if (latestForegroundProcess) {
+      if (foregroundMissStartedAt === null) {
+        foregroundMissStartedAt = now;
+      }
+      return;
+    }
+
+    resetForegroundProcessCache();
   }
 }
 
@@ -266,7 +302,7 @@ function startForegroundProcessWatcher(spawnRunner = spawn) {
 
     foregroundWatcher = null;
     foregroundBuffer = '';
-    latestForegroundProcess = null;
+    resetForegroundProcessCache();
   });
 
   watcher.on('exit', () => {
@@ -276,7 +312,7 @@ function startForegroundProcessWatcher(spawnRunner = spawn) {
 
     foregroundWatcher = null;
     foregroundBuffer = '';
-    latestForegroundProcess = null;
+    resetForegroundProcessCache();
   });
 }
 
@@ -288,7 +324,7 @@ function stopForegroundProcessWatcher() {
   const watcher = foregroundWatcher;
   foregroundWatcher = null;
   foregroundBuffer = '';
-  latestForegroundProcess = null;
+  resetForegroundProcessCache();
 
   if (!watcher.killed) {
     watcher.kill();
@@ -297,17 +333,21 @@ function stopForegroundProcessWatcher() {
 
 function getForegroundProcess() {
   startForegroundProcessWatcher();
-  return latestForegroundProcess;
+  return getLatestForegroundProcess();
 }
 
 module.exports = {
+  FOREGROUND_MISS_GRACE_MS,
   getForegroundProcess,
   getForegroundProcessSnapshot,
+  getLatestForegroundProcess,
   getRunningProcesses,
   getForegroundLookupCommand,
   getForegroundWatcherCommand,
+  handleForegroundWatcherLine,
   parseForegroundProcessOutput,
   parseJsonOutput,
+  resetForegroundProcessCache,
   startForegroundProcessWatcher,
   stopForegroundProcessWatcher,
 };
