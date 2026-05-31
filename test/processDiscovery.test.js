@@ -2,9 +2,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  FOREGROUND_MISS_GRACE_MS,
+  getLatestForegroundProcess,
   getForegroundProcessSnapshot,
   getForegroundWatcherCommand,
+  handleForegroundWatcherLine,
   parseForegroundProcessOutput,
+  resetForegroundProcessCache,
 } = require('../src/lib/processDiscovery');
 
 test('foreground process lookup failure returns null', () => {
@@ -59,4 +63,41 @@ test('foreground watcher caches process details by foreground pid', () => {
   assert.match(command, /\$lastProcessId = -1/);
   assert.match(command, /\$processId -ne \$lastProcessId/);
   assert.match(command, /Get-ProcessJsonById \$processId/);
+});
+
+test('foreground cache keeps last process during brief lookup miss', () => {
+  resetForegroundProcessCache();
+  handleForegroundWatcherLine('{"Name":"Game.exe","ExecutablePath":null}', 1000);
+  handleForegroundWatcherLine('{}', 2000);
+
+  assert.deepEqual(getLatestForegroundProcess(2000 + FOREGROUND_MISS_GRACE_MS - 1), {
+    processName: 'Game.exe',
+    executablePath: null,
+  });
+
+  resetForegroundProcessCache();
+});
+
+test('foreground cache clears stale process after lookup miss grace', () => {
+  resetForegroundProcessCache();
+  handleForegroundWatcherLine('{"Name":"Game.exe","ExecutablePath":null}', 1000);
+  handleForegroundWatcherLine('{}', 2000);
+
+  assert.equal(getLatestForegroundProcess(2000 + FOREGROUND_MISS_GRACE_MS), null);
+
+  resetForegroundProcessCache();
+});
+
+test('foreground cache replaces missed process when a new process is found', () => {
+  resetForegroundProcessCache();
+  handleForegroundWatcherLine('{"Name":"Game.exe","ExecutablePath":null}', 1000);
+  handleForegroundWatcherLine('{}', 2000);
+  handleForegroundWatcherLine('{"Name":"Notepad.exe","ExecutablePath":null}', 2500);
+
+  assert.deepEqual(getLatestForegroundProcess(2500), {
+    processName: 'Notepad.exe',
+    executablePath: null,
+  });
+
+  resetForegroundProcessCache();
 });
