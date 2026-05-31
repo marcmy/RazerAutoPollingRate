@@ -1,5 +1,15 @@
 # Changelog
 
+## v1.2.12
+
+- Added a short foreground-process miss grace period so transient empty foreground lookups do not immediately drop the mouse to the inactive polling rate while in-game.
+- Kept the last known foreground process only briefly during lookup misses, then clears it after a sustained miss or replaces it immediately when a new foreground process is detected.
+
+## v1.2.11
+
+- Reduced foreground-mode idle CPU work by polling the foreground watcher every 1000 ms instead of 500 ms.
+- Cached foreground process details by PID so WMI/tasklist process detail lookups only run when the focused process changes.
+
 ## v1.2.10
 
 - Changed foreground-window detection to use one cached hidden watcher while foreground mode is active instead of launching a new PowerShell lookup every polling interval.
