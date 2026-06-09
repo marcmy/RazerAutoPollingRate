@@ -22,6 +22,8 @@ test('config.ini serializes settings and ordered rules', () => {
     defaultGamePollingRate: 2000,
     detectionMode: 'running',
     autostart: false,
+    diagnosticLogging: true,
+    verboseDiagnosticLogging: true,
   }, entries);
 
   assert.match(contents, /\[settings\]/);
@@ -29,6 +31,8 @@ test('config.ini serializes settings and ordered rules', () => {
   assert.match(contents, /default_game_polling_rate=2000/);
   assert.match(contents, /detection_mode=running/);
   assert.match(contents, /autostart=false/);
+  assert.match(contents, /diagnostic_logging=true/);
+  assert.match(contents, /verbose_diagnostic_logging=true/);
   assert.match(contents, /\[rules\]/);
   assert.match(contents, /1=r5apex.exe 4000/);
   assert.match(contents, /2="C:\\Games\\Quake Live\\quake_live_x64.exe" 1000/);
@@ -44,6 +48,8 @@ test('config.ini reads settings and rules back', () => {
     'default_game_polling_rate=8000',
     'detection_mode=foreground',
     'autostart=true',
+    'diagnostic_logging=true',
+    'verbose_diagnostic_logging=false',
     '',
     '[rules]',
     '2=quake_live_x64.exe 1000',
@@ -58,6 +64,8 @@ test('config.ini reads settings and rules back', () => {
     defaultGamePollingRate: 8000,
     detectionMode: 'foreground',
     autostart: true,
+    diagnosticLogging: true,
+    verboseDiagnosticLogging: false,
   });
   assert.deepEqual(entries.map((entry) => entry.rawTarget), ['r5apex.exe', 'quake_live_x64.exe']);
   assert.deepEqual(entries.map((entry) => entry.pollingRate), [4000, 1000]);
@@ -82,6 +90,8 @@ test('writeAppConfig writes a readable config.ini', () => {
     defaultGamePollingRate: 1000,
     detectionMode: 'foreground',
     autostart: true,
+    diagnosticLogging: false,
+    verboseDiagnosticLogging: false,
   }, entries);
 
   const readBack = readAppConfig(configPath);

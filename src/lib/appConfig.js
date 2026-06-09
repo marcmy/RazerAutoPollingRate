@@ -8,6 +8,8 @@ const DEFAULT_SETTINGS = {
   defaultGamePollingRate: 1000,
   detectionMode: 'foreground',
   autostart: true,
+  diagnosticLogging: false,
+  verboseDiagnosticLogging: false,
 };
 
 function parseBoolean(value, fallback) {
@@ -69,6 +71,11 @@ function normalizeSettings(rawSettings = {}) {
     defaultGamePollingRate: defaultGamePollingRate || DEFAULT_SETTINGS.defaultGamePollingRate,
     detectionMode,
     autostart: parseBoolean(rawSettings.autostart, DEFAULT_SETTINGS.autostart),
+    diagnosticLogging: parseBoolean(rawSettings.diagnostic_logging, DEFAULT_SETTINGS.diagnosticLogging),
+    verboseDiagnosticLogging: parseBoolean(
+      rawSettings.verbose_diagnostic_logging,
+      DEFAULT_SETTINGS.verboseDiagnosticLogging,
+    ),
   };
 }
 
@@ -108,6 +115,8 @@ function serializeAppConfig(settings, entries) {
     `default_game_polling_rate=${normalizedSettings.defaultGamePollingRate}`,
     `detection_mode=${normalizedSettings.detectionMode === 'running' ? 'running' : 'foreground'}`,
     `autostart=${normalizedSettings.autostart ? 'true' : 'false'}`,
+    `diagnostic_logging=${normalizedSettings.diagnosticLogging ? 'true' : 'false'}`,
+    `verbose_diagnostic_logging=${normalizedSettings.verboseDiagnosticLogging ? 'true' : 'false'}`,
     '',
     '[rules]',
     ...ruleLines.map((line, index) => `${index + 1}=${line}`),

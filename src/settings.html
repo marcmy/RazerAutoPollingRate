@@ -73,6 +73,22 @@
       font-weight: 600;
     }
 
+    .checkbox-label {
+      align-items: center;
+      display: flex;
+      gap: 8px;
+      min-height: 34px;
+    }
+
+    .checkbox-label.indented {
+      margin-left: 24px;
+    }
+
+    .logging-options {
+      display: grid;
+      gap: 6px;
+    }
+
     input,
     select,
     button {
@@ -84,6 +100,17 @@
       box-sizing: border-box;
       padding: 7px 8px;
       width: 100%;
+    }
+
+    input[type="checkbox"] {
+      height: 16px;
+      margin: 0;
+      padding: 0;
+      width: 16px;
+    }
+
+    .settings-select {
+      width: 190px;
     }
 
     button {
@@ -167,26 +194,33 @@
       <div class="settings-grid">
         <label>
           Inactive polling rate
-          <select id="inactive-rate"></select>
+          <select id="inactive-rate" class="settings-select"></select>
         </label>
         <label>
           Default game polling rate
-          <select id="default-game-rate"></select>
+          <select id="default-game-rate" class="settings-select"></select>
         </label>
         <label>
           Detection mode
-          <select id="detection-mode">
+          <select id="detection-mode" class="settings-select">
             <option value="foreground">Foreground window</option>
             <option value="running">Running processes</option>
           </select>
         </label>
-        <label>
-          Autostart
-          <select id="autostart">
-            <option value="true">Enabled</option>
-            <option value="false">Disabled</option>
-          </select>
+        <label class="checkbox-label">
+          <input id="autostart" type="checkbox">
+          <span>Autostart</span>
         </label>
+        <div class="logging-options">
+          <label class="checkbox-label">
+            <input id="diagnostic-logging" type="checkbox">
+            <span>Diagnostic logging</span>
+          </label>
+          <label class="checkbox-label indented">
+            <input id="verbose-diagnostic-logging" type="checkbox">
+            <span>Verbose diagnostic logging</span>
+          </label>
+        </div>
       </div>
     </section>
     <section>
@@ -219,7 +253,9 @@
     const inactiveRateSelect = document.getElementById('inactive-rate');
     const defaultGameRateSelect = document.getElementById('default-game-rate');
     const detectionModeSelect = document.getElementById('detection-mode');
-    const autostartSelect = document.getElementById('autostart');
+    const autostartCheckbox = document.getElementById('autostart');
+    const diagnosticLoggingCheckbox = document.getElementById('diagnostic-logging');
+    const verboseDiagnosticLoggingCheckbox = document.getElementById('verbose-diagnostic-logging');
 
     function setStatus(message, isError = false) {
       statusElement.textContent = message;
@@ -255,8 +291,17 @@
         inactivePollingRate: Number(inactiveRateSelect.value),
         defaultGamePollingRate: Number(defaultGameRateSelect.value),
         detectionMode: detectionModeSelect.value,
-        autostart: autostartSelect.value === 'true',
+        autostart: autostartCheckbox.checked,
+        diagnosticLogging: diagnosticLoggingCheckbox.checked,
+        verboseDiagnosticLogging: verboseDiagnosticLoggingCheckbox.checked,
       };
+    }
+
+    function updateVerboseLoggingState() {
+      verboseDiagnosticLoggingCheckbox.disabled = !diagnosticLoggingCheckbox.checked;
+      if (!diagnosticLoggingCheckbox.checked) {
+        verboseDiagnosticLoggingCheckbox.checked = false;
+      }
     }
 
     function moveRow(row, direction) {
@@ -312,7 +357,10 @@
       fillRateSelect(inactiveRateSelect, inactiveRates, result.settings.inactivePollingRate);
       fillRateSelect(defaultGameRateSelect, validRates, result.settings.defaultGamePollingRate);
       detectionModeSelect.value = result.settings.detectionMode;
-      autostartSelect.value = String(Boolean(result.settings.autostart));
+      autostartCheckbox.checked = Boolean(result.settings.autostart);
+      diagnosticLoggingCheckbox.checked = Boolean(result.settings.diagnosticLogging);
+      verboseDiagnosticLoggingCheckbox.checked = Boolean(result.settings.verboseDiagnosticLogging);
+      updateVerboseLoggingState();
       rulesBody.textContent = '';
       result.rules.forEach(addRule);
       setStatus(result.warnings && result.warnings.length ? result.warnings.join(' ') : '');
@@ -334,6 +382,7 @@
     document.getElementById('add-rule').addEventListener('click', () => addRule());
     document.getElementById('save').addEventListener('click', saveSettings);
     document.getElementById('open-config').addEventListener('click', () => window.settingsApi.openConfig());
+    diagnosticLoggingCheckbox.addEventListener('change', updateVerboseLoggingState);
     loadSettings().catch((error) => setStatus(error.message, true));
   </script>
 </body>

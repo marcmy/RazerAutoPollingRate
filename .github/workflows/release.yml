@@ -6,7 +6,7 @@ on:
       tag:
         description: Release tag
         required: true
-        default: v1.2.12-maintained
+        default: v1.2.13-maintained
 
 permissions:
   contents: write
@@ -42,21 +42,14 @@ jobs:
           Maintained fork release.
 
           Highlights:
-          - Adds a combined Settings window for persistent options and polling rules.
-          - Moves settings and rules into config.ini, with migration from processlist.cfg.
-          - Adds a runtime Enabled/Disabled tray toggle and Pick Window flow with F3.
-          - Adds a default game polling rate for newly picked apps.
-          - Improves autostart enablement by also updating Windows Startup Apps approved state.
-          - Adds foreground-window detection while keeping running-process detection available.
-          - Supports full executable path rules in the tray Settings window.
-          - Improves elevated/protected foreground-process handling so bare process-name rules can still match when Windows hides the executable path.
-          - Note: elevated/protected games may need bare .exe rules because full paths can be hidden from unelevated apps.
-          - Reduces foreground-mode process churn by keeping one hidden foreground watcher active only while needed instead of launching a new lookup every polling interval.
-          - Reduces foreground watcher CPU work by caching process details by PID and polling the helper less often.
-          - Avoids brief in-game drops to the inactive polling rate when foreground lookup has a transient miss.
-          - Preserves per-process polling-rate behavior from the nchaudhury fork.
+          - Adds optional diagnostic logging in Settings, disabled by default.
+          - Adds an indented verbose diagnostic logging option for lower-level process-scan and polling-loop events.
+          - Starts diagnostic logs only while a configured executable is running, using running-process detection even when foreground-window mode is active.
+          - Logs detection selections, polling status, polling-rate change requests/results, and errors with timestamps.
+          - Stores logs under %APPDATA%\RazerAutoPollingRate\diagnostic-logs using MM-DD-YYYY-Program.txt filenames and keeps the latest 10 log files.
+          - Changes Autostart to a checkbox and shortens Settings dropdown widths for polling rates and detection mode.
           - Builds Windows x64 artifacts and SHA256 hashes from this workflow run.
-          - Hardware limitation: automated tests use mocked logic; real dongle behavior still needs manual hardware verification.
+          - Hardware limitation: no new real dongle smoke test was performed for this diagnostic logging release.
           "@
           gh release create $env:RELEASE_TAG --draft --title $env:RELEASE_TAG --notes $notes
           Get-ChildItem -Path out/make -Recurse -File | ForEach-Object {
