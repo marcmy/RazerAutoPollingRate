@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.2.13
+
+- Added optional diagnostic logging, controlled from Settings and disabled by default.
+- Added an indented verbose diagnostic logging checkbox for lower-level process-scan and polling-loop events.
+- Diagnostic logs start only while a configured executable is running, using running-process detection even when foreground-window mode is active.
+- Logs capture detection selections, polling status, polling-rate change requests/results, and errors with timestamps.
+- Diagnostic log files are named `MM-DD-YYYY-Program.txt`, stored under `%APPDATA%\RazerAutoPollingRate\diagnostic-logs`, and pruned to the latest 10 files.
+- Changed Autostart to a checkbox and shortened the Settings dropdown widths for polling rates and detection mode.
+
 ## v1.2.12
 
 - Added a short foreground-process miss grace period so transient empty foreground lookups do not immediately drop the mouse to the inactive polling rate while in-game.
