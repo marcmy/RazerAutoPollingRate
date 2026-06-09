@@ -53,6 +53,7 @@ Use **Settings** from the tray menu to manage:
 - Default game polling rate
 - Detection mode
 - Autostart
+- Diagnostic logging and verbose diagnostic logging
 - Polling rules
 - Opening `config.ini` in Notepad
 
@@ -63,6 +64,14 @@ The config file remains the backend storage, but normal use does not require ope
 ```
 
 Older `processlist.cfg` rules are migrated into `config.ini` the first time a new config is created.
+
+Diagnostic logging is off by default. When enabled, the app uses running-process detection to start a dated per-program log only while one of your configured executables is running, even if foreground-window detection is the active switching mode. Logs are kept in:
+
+```text
+%APPDATA%\RazerAutoPollingRate\diagnostic-logs
+```
+
+The app keeps up to 10 diagnostic log files. Verbose diagnostic logging adds lower-level polling-loop and process-scan events.
 
 ## Polling Rules
 
@@ -171,6 +180,16 @@ Check the tray tooltip and the app log:
 ```
 
 Invalid config entries, dongle access failures, and USB cleanup warnings are logged there.
+
+### Mouse stutters or unexpected polling-rate changes
+
+Enable Diagnostic logging in Settings, reproduce the issue, then check the matching dated log in:
+
+```text
+%APPDATA%\RazerAutoPollingRate\diagnostic-logs
+```
+
+Enable Verbose diagnostic logging for additional process-scan and polling-loop events.
 
 ### Autostart is disabled in Windows Startup Apps
 

@@ -19,6 +19,7 @@ const AutoLaunch = require('auto-launch');
 const { execFile } = require('child_process');
 
 const { createCheckGuard } = require('./lib/checkGuard');
+const { DiagnosticLogger } = require('./lib/diagnosticLogger');
 const {
   DEFAULT_SETTINGS,
   configExists,
@@ -89,11 +90,14 @@ let setRate = [0, false];
 let lowerRate = 500;
 let defaultGamePollingRate = 1000;
 let detectionMode = 'foreground';
+let diagnosticLoggingEnabled = false;
+let verboseDiagnosticLoggingEnabled = false;
 let detectionEnabled = true;
 let pickingWindow = false;
 let hasStopped = false;
 let stop = false;
 let settingsWindow = null;
+let diagnosticLogger = null;
 const assetsFolder = 'src/assets/';
 const checkGuard = createCheckGuard();
 
@@ -107,6 +111,10 @@ function getConfigPath() {
 
 function getLegacyProcessListPath() {
   return path.join(getConfigDirectory(), 'processlist.cfg');
+}
+
+function getDiagnosticLogDirectory() {
+  return path.join(app.getPath('userData'), 'diagnostic-logs');
 }
 
 function ensureConfigFile() {
@@ -172,6 +180,8 @@ function getCurrentSettings() {
     defaultGamePollingRate,
     detectionMode: getDetectionMode(),
     autostart: Boolean(autostartEnabled),
+    diagnosticLogging: Boolean(diagnosticLoggingEnabled),
+    verboseDiagnosticLogging: Boolean(verboseDiagnosticLoggingEnabled && diagnosticLoggingEnabled),
   };
 }
 
@@ -180,6 +190,8 @@ function applySettings(settings) {
   defaultGamePollingRate = settings.defaultGamePollingRate;
   detectionMode = settings.detectionMode === 'running' ? 'running' : 'foreground';
   autostartEnabled = Boolean(settings.autostart);
+  diagnosticLoggingEnabled = Boolean(settings.diagnosticLogging);
+  verboseDiagnosticLoggingEnabled = Boolean(settings.verboseDiagnosticLogging && settings.diagnosticLogging);
 }
 
 function loadConfig(warn = (message) => log(message, true)) {
@@ -257,6 +269,8 @@ function setupSettingsIpc() {
         defaultGamePollingRate: parsePollingRate(payload.settings.defaultGamePollingRate) || DEFAULT_SETTINGS.defaultGamePollingRate,
         detectionMode: payload.settings.detectionMode === 'running' ? 'running' : 'foreground',
         autostart: Boolean(payload.settings.autostart),
+        diagnosticLogging: Boolean(payload.settings.diagnosticLogging),
+        verboseDiagnosticLogging: Boolean(payload.settings.diagnosticLogging && payload.settings.verboseDiagnosticLogging),
       };
       if (settings.inactivePollingRate > 1000) {
         return { ok: false, warnings: ['Inactive polling rate must be 125, 250, 500, or 1000 Hz.'] };
@@ -320,6 +334,7 @@ app.whenReady().then(() => {
   const { settings } = loadConfig((message) => log(message, true));
   applySettings(settings);
   updateAutostart();
+  diagnosticLogger = new DiagnosticLogger({ logDirectory: getDiagnosticLogDirectory() });
 
   tray = new Tray(nativeImage.createFromPath(path.join(appPath, assetsFolder + 'loading.png')));
 
@@ -343,6 +358,9 @@ app.on('window-all-closed', (event) => {
 app.on('will-quit', () => {
   globalShortcut.unregister('F3');
   stopForegroundProcessWatcher();
+  if (diagnosticLogger) {
+    diagnosticLogger.stop(new Date(), 'app quitting');
+  }
 });
 
 async function runLoop() {
@@ -693,7 +711,78 @@ async function guardedCheckPollingRate(firstRun) {
   const result = await checkGuard.run(() => checkPollingRate(firstRun));
   if (result.skipped) {
     log('polling check skipped because the previous check is still running');
+    recordDiagnosticEvent('polling_check_skipped', {
+      reason: 'previous check still running',
+    }, { verbose: true });
   }
+}
+
+function describeDiscoveredProcess(processInfo) {
+  if (!processInfo) {
+    return null;
+  }
+
+  return processInfo.executablePath
+    ? `${processInfo.processName} (${processInfo.executablePath})`
+    : processInfo.processName;
+}
+
+function createInactiveSelection() {
+  return {
+    targetRate: lowerRate,
+    matchedProcess: null,
+    matchedRule: null,
+  };
+}
+
+function recordDiagnosticEvent(eventName, details = {}, options = {}) {
+  if (!diagnosticLogger) {
+    return;
+  }
+
+  diagnosticLogger.record(eventName, details, options);
+}
+
+function updateDiagnosticSession(entries, runningProcesses, lookupError) {
+  if (!diagnosticLogger) {
+    return null;
+  }
+
+  if (!diagnosticLoggingEnabled) {
+    diagnosticLogger.updateSession({ enabled: false });
+    return null;
+  }
+
+  if (!runningProcesses) {
+    recordDiagnosticEvent('running_process_lookup_failed', {
+      error: lookupError ? lookupError.message : 'unknown error',
+    }, {
+      verbose: true,
+      key: lookupError ? lookupError.message : 'unknown error',
+    });
+    return null;
+  }
+
+  const runningSelection = selectTargetPollingRate(entries, runningProcesses, lowerRate);
+  diagnosticLogger.updateSession({
+    enabled: true,
+    verbose: verboseDiagnosticLoggingEnabled,
+    runningSelection,
+  });
+  recordDiagnosticEvent('running_process_detection', {
+    matchedProcess: runningSelection.matchedProcess || 'none',
+    targetRate: runningSelection.targetRate,
+  }, {
+    key: `${runningSelection.matchedProcess || 'none'}:${runningSelection.targetRate}`,
+  });
+  recordDiagnosticEvent('running_process_scan', {
+    processCount: runningProcesses.length,
+  }, {
+    verbose: true,
+    key: String(runningProcesses.length),
+  });
+
+  return runningSelection;
 }
 
 async function checkPollingRate(firstRun) {
@@ -704,17 +793,62 @@ async function checkPollingRate(firstRun) {
     const { settings, entries } = loadConfig((message) => log(message, true));
     applySettings(settings);
     const mode = getDetectionMode();
+    let runningProcesses = null;
+    let runningProcessesError = null;
+    let foregroundProcess = null;
+    let loggingSelection = null;
+
+    if (diagnosticLoggingEnabled || (detectionEnabled && mode === 'running')) {
+      try {
+        runningProcesses = getRunningProcesses();
+      } catch (error) {
+        runningProcessesError = error;
+      }
+    }
+
+    loggingSelection = updateDiagnosticSession(entries, runningProcesses, runningProcessesError);
+
     let selected;
     if (!detectionEnabled) {
       stopForegroundProcessWatcher();
-      selected = { targetRate: lowerRate, matchedProcess: null, matchedRule: null };
+      selected = createInactiveSelection();
     } else if (mode === 'foreground') {
-      selected = selectForegroundPollingRate(entries, getForegroundProcess(), lowerRate);
+      foregroundProcess = getForegroundProcess();
+      selected = selectForegroundPollingRate(entries, foregroundProcess, lowerRate);
     } else {
       stopForegroundProcessWatcher();
-      selected = selectTargetPollingRate(entries, getRunningProcesses(), lowerRate);
+      if (!runningProcesses) {
+        if (runningProcessesError) {
+          throw runningProcessesError;
+        }
+        runningProcesses = getRunningProcesses();
+      }
+      selected = selectTargetPollingRate(entries, runningProcesses, lowerRate);
     }
     const requestedTarget = selected.targetRate;
+
+    recordDiagnosticEvent('detection_selection', {
+      detectionEnabled,
+      mode: detectionEnabled ? mode : 'disabled',
+      foregroundProcess: describeDiscoveredProcess(foregroundProcess),
+      runningMatchedProcess: loggingSelection ? loggingSelection.matchedProcess : null,
+      selectedProcess: selected.matchedProcess || 'inactive',
+      requestedTarget,
+    }, {
+      key: [
+        detectionEnabled ? mode : 'disabled',
+        describeDiscoveredProcess(foregroundProcess) || 'none',
+        loggingSelection ? loggingSelection.matchedProcess : 'none',
+        selected.matchedProcess || 'inactive',
+        requestedTarget,
+      ].join('|'),
+    });
+    recordDiagnosticEvent('polling_check', {
+      firstRun: Boolean(firstRun),
+      rules: entries.length,
+      lowerRate,
+      defaultGamePollingRate,
+    }, { verbose: true });
 
     dongle = await getDongle();
     claimedInterfaceNumber = await prepareDongle(dongle);
@@ -733,6 +867,15 @@ async function checkPollingRate(firstRun) {
     const matchedText = selected.matchedProcess ? `matched ${selected.matchedProcess}` : 'inactive';
     const modeText = detectionEnabled ? getDetectionModeLabel() : 'detection disabled';
 
+    recordDiagnosticEvent('polling_status', {
+      currentRate: pollingRate,
+      targetRate,
+      requestedTarget,
+      matchedProcess: selected.matchedProcess || 'inactive',
+    }, {
+      key: `${pollingRate}:${targetRate}:${selected.matchedProcess || 'inactive'}`,
+    });
+
     if (firstRun) {
       const active = Boolean(selected.matchedProcess && pollingRate === targetRate);
       setTrayStatus({
@@ -742,7 +885,16 @@ async function checkPollingRate(firstRun) {
     }
 
     if (targetRate !== pollingRate) {
+      recordDiagnosticEvent('polling_rate_change_requested', {
+        from: pollingRate,
+        to: targetRate,
+        matchedProcess: selected.matchedProcess || 'inactive',
+      });
       pollingRate = await setPollingRate(dongle, targetRate);
+      recordDiagnosticEvent('polling_rate_change_result', {
+        currentRate: pollingRate,
+        targetRate,
+      });
     }
 
     const isActive = Boolean(selected.matchedProcess && pollingRate === targetRate);
@@ -762,6 +914,9 @@ async function checkPollingRate(firstRun) {
       }
     }
   } catch (error) {
+    recordDiagnosticEvent('polling_check_error', {
+      error: error.message,
+    });
     setTrayStatus({
       icon: 'loading.png',
       tooltip: `Razer Auto Polling Rate error: ${error.message}`,
