@@ -12,9 +12,10 @@
       color: CanvasText;
     }
 
+    html,
     body {
       margin: 0;
-      min-width: 840px;
+      overflow-x: hidden;
     }
 
     header,
@@ -28,6 +29,7 @@
 
     header {
       border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, Canvas);
+      min-width: 0;
     }
 
     footer {
@@ -53,6 +55,7 @@
       display: grid;
       gap: 18px;
       padding: 16px 18px;
+      overflow-x: hidden;
     }
 
     section {
@@ -62,8 +65,9 @@
 
     .settings-grid {
       display: grid;
-      gap: 12px;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      column-gap: 28px;
+      grid-template-columns: max-content max-content;
+      row-gap: 12px;
     }
 
     label {
@@ -78,6 +82,7 @@
       display: flex;
       gap: 8px;
       min-height: 34px;
+      width: fit-content;
     }
 
     .checkbox-label.indented {
@@ -87,6 +92,16 @@
     .logging-options {
       display: grid;
       gap: 6px;
+      grid-column: 1 / -1;
+      width: fit-content;
+    }
+
+    .logs-link-row {
+      margin-left: 24px;
+    }
+
+    .is-hidden {
+      display: none !important;
     }
 
     input,
@@ -139,20 +154,39 @@
     }
 
     .target-column {
-      width: 58%;
+      width: auto;
     }
 
     .rate-column {
-      width: 120px;
+      width: 112px;
     }
 
     .actions-column {
-      width: 270px;
+      width: 260px;
     }
 
     .actions {
       display: flex;
-      gap: 6px;
+      gap: 5px;
+    }
+
+    .actions button {
+      padding-left: 8px;
+      padding-right: 8px;
+      white-space: nowrap;
+    }
+
+    .section-heading {
+      align-items: center;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .title-actions {
+      align-items: center;
+      display: flex;
+      gap: 12px;
+      min-width: 0;
     }
 
     .footer-left {
@@ -173,6 +207,7 @@
 
     .status {
       min-height: 20px;
+      min-width: 130px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -186,7 +221,10 @@
 <body>
   <header>
     <h1>Settings</h1>
-    <button id="add-rule" type="button">Add rule</button>
+    <div class="title-actions">
+      <div id="status" class="status"></div>
+      <button id="save" type="button">Save</button>
+    </div>
   </header>
   <main>
     <section>
@@ -216,15 +254,24 @@
             <input id="diagnostic-logging" type="checkbox">
             <span>Diagnostic logging</span>
           </label>
-          <label class="checkbox-label indented">
+          <div id="diagnostic-logs-link-row" class="logs-link-row">
+            <button id="open-logs" class="link-button" type="button">Open diagnostic logs folder</button>
+          </div>
+          <label id="verbose-logging-label" class="checkbox-label indented">
             <input id="verbose-diagnostic-logging" type="checkbox">
             <span>Verbose diagnostic logging</span>
           </label>
+          <div id="verbose-logs-link-row" class="logs-link-row">
+            <button id="open-logs-verbose" class="link-button" type="button">Open diagnostic logs folder</button>
+          </div>
         </div>
       </div>
     </section>
     <section>
-      <h2>Polling Rules</h2>
+      <div class="section-heading">
+        <h2>Polling Rules</h2>
+        <button id="add-rule" type="button">Add rule</button>
+      </div>
       <table>
         <thead>
           <tr>
@@ -240,9 +287,7 @@
   <footer>
     <div class="footer-left">
       <button id="open-config" class="link-button" type="button">Open config.ini in Notepad</button>
-      <div id="status" class="status"></div>
     </div>
-    <button id="save" type="button">Save</button>
   </footer>
 
   <script>
@@ -256,6 +301,9 @@
     const autostartCheckbox = document.getElementById('autostart');
     const diagnosticLoggingCheckbox = document.getElementById('diagnostic-logging');
     const verboseDiagnosticLoggingCheckbox = document.getElementById('verbose-diagnostic-logging');
+    const verboseLoggingLabel = document.getElementById('verbose-logging-label');
+    const diagnosticLogsLinkRow = document.getElementById('diagnostic-logs-link-row');
+    const verboseLogsLinkRow = document.getElementById('verbose-logs-link-row');
 
     function setStatus(message, isError = false) {
       statusElement.textContent = message;
@@ -298,10 +346,10 @@
     }
 
     function updateVerboseLoggingState() {
-      verboseDiagnosticLoggingCheckbox.disabled = !diagnosticLoggingCheckbox.checked;
-      if (!diagnosticLoggingCheckbox.checked) {
-        verboseDiagnosticLoggingCheckbox.checked = false;
-      }
+      const diagnosticEnabled = diagnosticLoggingCheckbox.checked;
+      verboseLoggingLabel.classList.toggle('is-hidden', !diagnosticEnabled);
+      diagnosticLogsLinkRow.classList.toggle('is-hidden', diagnosticEnabled);
+      verboseLogsLinkRow.classList.toggle('is-hidden', !diagnosticEnabled);
     }
 
     function moveRow(row, direction) {
@@ -382,6 +430,8 @@
     document.getElementById('add-rule').addEventListener('click', () => addRule());
     document.getElementById('save').addEventListener('click', saveSettings);
     document.getElementById('open-config').addEventListener('click', () => window.settingsApi.openConfig());
+    document.getElementById('open-logs').addEventListener('click', () => window.settingsApi.openLogs());
+    document.getElementById('open-logs-verbose').addEventListener('click', () => window.settingsApi.openLogs());
     diagnosticLoggingCheckbox.addEventListener('change', updateVerboseLoggingState);
     loadSettings().catch((error) => setStatus(error.message, true));
   </script>

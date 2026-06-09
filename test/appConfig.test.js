@@ -80,6 +80,23 @@ test('missing config.ini uses default settings', () => {
   assert.deepEqual(entries, []);
 });
 
+test('verbose diagnostic logging can stay selected while diagnostic logging is off', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'rapr-config-'));
+  const configPath = path.join(directory, 'config.ini');
+
+  fs.writeFileSync(configPath, [
+    '[settings]',
+    'diagnostic_logging=false',
+    'verbose_diagnostic_logging=true',
+    '',
+  ].join('\n'));
+
+  const { settings } = readAppConfig(configPath);
+
+  assert.equal(settings.diagnosticLogging, false);
+  assert.equal(settings.verboseDiagnosticLogging, true);
+});
+
 test('writeAppConfig writes a readable config.ini', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'rapr-config-'));
   const configPath = path.join(directory, 'config.ini');
