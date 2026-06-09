@@ -181,7 +181,7 @@ function getCurrentSettings() {
     detectionMode: getDetectionMode(),
     autostart: Boolean(autostartEnabled),
     diagnosticLogging: Boolean(diagnosticLoggingEnabled),
-    verboseDiagnosticLogging: Boolean(verboseDiagnosticLoggingEnabled && diagnosticLoggingEnabled),
+    verboseDiagnosticLogging: Boolean(verboseDiagnosticLoggingEnabled),
   };
 }
 
@@ -191,7 +191,7 @@ function applySettings(settings) {
   detectionMode = settings.detectionMode === 'running' ? 'running' : 'foreground';
   autostartEnabled = Boolean(settings.autostart);
   diagnosticLoggingEnabled = Boolean(settings.diagnosticLogging);
-  verboseDiagnosticLoggingEnabled = Boolean(settings.verboseDiagnosticLogging && settings.diagnosticLogging);
+  verboseDiagnosticLoggingEnabled = Boolean(settings.verboseDiagnosticLogging);
 }
 
 function loadConfig(warn = (message) => log(message, true)) {
@@ -270,7 +270,7 @@ function setupSettingsIpc() {
         detectionMode: payload.settings.detectionMode === 'running' ? 'running' : 'foreground',
         autostart: Boolean(payload.settings.autostart),
         diagnosticLogging: Boolean(payload.settings.diagnosticLogging),
-        verboseDiagnosticLogging: Boolean(payload.settings.diagnosticLogging && payload.settings.verboseDiagnosticLogging),
+        verboseDiagnosticLogging: Boolean(payload.settings.verboseDiagnosticLogging),
       };
       if (settings.inactivePollingRate > 1000) {
         return { ok: false, warnings: ['Inactive polling rate must be 125, 250, 500, or 1000 Hz.'] };
@@ -321,6 +321,15 @@ function setupSettingsIpc() {
     execFile('notepad.exe', [getConfigPath()], { windowsHide: false }, (error) => {
       if (error) {
         log(`failed to open config.ini: ${error.message}`, true);
+      }
+    });
+  });
+
+  ipcMain.handle('settings:openLogs', () => {
+    fs.mkdirSync(getDiagnosticLogDirectory(), { recursive: true });
+    execFile('explorer.exe', [getDiagnosticLogDirectory()], { windowsHide: false }, (error) => {
+      if (error) {
+        log(`failed to open diagnostic logs folder: ${error.message}`, true);
       }
     });
   });
@@ -766,7 +775,7 @@ function updateDiagnosticSession(entries, runningProcesses, lookupError) {
   const runningSelection = selectTargetPollingRate(entries, runningProcesses, lowerRate);
   diagnosticLogger.updateSession({
     enabled: true,
-    verbose: verboseDiagnosticLoggingEnabled,
+    verbose: diagnosticLoggingEnabled && verboseDiagnosticLoggingEnabled,
     runningSelection,
   });
   recordDiagnosticEvent('running_process_detection', {
@@ -843,13 +852,6 @@ async function checkPollingRate(firstRun) {
         requestedTarget,
       ].join('|'),
     });
-    recordDiagnosticEvent('polling_check', {
-      firstRun: Boolean(firstRun),
-      rules: entries.length,
-      lowerRate,
-      defaultGamePollingRate,
-    }, { verbose: true });
-
     dongle = await getDongle();
     claimedInterfaceNumber = await prepareDongle(dongle);
 
@@ -866,6 +868,19 @@ async function checkPollingRate(firstRun) {
     const targetRate = resolvedTarget.rate;
     const matchedText = selected.matchedProcess ? `matched ${selected.matchedProcess}` : 'inactive';
     const modeText = detectionEnabled ? getDetectionModeLabel() : 'detection disabled';
+
+    recordDiagnosticEvent('polling_check', {
+      firstRun: Boolean(firstRun),
+      detectionEnabled,
+      mode: detectionEnabled ? mode : 'disabled',
+      foregroundProcess: describeDiscoveredProcess(foregroundProcess),
+      runningMatchedProcess: loggingSelection ? loggingSelection.matchedProcess : null,
+      selectedProcess: selected.matchedProcess || 'inactive',
+      currentRate: pollingRate,
+      targetRate,
+      requestedTarget,
+      rules: entries.length,
+    }, { verbose: true });
 
     recordDiagnosticEvent('polling_status', {
       currentRate: pollingRate,
