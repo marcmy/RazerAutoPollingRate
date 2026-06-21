@@ -1,6 +1,6 @@
 {
   "name": "razerautopollingrate",
-  "version": "1.2.13",
+  "version": "1.2.14",
   "main": "src/main.js",
   "author": "Philip B, Neil C",
   "license": "ISC",
