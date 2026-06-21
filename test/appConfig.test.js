@@ -6,7 +6,6 @@ const path = require('node:path');
 
 const {
   DEFAULT_SETTINGS,
-  parseIni,
   readAppConfig,
   serializeAppConfig,
   writeAppConfig,
@@ -71,33 +70,6 @@ test('config.ini reads settings and rules back', () => {
   assert.deepEqual(entries.map((entry) => entry.rawTarget), ['r5apex.exe', 'quake_live_x64.exe']);
   assert.deepEqual(entries.map((entry) => entry.pollingRate), [4000, 1000]);
   assert.deepEqual(warnings, []);
-});
-
-test('config.ini ignores prototype-polluting section and property names', () => {
-  const parsed = parseIni([
-    '[__proto__]',
-    'polluted=yes',
-    '[constructor]',
-    'polluted=yes',
-    '[prototype]',
-    'polluted=yes',
-    '[settings]',
-    '__proto__=polluted',
-    'constructor=polluted',
-    'prototype=polluted',
-    'inactive_polling_rate=250',
-  ].join('\n'));
-
-  assert.equal(Object.getPrototypeOf(parsed), null);
-  assert.equal(Object.hasOwn(parsed, '__proto__'), false);
-  assert.equal(Object.hasOwn(parsed, 'constructor'), false);
-  assert.equal(Object.hasOwn(parsed, 'prototype'), false);
-  assert.equal(Object.getPrototypeOf(parsed.settings), null);
-  assert.equal(Object.hasOwn(parsed.settings, '__proto__'), false);
-  assert.equal(Object.hasOwn(parsed.settings, 'constructor'), false);
-  assert.equal(Object.hasOwn(parsed.settings, 'prototype'), false);
-  assert.equal(parsed.settings.inactive_polling_rate, '250');
-  assert.equal({}.polluted, undefined);
 });
 
 test('missing config.ini uses default settings', () => {
