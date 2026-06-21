@@ -14,14 +14,16 @@ on:
           - major
 
 permissions:
+  actions: write
   contents: write
+  pull-requests: write
 
 concurrency:
   group: windows-release
   cancel-in-progress: false
 
 jobs:
-  release:
+  prepare-release:
     if: github.ref == 'refs/heads/main'
     runs-on: windows-2022
     steps:
@@ -36,74 +38,29 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Select next version
+      - name: Select or resume release
         shell: pwsh
+        env:
+          VERSION_BUMP: ${{ inputs.bump }}
         run: |
           $currentVersion = node -p "require('./package.json').version"
 
-          npm version "${{ inputs.bump }}" --no-git-tag-version
+          npm version $env:VERSION_BUMP --no-git-tag-version
           if ($LASTEXITCODE -ne 0) {
             throw "npm version failed"
           }
 
           $releaseVersion = node -p "require('./package.json').version"
           $releaseTag = "v$releaseVersion"
+          $releaseBranch = "release/$releaseTag"
 
           git ls-remote --exit-code --tags origin "refs/tags/$releaseTag" *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $tagProbeExitCode = $LASTEXITCODE
+          if ($tagProbeExitCode -eq 0) {
             throw "Tag $releaseTag already exists"
           }
-
-          "CURRENT_VERSION=$currentVersion" >> $env:GITHUB_ENV
-          "RELEASE_VERSION=$releaseVersion" >> $env:GITHUB_ENV
-          "RELEASE_TAG=$releaseTag" >> $env:GITHUB_ENV
-
-          Write-Host "Preparing $releaseTag from $currentVersion"
-          exit 0
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Audit dependencies
-        run: npm audit
-
-      - name: Run tests
-        run: npm test
-
-      - name: Build Windows installer
-        run: npm run make
-
-      - name: Validate generated changes
-        shell: pwsh
-        run: |
-          git diff --check
-          if ($LASTEXITCODE -ne 0) {
-            throw "git diff --check failed"
-          }
-
-      - name: Generate SHA256 hashes
-        shell: pwsh
-        run: |
-          $root = (Resolve-Path 'out/make').Path
-
-          Get-ChildItem -Path $root -Recurse -File |
-            Sort-Object FullName |
-            ForEach-Object {
-              $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName
-              $relativePath = [IO.Path]::GetRelativePath($root, $_.FullName).Replace('\', '/')
-              "$($hash.Hash.ToLower())  $relativePath"
-            } | Set-Content -Encoding ASCII SHA256SUMS.txt
-
-      - name: Commit release version
-        shell: pwsh
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add package.json package-lock.json
-          git commit -m "chore: release $env:RELEASE_TAG"
-          if ($LASTEXITCODE -ne 0) {
-            throw "Unable to commit release version"
+          if ($tagProbeExitCode -ne 2) {
+            throw "Unable to check whether tag $releaseTag exists (git exit code $tagProbeExitCode)"
           }
 
           git fetch origin main
@@ -111,62 +68,255 @@ jobs:
             throw "Unable to fetch origin/main"
           }
 
-          $remotePackage = git show origin/main:package.json | Out-String | ConvertFrom-Json
-          $remoteVersion = $remotePackage.version
+          $remoteMainPackage = git show "origin/main:package.json" | Out-String | ConvertFrom-Json
+          $remoteMainVersion = $remoteMainPackage.version
+          $remoteMainCommit = git rev-parse origin/main
+          $alreadyMerged = $remoteMainVersion -eq $releaseVersion
 
-          if ($remoteVersion -eq $env:RELEASE_VERSION) {
-            Write-Host "Version $env:RELEASE_VERSION was already committed by an earlier attempt"
-            $releaseCommit = git rev-parse origin/main
+          if (-not $alreadyMerged -and $remoteMainVersion -ne $currentVersion) {
+            throw "main changed from version $currentVersion to unexpected version $remoteMainVersion"
           }
-          elseif ($remoteVersion -eq $env:CURRENT_VERSION) {
-            git rebase origin/main
-            if ($LASTEXITCODE -ne 0) {
-              throw "Unable to rebase the release commit onto origin/main"
-            }
 
-            git push origin HEAD:main
-            if ($LASTEXITCODE -ne 0) {
-              throw "Unable to push the release commit"
-            }
+          $branchOutput = git ls-remote --heads origin "refs/heads/$releaseBranch"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to check whether branch $releaseBranch exists"
+          }
 
-            $releaseCommit = git rev-parse HEAD
+          $branchExists = -not [string]::IsNullOrWhiteSpace($branchOutput)
+          if ($branchExists) {
+            $releaseHeadSha = ($branchOutput -split '\s+')[0]
+            "RELEASE_HEAD_SHA=$releaseHeadSha" >> $env:GITHUB_ENV
+          }
+
+          "CURRENT_VERSION=$currentVersion" >> $env:GITHUB_ENV
+          "RELEASE_VERSION=$releaseVersion" >> $env:GITHUB_ENV
+          "RELEASE_TAG=$releaseTag" >> $env:GITHUB_ENV
+          "RELEASE_BRANCH=$releaseBranch" >> $env:GITHUB_ENV
+          "RELEASE_BRANCH_EXISTS=$($branchExists.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
+          "RELEASE_ALREADY_MERGED=$($alreadyMerged.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
+
+          if ($alreadyMerged) {
+            "RELEASE_COMMIT=$remoteMainCommit" >> $env:GITHUB_ENV
+            Write-Host "$releaseTag is already merged at $remoteMainCommit; resuming publication"
+          }
+          elseif ($branchExists) {
+            Write-Host "Reusing existing branch $releaseBranch at $releaseHeadSha"
           }
           else {
-            throw "main changed from version $env:CURRENT_VERSION to unexpected version $remoteVersion"
+            Write-Host "Preparing new branch $releaseBranch from $currentVersion"
           }
 
-          "RELEASE_COMMIT=$releaseCommit" >> $env:GITHUB_ENV
+          exit 0
 
-      - name: Publish GitHub release
+      - name: Validate existing release branch
+        if: env.RELEASE_ALREADY_MERGED != 'true' && env.RELEASE_BRANCH_EXISTS == 'true'
+        shell: pwsh
+        run: |
+          git fetch origin "refs/heads/$env:RELEASE_BRANCH"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to fetch existing release branch"
+          }
+
+          $branchPackage = git show "FETCH_HEAD:package.json" | Out-String | ConvertFrom-Json
+          $branchHeadSha = git rev-parse FETCH_HEAD
+
+          if ($branchPackage.version -ne $env:RELEASE_VERSION) {
+            throw "Existing branch contains version $($branchPackage.version), expected $env:RELEASE_VERSION"
+          }
+
+          if ($branchHeadSha -ne $env:RELEASE_HEAD_SHA) {
+            throw "Release branch moved while preparing the rerun"
+          }
+
+      - name: Commit and push release branch
+        if: env.RELEASE_ALREADY_MERGED != 'true' && env.RELEASE_BRANCH_EXISTS != 'true'
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git switch -c $env:RELEASE_BRANCH
+          git add package.json package-lock.json
+          git commit -m "chore: release $env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to commit release version"
+          }
+
+          git push origin "HEAD:$env:RELEASE_BRANCH"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to push release branch $env:RELEASE_BRANCH"
+          }
+
+          $headSha = git rev-parse HEAD
+          "RELEASE_HEAD_SHA=$headSha" >> $env:GITHUB_ENV
+
+      - name: Open or reuse release pull request
+        if: env.RELEASE_ALREADY_MERGED != 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $assets = @(
-            Get-ChildItem -Path 'out/make' -Recurse -File |
-              Sort-Object FullName |
-              ForEach-Object { $_.FullName }
-          )
-          $assets += (Resolve-Path 'SHA256SUMS.txt').Path
-
-          $arguments = @(
-            'release',
-            'create',
-            $env:RELEASE_TAG,
-            '--repo',
-            $env:GITHUB_REPOSITORY,
-            '--target',
-            $env:RELEASE_COMMIT,
-            '--title',
-            "Razer Auto Polling Rate $env:RELEASE_VERSION",
-            '--generate-notes'
-          ) + $assets
-
-          & gh @arguments
+          $prJson = gh pr list `
+            --repo $env:GITHUB_REPOSITORY `
+            --base main `
+            --head $env:RELEASE_BRANCH `
+            --state open `
+            --limit 1 `
+            --json number,url
           if ($LASTEXITCODE -ne 0) {
-            throw "Unable to create GitHub release"
+            throw "Unable to query existing release pull requests"
           }
 
-          $releaseUrl = gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json url --jq .url
-          "## Released [$env:RELEASE_TAG]($releaseUrl)" >> $env:GITHUB_STEP_SUMMARY
-          "Windows artifacts and SHA256SUMS.txt were uploaded automatically." >> $env:GITHUB_STEP_SUMMARY
+          $pr = $prJson | ConvertFrom-Json | Select-Object -First 1
+
+          if (-not $pr) {
+            $body = @(
+              "Automated version bump from $env:CURRENT_VERSION to $env:RELEASE_VERSION.",
+              '',
+              'After the required CI checks pass, this workflow will merge the pull request and dispatch the Windows publishing workflow.'
+            ) -join [Environment]::NewLine
+
+            $prUrl = gh pr create `
+              --repo $env:GITHUB_REPOSITORY `
+              --base main `
+              --head $env:RELEASE_BRANCH `
+              --title "chore: release $env:RELEASE_TAG" `
+              --body $body
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to create release pull request"
+            }
+
+            $prNumber = gh pr view $env:RELEASE_BRANCH `
+              --repo $env:GITHUB_REPOSITORY `
+              --json number `
+              --jq .number
+          }
+          else {
+            $prNumber = $pr.number
+            $prUrl = $pr.url
+            Write-Host "Reusing release pull request #$prNumber"
+          }
+
+          if (-not $prNumber) {
+            throw "Unable to determine release pull request number"
+          }
+
+          "RELEASE_PR_NUMBER=$prNumber" >> $env:GITHUB_ENV
+          "RELEASE_PR_URL=$prUrl" >> $env:GITHUB_ENV
+
+      - name: Dispatch required CI checks
+        if: env.RELEASE_ALREADY_MERGED != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run ci.yml `
+            --repo $env:GITHUB_REPOSITORY `
+            --ref $env:RELEASE_BRANCH
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to dispatch CI for $env:RELEASE_BRANCH"
+          }
+
+      - name: Wait for required CI checks
+        if: env.RELEASE_ALREADY_MERGED != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $runId = $null
+
+          for ($attempt = 1; $attempt -le 36; $attempt++) {
+            $runsJson = gh run list `
+              --repo $env:GITHUB_REPOSITORY `
+              --workflow ci.yml `
+              --branch $env:RELEASE_BRANCH `
+              --event workflow_dispatch `
+              --limit 10 `
+              --json databaseId,headSha,createdAt
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to query CI runs"
+            }
+
+            $run = $runsJson |
+              ConvertFrom-Json |
+              Where-Object { $_.headSha -eq $env:RELEASE_HEAD_SHA } |
+              Sort-Object createdAt -Descending |
+              Select-Object -First 1
+
+            if ($run) {
+              $runId = $run.databaseId
+              break
+            }
+
+            Start-Sleep -Seconds 5
+          }
+
+          if (-not $runId) {
+            throw "Timed out waiting for the CI run to appear"
+          }
+
+          gh run watch $runId --repo $env:GITHUB_REPOSITORY --exit-status
+          if ($LASTEXITCODE -ne 0) {
+            throw "Required CI checks failed"
+          }
+
+          gh pr checks $env:RELEASE_PR_NUMBER `
+            --repo $env:GITHUB_REPOSITORY `
+            --required `
+            --watch `
+            --fail-fast
+          if ($LASTEXITCODE -ne 0) {
+            throw "Repository-required checks did not pass"
+          }
+
+      - name: Merge release pull request
+        if: env.RELEASE_ALREADY_MERGED != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr merge $env:RELEASE_PR_NUMBER `
+            --repo $env:GITHUB_REPOSITORY `
+            --squash `
+            --delete-branch `
+            --subject "chore: release $env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to merge release pull request"
+          }
+
+          git fetch origin main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to fetch merged main branch"
+          }
+
+          $releaseCommit = git rev-parse origin/main
+          $mergedPackage = git show "origin/main:package.json" | Out-String | ConvertFrom-Json
+
+          if ($mergedPackage.version -ne $env:RELEASE_VERSION) {
+            throw "Merged main contains version $($mergedPackage.version), expected $env:RELEASE_VERSION"
+          }
+
+          "RELEASE_COMMIT=$releaseCommit" >> $env:GITHUB_ENV
+
+      - name: Dispatch Windows publishing
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run publish-release.yml `
+            --repo $env:GITHUB_REPOSITORY `
+            --ref main `
+            -f tag=$env:RELEASE_TAG `
+            -f commit=$env:RELEASE_COMMIT
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to dispatch the publishing workflow"
+          }
+
+          if ($env:RELEASE_PR_URL) {
+            "## Release prepared: [$env:RELEASE_TAG]($env:RELEASE_PR_URL)" >> $env:GITHUB_STEP_SUMMARY
+          }
+          else {
+            "## Release resumed: $env:RELEASE_TAG" >> $env:GITHUB_STEP_SUMMARY
+          }
+          "The exact release commit passed tests, dependency audit, and Windows packaging before publication was dispatched." >> $env:GITHUB_STEP_SUMMARY

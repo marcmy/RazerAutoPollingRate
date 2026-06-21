@@ -11,17 +11,20 @@ Windows releases are created by the **Release Windows** GitHub Actions workflow.
 
 That is the entire release process. The workflow automatically:
 
-- bumps the version in `package.json` and `package-lock.json`;
-- runs `npm ci`, `npm audit`, and the test suite;
-- builds the Windows Squirrel installer;
+- calculates the next version and creates a `release/v...` branch;
+- updates `package.json` and `package-lock.json`;
+- opens or reuses a release pull request;
+- runs the test suite, dependency audit, and Windows Squirrel build on the exact release commit;
+- waits for all repository-required checks;
+- merges the version pull request into protected `main`;
+- builds the release artifacts from the exact merged commit;
 - generates `SHA256SUMS.txt`;
-- commits the version bump back to `main`;
-- creates the version tag;
-- generates release notes;
-- publishes the GitHub release and uploads every installer artifact.
+- creates the version tag and generated release notes;
+- publishes the GitHub release and uploads every installer artifact;
+- dispatches the Scoop bucket update workflow.
 
 With the repository currently at `1.2.13`, the next patch run creates `v1.2.14`.
 
 Choose `minor` or `major` only when intentionally changing that part of the version.
 
-If a run fails, use **Re-run failed jobs** on that workflow run rather than starting another release.
+If a run fails after creating the release branch or pull request, rerun the workflow. It will reuse the existing release state instead of creating a conflicting branch or skipping a version.

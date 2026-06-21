@@ -8,6 +8,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: windows-2022
@@ -24,8 +27,31 @@ jobs:
     runs-on: windows-2022
     needs: test
     steps:
-      - name: Release builds moved to manual workflow
+      - name: Check out release candidate
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        if: github.event_name == 'workflow_dispatch'
+        run: npm ci
+
+      - name: Audit dependencies
+        if: github.event_name == 'workflow_dispatch'
+        run: npm audit
+
+      - name: Build Windows installer
+        if: github.event_name == 'workflow_dispatch'
+        run: npm run make
+
+      - name: Standard CI marker
+        if: github.event_name != 'workflow_dispatch'
         shell: pwsh
         run: |
-          Write-Host "CI verifies tests only."
-          Write-Host "Windows release artifacts are built by the manual Draft Windows Release workflow."
+          Write-Host "Tests passed. Full Windows packaging is additionally validated for dispatched release candidates."
