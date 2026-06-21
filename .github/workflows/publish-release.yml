@@ -1,0 +1,148 @@
+name: Publish Windows Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag
+        required: true
+        type: string
+      commit:
+        description: Commit SHA to release
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: windows-2022
+    steps:
+      - name: Check out release commit
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.commit }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Validate release metadata
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $expectedTag = "v$version"
+          $actualCommit = git rev-parse HEAD
+
+          if ("${{ inputs.tag }}" -ne $expectedTag) {
+            throw "Release tag ${{ inputs.tag }} does not match package version $version"
+          }
+
+          if ($actualCommit -ne "${{ inputs.commit }}") {
+            throw "Checked out commit $actualCommit, expected ${{ inputs.commit }}"
+          }
+
+          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+          "RELEASE_TAG=$expectedTag" >> $env:GITHUB_ENV
+          "RELEASE_COMMIT=$actualCommit" >> $env:GITHUB_ENV
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit dependencies
+        run: npm audit
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build Windows installer
+        run: npm run make
+
+      - name: Generate SHA256 hashes
+        shell: pwsh
+        run: |
+          $root = (Resolve-Path 'out/make').Path
+
+          Get-ChildItem -Path $root -Recurse -File |
+            Sort-Object FullName |
+            ForEach-Object {
+              $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName
+              $relativePath = [IO.Path]::GetRelativePath($root, $_.FullName).Replace('\', '/')
+              "$($hash.Hash.ToLower())  $relativePath"
+            } | Set-Content -Encoding ASCII SHA256SUMS.txt
+
+      - name: Create or update draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view $env:RELEASE_TAG `
+            --repo $env:GITHUB_REPOSITORY `
+            --json tagName *> $null
+
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:RELEASE_TAG `
+              --repo $env:GITHUB_REPOSITORY `
+              --target $env:RELEASE_COMMIT `
+              --title "Razer Auto Polling Rate $env:RELEASE_VERSION" `
+              --generate-notes `
+              --draft
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to create draft release"
+            }
+          }
+
+      - name: Upload release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = @(
+            Get-ChildItem -Path 'out/make' -Recurse -File |
+              Sort-Object FullName |
+              ForEach-Object { $_.FullName }
+          )
+          $assets += (Resolve-Path 'SHA256SUMS.txt').Path
+
+          $arguments = @(
+            'release',
+            'upload',
+            $env:RELEASE_TAG,
+            '--repo',
+            $env:GITHUB_REPOSITORY,
+            '--clobber'
+          ) + $assets
+
+          & gh @arguments
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to upload release assets"
+          }
+
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit $env:RELEASE_TAG `
+            --repo $env:GITHUB_REPOSITORY `
+            --draft=false `
+            --latest
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to publish release"
+          }
+
+          $releaseUrl = gh release view $env:RELEASE_TAG `
+            --repo $env:GITHUB_REPOSITORY `
+            --json url `
+            --jq .url
+
+          "## Released [$env:RELEASE_TAG]($releaseUrl)" >> $env:GITHUB_STEP_SUMMARY
+          "Windows artifacts and SHA256SUMS.txt were uploaded automatically." >> $env:GITHUB_STEP_SUMMARY
