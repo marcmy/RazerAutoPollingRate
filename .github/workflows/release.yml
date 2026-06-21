@@ -55,8 +55,12 @@ jobs:
           $releaseBranch = "release/$releaseTag"
 
           git ls-remote --exit-code --tags origin "refs/tags/$releaseTag" *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $tagProbeExitCode = $LASTEXITCODE
+          if ($tagProbeExitCode -eq 0) {
             throw "Tag $releaseTag already exists"
+          }
+          if ($tagProbeExitCode -ne 2) {
+            throw "Unable to check whether tag $releaseTag exists (git exit code $tagProbeExitCode)"
           }
 
           "CURRENT_VERSION=$currentVersion" >> $env:GITHUB_ENV
@@ -65,6 +69,7 @@ jobs:
           "RELEASE_BRANCH=$releaseBranch" >> $env:GITHUB_ENV
 
           Write-Host "Preparing $releaseTag from $currentVersion"
+          exit 0
 
       - name: Commit and push release branch
         shell: pwsh
