@@ -40,10 +40,12 @@ jobs:
 
       - name: Select next version
         shell: pwsh
+        env:
+          VERSION_BUMP: ${{ inputs.bump }}
         run: |
           $currentVersion = node -p "require('./package.json').version"
 
-          npm version "${{ inputs.bump }}" --no-git-tag-version
+          npm version $env:VERSION_BUMP --no-git-tag-version
           if ($LASTEXITCODE -ne 0) {
             throw "npm version failed"
           }
