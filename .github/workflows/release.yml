@@ -1,58 +1,172 @@
-name: Draft Windows Release
+name: Release Windows
 
 on:
   workflow_dispatch:
     inputs:
-      tag:
-        description: Release tag
+      bump:
+        description: Version bump
         required: true
-        default: v1.2.13-maintained
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
 
+concurrency:
+  group: windows-release
+  cancel-in-progress: false
+
 jobs:
-  draft-release:
+  release:
+    if: github.ref == 'refs/heads/main'
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npm run make
+
+      - name: Select next version
+        shell: pwsh
+        run: |
+          $currentVersion = node -p "require('./package.json').version"
+
+          npm version "${{ inputs.bump }}" --no-git-tag-version
+          if ($LASTEXITCODE -ne 0) {
+            throw "npm version failed"
+          }
+
+          $releaseVersion = node -p "require('./package.json').version"
+          $releaseTag = "v$releaseVersion"
+
+          git ls-remote --exit-code --tags origin "refs/tags/$releaseTag" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            throw "Tag $releaseTag already exists"
+          }
+
+          "CURRENT_VERSION=$currentVersion" >> $env:GITHUB_ENV
+          "RELEASE_VERSION=$releaseVersion" >> $env:GITHUB_ENV
+          "RELEASE_TAG=$releaseTag" >> $env:GITHUB_ENV
+
+          Write-Host "Preparing $releaseTag from $currentVersion"
+          exit 0
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit dependencies
+        run: npm audit
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build Windows installer
+        run: npm run make
+
+      - name: Validate generated changes
+        shell: pwsh
+        run: |
+          git diff --check
+          if ($LASTEXITCODE -ne 0) {
+            throw "git diff --check failed"
+          }
+
       - name: Generate SHA256 hashes
         shell: pwsh
         run: |
-          Get-ChildItem -Path out/make -Recurse -File |
-            Where-Object { $_.Name -notlike '*.blockmap' } |
+          $root = (Resolve-Path 'out/make').Path
+
+          Get-ChildItem -Path $root -Recurse -File |
+            Sort-Object FullName |
             ForEach-Object {
               $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName
-              "$($hash.Hash.ToLower())  $($_.Name)"
+              $relativePath = [IO.Path]::GetRelativePath($root, $_.FullName).Replace('\', '/')
+              "$($hash.Hash.ToLower())  $relativePath"
             } | Set-Content -Encoding ASCII SHA256SUMS.txt
-      - name: Create draft release
+
+      - name: Commit release version
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add package.json package-lock.json
+          git commit -m "chore: release $env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to commit release version"
+          }
+
+          git fetch origin main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to fetch origin/main"
+          }
+
+          $remotePackage = git show origin/main:package.json | Out-String | ConvertFrom-Json
+          $remoteVersion = $remotePackage.version
+
+          if ($remoteVersion -eq $env:RELEASE_VERSION) {
+            Write-Host "Version $env:RELEASE_VERSION was already committed by an earlier attempt"
+            $releaseCommit = git rev-parse origin/main
+          }
+          elseif ($remoteVersion -eq $env:CURRENT_VERSION) {
+            git rebase origin/main
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to rebase the release commit onto origin/main"
+            }
+
+            git push origin HEAD:main
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to push the release commit"
+            }
+
+            $releaseCommit = git rev-parse HEAD
+          }
+          else {
+            throw "main changed from version $env:CURRENT_VERSION to unexpected version $remoteVersion"
+          }
+
+          "RELEASE_COMMIT=$releaseCommit" >> $env:GITHUB_ENV
+
+      - name: Publish GitHub release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag }}
         run: |
-          $notes = @"
-          Maintained fork release.
+          $assets = @(
+            Get-ChildItem -Path 'out/make' -Recurse -File |
+              Sort-Object FullName |
+              ForEach-Object { $_.FullName }
+          )
+          $assets += (Resolve-Path 'SHA256SUMS.txt').Path
 
-          Highlights:
-          - Adds optional diagnostic logging in Settings, disabled by default.
-          - Adds an indented verbose diagnostic logging option for lower-level process-scan and polling-loop events.
-          - Starts diagnostic logs only while a configured executable is running, using running-process detection even when foreground-window mode is active.
-          - Logs detection selections, polling status, polling-rate change requests/results, and errors with timestamps.
-          - Stores logs under %APPDATA%\RazerAutoPollingRate\diagnostic-logs using MM-DD-YYYY-Program.txt filenames and keeps the latest 10 log files.
-          - Changes Autostart to a checkbox and shortens Settings dropdown widths for polling rates and detection mode.
-          - Builds Windows x64 artifacts and SHA256 hashes from this workflow run.
-          - Hardware limitation: no new real dongle smoke test was performed for this diagnostic logging release.
-          "@
-          gh release create $env:RELEASE_TAG --draft --title $env:RELEASE_TAG --notes $notes
-          Get-ChildItem -Path out/make -Recurse -File | ForEach-Object {
-            gh release upload $env:RELEASE_TAG $_.FullName --clobber
+          $arguments = @(
+            'release',
+            'create',
+            $env:RELEASE_TAG,
+            '--repo',
+            $env:GITHUB_REPOSITORY,
+            '--target',
+            $env:RELEASE_COMMIT,
+            '--title',
+            "Razer Auto Polling Rate $env:RELEASE_VERSION",
+            '--generate-notes'
+          ) + $assets
+
+          & gh @arguments
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to create GitHub release"
           }
-          gh release upload $env:RELEASE_TAG SHA256SUMS.txt --clobber
+
+          $releaseUrl = gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --json url --jq .url
+          "## Released [$env:RELEASE_TAG]($releaseUrl)" >> $env:GITHUB_STEP_SUMMARY
+          "Windows artifacts and SHA256SUMS.txt were uploaded automatically." >> $env:GITHUB_STEP_SUMMARY
