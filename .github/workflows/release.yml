@@ -38,7 +38,7 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Select next version
+      - name: Select or resume release
         shell: pwsh
         env:
           VERSION_BUMP: ${{ inputs.bump }}
@@ -63,15 +63,73 @@ jobs:
             throw "Unable to check whether tag $releaseTag exists (git exit code $tagProbeExitCode)"
           }
 
+          git fetch origin main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to fetch origin/main"
+          }
+
+          $remoteMainPackage = git show "origin/main:package.json" | Out-String | ConvertFrom-Json
+          $remoteMainVersion = $remoteMainPackage.version
+          $remoteMainCommit = git rev-parse origin/main
+          $alreadyMerged = $remoteMainVersion -eq $releaseVersion
+
+          if (-not $alreadyMerged -and $remoteMainVersion -ne $currentVersion) {
+            throw "main changed from version $currentVersion to unexpected version $remoteMainVersion"
+          }
+
+          $branchOutput = git ls-remote --heads origin "refs/heads/$releaseBranch"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to check whether branch $releaseBranch exists"
+          }
+
+          $branchExists = -not [string]::IsNullOrWhiteSpace($branchOutput)
+          if ($branchExists) {
+            $releaseHeadSha = ($branchOutput -split '\s+')[0]
+            "RELEASE_HEAD_SHA=$releaseHeadSha" >> $env:GITHUB_ENV
+          }
+
           "CURRENT_VERSION=$currentVersion" >> $env:GITHUB_ENV
           "RELEASE_VERSION=$releaseVersion" >> $env:GITHUB_ENV
           "RELEASE_TAG=$releaseTag" >> $env:GITHUB_ENV
           "RELEASE_BRANCH=$releaseBranch" >> $env:GITHUB_ENV
+          "RELEASE_BRANCH_EXISTS=$($branchExists.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
+          "RELEASE_ALREADY_MERGED=$($alreadyMerged.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
 
-          Write-Host "Preparing $releaseTag from $currentVersion"
+          if ($alreadyMerged) {
+            "RELEASE_COMMIT=$remoteMainCommit" >> $env:GITHUB_ENV
+            Write-Host "$releaseTag is already merged at $remoteMainCommit; resuming publication"
+          }
+          elseif ($branchExists) {
+            Write-Host "Reusing existing branch $releaseBranch at $releaseHeadSha"
+          }
+          else {
+            Write-Host "Preparing new branch $releaseBranch from $currentVersion"
+          }
+
           exit 0
 
+      - name: Validate existing release branch
+        if: env.RELEASE_ALREADY_MERGED != 'true' && env.RELEASE_BRANCH_EXISTS == 'true'
+        shell: pwsh
+        run: |
+          git fetch origin "refs/heads/$env:RELEASE_BRANCH"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to fetch existing release branch"
+          }
+
+          $branchPackage = git show "FETCH_HEAD:package.json" | Out-String | ConvertFrom-Json
+          $branchHeadSha = git rev-parse FETCH_HEAD
+
+          if ($branchPackage.version -ne $env:RELEASE_VERSION) {
+            throw "Existing branch contains version $($branchPackage.version), expected $env:RELEASE_VERSION"
+          }
+
+          if ($branchHeadSha -ne $env:RELEASE_HEAD_SHA) {
+            throw "Release branch moved while preparing the rerun"
+          }
+
       - name: Commit and push release branch
+        if: env.RELEASE_ALREADY_MERGED != 'true' && env.RELEASE_BRANCH_EXISTS != 'true'
         shell: pwsh
         run: |
           git config user.name "github-actions[bot]"
@@ -92,32 +150,54 @@ jobs:
           $headSha = git rev-parse HEAD
           "RELEASE_HEAD_SHA=$headSha" >> $env:GITHUB_ENV
 
-      - name: Open release pull request
+      - name: Open or reuse release pull request
+        if: env.RELEASE_ALREADY_MERGED != 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $body = @"
-          Automated version bump from $env:CURRENT_VERSION to $env:RELEASE_VERSION.
-
-          After the required CI checks pass, this workflow will merge the pull request and dispatch the Windows publishing workflow.
-          "@
-
-          $prUrl = gh pr create `
+          $prJson = gh pr list `
             --repo $env:GITHUB_REPOSITORY `
             --base main `
             --head $env:RELEASE_BRANCH `
-            --title "chore: release $env:RELEASE_TAG" `
-            --body $body
+            --state open `
+            --limit 1 `
+            --json number,url
           if ($LASTEXITCODE -ne 0) {
-            throw "Unable to create release pull request"
+            throw "Unable to query existing release pull requests"
           }
 
-          $prNumber = gh pr view $env:RELEASE_BRANCH `
-            --repo $env:GITHUB_REPOSITORY `
-            --json number `
-            --jq .number
-          if ($LASTEXITCODE -ne 0 -or -not $prNumber) {
+          $pr = $prJson | ConvertFrom-Json | Select-Object -First 1
+
+          if (-not $pr) {
+            $body = @"
+            Automated version bump from $env:CURRENT_VERSION to $env:RELEASE_VERSION.
+
+            After the required CI checks pass, this workflow will merge the pull request and dispatch the Windows publishing workflow.
+            "@
+
+            $prUrl = gh pr create `
+              --repo $env:GITHUB_REPOSITORY `
+              --base main `
+              --head $env:RELEASE_BRANCH `
+              --title "chore: release $env:RELEASE_TAG" `
+              --body $body
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to create release pull request"
+            }
+
+            $prNumber = gh pr view $env:RELEASE_BRANCH `
+              --repo $env:GITHUB_REPOSITORY `
+              --json number `
+              --jq .number
+          }
+          else {
+            $prNumber = $pr.number
+            $prUrl = $pr.url
+            Write-Host "Reusing release pull request #$prNumber"
+          }
+
+          if (-not $prNumber) {
             throw "Unable to determine release pull request number"
           }
 
@@ -125,6 +205,7 @@ jobs:
           "RELEASE_PR_URL=$prUrl" >> $env:GITHUB_ENV
 
       - name: Dispatch required CI checks
+        if: env.RELEASE_ALREADY_MERGED != 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -137,6 +218,7 @@ jobs:
           }
 
       - name: Wait for required CI checks
+        if: env.RELEASE_ALREADY_MERGED != 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -179,13 +261,21 @@ jobs:
             throw "Required CI checks failed"
           }
 
+          gh pr checks $env:RELEASE_PR_NUMBER `
+            --repo $env:GITHUB_REPOSITORY `
+            --required `
+            --watch `
+            --fail-fast
+          if ($LASTEXITCODE -ne 0) {
+            throw "Repository-required checks did not pass"
+          }
+
       - name: Merge release pull request
+        if: env.RELEASE_ALREADY_MERGED != 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          Start-Sleep -Seconds 5
-
           gh pr merge $env:RELEASE_PR_NUMBER `
             --repo $env:GITHUB_REPOSITORY `
             --squash `
@@ -223,5 +313,10 @@ jobs:
             throw "Unable to dispatch the publishing workflow"
           }
 
-          "## Release prepared: [$env:RELEASE_TAG]($env:RELEASE_PR_URL)" >> $env:GITHUB_STEP_SUMMARY
-          "The version-bump pull request passed CI, merged into main, and the Windows publishing workflow was dispatched." >> $env:GITHUB_STEP_SUMMARY
+          if ($env:RELEASE_PR_URL) {
+            "## Release prepared: [$env:RELEASE_TAG]($env:RELEASE_PR_URL)" >> $env:GITHUB_STEP_SUMMARY
+          }
+          else {
+            "## Release resumed: $env:RELEASE_TAG" >> $env:GITHUB_STEP_SUMMARY
+          }
+          "The exact release commit passed tests, dependency audit, and Windows packaging before publication was dispatched." >> $env:GITHUB_STEP_SUMMARY
