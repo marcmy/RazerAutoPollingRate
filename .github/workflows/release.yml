@@ -170,11 +170,11 @@ jobs:
           $pr = $prJson | ConvertFrom-Json | Select-Object -First 1
 
           if (-not $pr) {
-            $body = @"
-            Automated version bump from $env:CURRENT_VERSION to $env:RELEASE_VERSION.
-
-            After the required CI checks pass, this workflow will merge the pull request and dispatch the Windows publishing workflow.
-            "@
+            $body = @(
+              "Automated version bump from $env:CURRENT_VERSION to $env:RELEASE_VERSION.",
+              '',
+              'After the required CI checks pass, this workflow will merge the pull request and dispatch the Windows publishing workflow.'
+            ) -join [Environment]::NewLine
 
             $prUrl = gh pr create `
               --repo $env:GITHUB_REPOSITORY `
