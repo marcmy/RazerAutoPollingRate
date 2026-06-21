@@ -12,16 +12,6 @@ const DEFAULT_SETTINGS = {
   verboseDiagnosticLogging: false,
 };
 
-const BLOCKED_INI_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
-
-function createIniDictionary() {
-  return Object.create(null);
-}
-
-function isSafeIniKey(value) {
-  return Boolean(value) && !BLOCKED_INI_KEYS.has(value);
-}
-
 function parseBoolean(value, fallback) {
   const normalized = String(value || '').trim().toLowerCase();
   if (['true', '1', 'yes', 'on'].includes(normalized)) {
@@ -36,7 +26,7 @@ function parseBoolean(value, fallback) {
 }
 
 function parseIni(contents) {
-  const sections = createIniDictionary();
+  const sections = {};
   let currentSection = null;
 
   String(contents || '').split(/\r?\n/).forEach((rawLine) => {
@@ -47,16 +37,8 @@ function parseIni(contents) {
 
     const sectionMatch = line.match(/^\[([^\]]+)\]$/);
     if (sectionMatch) {
-      const sectionName = sectionMatch[1].trim().toLowerCase();
-      if (!isSafeIniKey(sectionName)) {
-        currentSection = null;
-        return;
-      }
-
-      currentSection = sectionName;
-      if (!Object.hasOwn(sections, currentSection)) {
-        sections[currentSection] = createIniDictionary();
-      }
+      currentSection = sectionMatch[1].trim().toLowerCase();
+      sections[currentSection] = sections[currentSection] || {};
       return;
     }
 
@@ -70,10 +52,6 @@ function parseIni(contents) {
     }
 
     const key = line.slice(0, equalsIndex).trim().toLowerCase();
-    if (!isSafeIniKey(key)) {
-      return;
-    }
-
     const value = line.slice(equalsIndex + 1).trim();
     sections[currentSection][key] = value;
   });
