@@ -60,6 +60,8 @@ const models = {
   HyperPollingDongle: 1,
   ViperSE: 2,
   DockPro: 3,
+  ViperV3Pro: 4,
+  ViperV4Pro: 5,
 };
 
 const dongles = {
@@ -78,6 +80,20 @@ const dongles = {
   0x00A4: {
     model: models.DockPro,
     is8kCompatible: true,
+  },
+  0x00C1: {
+    model: models.ViperV3Pro,
+    is8kCompatible: true,
+  },
+  0x00E5: {
+    model: models.ViperV4Pro,
+    is8kCompatible: true,
+    interfaceIndex: 0x03,
+  },
+  0x00E6: {
+    model: models.ViperV4Pro,
+    is8kCompatible: true,
+    interfaceIndex: 0x03,
   },
 };
 
@@ -609,9 +625,11 @@ async function prepareDongle(dongle) {
     await dongle.selectConfiguration(1);
   }
 
-  const firstInterface = dongle.configuration.interfaces[0];
-  await dongle.claimInterface(firstInterface.interfaceNumber);
-  return firstInterface.interfaceNumber;
+  const targetIndex = currentModel.interfaceIndex !== undefined ? currentModel.interfaceIndex : 0x00;
+  const targetInterface = dongle.configuration.interfaces.find(i => i.interfaceNumber === targetIndex) || dongle.configuration.interfaces[0];
+
+  await dongle.claimInterface(targetInterface.interfaceNumber);
+  return targetInterface.interfaceNumber;
 }
 
 async function cleanupDongle(dongle, claimedInterfaceNumber) {
@@ -635,12 +653,14 @@ async function cleanupDongle(dongle, claimedInterfaceNumber) {
 }
 
 async function getPollingRate(dongle) {
+  const targetIndex = currentModel.interfaceIndex !== undefined ? currentModel.interfaceIndex : 0x00;
+
   await dongle.controlTransferOut({
     requestType: 'class',
     recipient: 'interface',
     request: 0x09,
     value: 0x300,
-    index: 0x00,
+    index: targetIndex,
   }, getRazerReport(0x1F, 0x00, 0xC0, 0x01, 0x00, 0x00));
 
   await new Promise((res) => setTimeout(res, 100));
@@ -650,7 +670,7 @@ async function getPollingRate(dongle) {
     recipient: 'interface',
     request: 0x01,
     value: 0x300,
-    index: 0x00,
+    index: targetIndex,
   }, 90);
 
   const pollingRate = getRateForReportByte(reply.data.getInt8(9));
@@ -672,13 +692,14 @@ async function setPollingRate(dongle, pollingRate) {
   }
 
   const rate = getReportByteForRate(resolved.rate);
+  const targetIndex = currentModel.interfaceIndex !== undefined ? currentModel.interfaceIndex : 0x00;
 
   await dongle.controlTransferOut({
     requestType: 'class',
     recipient: 'interface',
     request: 0x09,
     value: 0x300,
-    index: 0x00,
+    index: targetIndex,
   }, getRazerReport(0x1F, 0x00, 0x40, 0x02, 0x00, rate));
 
   await new Promise((res) => setTimeout(res, 100));
@@ -688,7 +709,7 @@ async function setPollingRate(dongle, pollingRate) {
     recipient: 'interface',
     request: 0x01,
     value: 0x300,
-    index: 0x00,
+    index: targetIndex,
   }, 90);
 
   await new Promise((res) => setTimeout(res, 100));
@@ -698,7 +719,7 @@ async function setPollingRate(dongle, pollingRate) {
     recipient: 'interface',
     request: 0x09,
     value: 0x300,
-    index: 0x00,
+    index: targetIndex,
   }, getRazerReport(is8kCompatible() ? 0x1F : 0xFF, 0x00, 0x40, 0x02, 0x01, rate));
 
   await new Promise((res) => setTimeout(res, 100));
@@ -708,7 +729,7 @@ async function setPollingRate(dongle, pollingRate) {
     recipient: 'interface',
     request: 0x01,
     value: 0x300,
-    index: 0x00,
+    index: targetIndex,
   }, 90);
 
   await new Promise((res) => setTimeout(res, 100));
