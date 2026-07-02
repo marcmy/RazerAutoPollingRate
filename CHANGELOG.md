@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.3.0
+
+- Decoupled the 1500 ms process-detection loop from physical dongle access so responsive app switching no longer requires opening and querying the dongle every cycle.
+- Reused one WebUSB context and limited dongle access to startup, polling-target changes, retries after failures, and a five-minute health check.
+- Changed the runtime Disabled mode to perform no dongle USB access until detection is enabled again.
+- Added exponential retry backoff after USB access or polling-rate application failures.
+- Added verbose diagnostic events explaining why each dongle access was performed or skipped.
+- Added automated coverage for target-change gating, disabled-mode behavior, health checks, and retry backoff.
+
 ## v1.2.13
 
 - Added optional diagnostic logging, controlled from Settings and disabled by default.

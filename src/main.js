@@ -19,6 +19,7 @@ const AutoLaunch = require('auto-launch');
 const { execFile } = require('child_process');
 
 const { createCheckGuard } = require('./lib/checkGuard');
+const { createUsbAccessPolicy } = require('./lib/usbAccessPolicy');
 const { DiagnosticLogger } = require('./lib/diagnosticLogger');
 const {
   DEFAULT_SETTINGS,
@@ -100,6 +101,12 @@ let settingsWindow = null;
 let diagnosticLogger = null;
 const assetsFolder = 'src/assets/';
 const checkGuard = createCheckGuard();
+const usbAccessPolicy = createUsbAccessPolicy();
+const webUsb = new WebUSB({
+  devicesFound: (devices) => devices.find((device) => device.vendorId === 0x1532
+    && dongles[device.productId] !== undefined),
+});
+let lastKnownPollingRate = null;
 
 function getConfigDirectory() {
   return path.join(app.getPath('userData'), 'cfg');
@@ -578,10 +585,6 @@ async function handlePickWindowShortcut() {
 }
 
 async function getDongle() {
-  const webUsb = new WebUSB({
-    devicesFound: (devices) => devices.find((device) => device.vendorId === 0x1532 && dongles[device.productId] !== undefined),
-  });
-
   try {
     const device = await webUsb.requestDevice({ filters: [{}] });
     if (!device) {
@@ -797,6 +800,7 @@ function updateDiagnosticSession(entries, runningProcesses, lookupError) {
 async function checkPollingRate(firstRun) {
   let dongle;
   let claimedInterfaceNumber = null;
+  let usbAttempted = false;
 
   try {
     const { settings, entries } = loadConfig((message) => log(message, true));
@@ -852,6 +856,29 @@ async function checkPollingRate(firstRun) {
         requestedTarget,
       ].join('|'),
     });
+
+    const usbDecision = usbAccessPolicy.shouldAccess({
+      now: Date.now(),
+      targetRate: requestedTarget,
+      enabled: detectionEnabled,
+      firstRun: Boolean(firstRun),
+    });
+    recordDiagnosticEvent('usb_access_decision', {
+      access: usbDecision.access,
+      reason: usbDecision.reason,
+      requestedTarget,
+      retryAfter: usbDecision.retryAfter || null,
+      targetChanged: Boolean(usbDecision.targetChanged),
+    }, {
+      verbose: true,
+      key: `${usbDecision.access}:${usbDecision.reason}:${requestedTarget}`,
+    });
+
+    if (!usbDecision.access) {
+      return;
+    }
+
+    usbAttempted = true;
     dongle = await getDongle();
     claimedInterfaceNumber = await prepareDongle(dongle);
 
@@ -928,7 +955,30 @@ async function checkPollingRate(firstRun) {
         setRate = [pollingRate, isActive];
       }
     }
+
+    lastKnownPollingRate = pollingRate;
+    if (pollingRate === targetRate) {
+      usbAccessPolicy.recordSuccess({
+        now: Date.now(),
+        targetRate: requestedTarget,
+      });
+    } else {
+      const failure = usbAccessPolicy.recordFailure({ now: Date.now() });
+      recordDiagnosticEvent('usb_access_backoff', {
+        reason: 'target rate was not applied',
+        backoffMs: failure.backoffMs,
+        consecutiveErrors: failure.consecutiveErrors,
+      });
+    }
   } catch (error) {
+    if (usbAttempted) {
+      const failure = usbAccessPolicy.recordFailure({ now: Date.now() });
+      recordDiagnosticEvent('usb_access_backoff', {
+        reason: error.message,
+        backoffMs: failure.backoffMs,
+        consecutiveErrors: failure.consecutiveErrors,
+      });
+    }
     recordDiagnosticEvent('polling_check_error', {
       error: error.message,
     });
