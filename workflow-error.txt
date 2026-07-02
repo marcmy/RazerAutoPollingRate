@@ -1,0 +1,2 @@
+check patches/usb-stability-2a.patch
+Command failed: git apply --check patches/usb-stability-2a.patch
