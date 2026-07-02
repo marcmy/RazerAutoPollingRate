@@ -4,12 +4,12 @@ permissions:
   contents: write
 jobs:
   apply:
-    if: github.head_ref == 'usb-access-stability'
+    if: github.head_ref == 'usb-stability-run'
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: usb-access-stability
+          ref: usb-stability-run
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -22,4 +22,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git commit -m "fix: improve polling stability"
-          git push origin HEAD:usb-access-stability
+          git push origin HEAD:usb-stability-run
