@@ -1,1 +1,28 @@
-test
+diff --git a/src/main.js b/src/main.js
+--- a/src/main.js
++++ b/src/main.js
+@@ -939,7 +939,22 @@ async function checkPollingRate(firstRun) {
+       usbAccessPolicy.recordSuccess({
+         now: Date.now(),
+         targetRate: requestedTarget,
+       });
++    } else {
++      const failure = usbAccessPolicy.recordFailure({ now: Date.now() });
++      recordDiagnosticEvent('usb_access_backoff', {
++        reason: 'target rate was not applied',
++        backoffMs: failure.backoffMs,
++        consecutiveErrors: failure.consecutiveErrors,
++      });
+     }
+   } catch (error) {
++    if (usbAttempted) {
++      const failure = usbAccessPolicy.recordFailure({ now: Date.now() });
++      recordDiagnosticEvent('usb_access_backoff', {
++        reason: error.message,
++        backoffMs: failure.backoffMs,
++        consecutiveErrors: failure.consecutiveErrors,
++      });
++    }
+     recordDiagnosticEvent('polling_check_error', {
+       error: error.message,
+     });
