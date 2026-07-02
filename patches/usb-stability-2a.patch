@@ -31,3 +31,18 @@ diff --git a/src/main.js b/src/main.js
      dongle = await getDongle();
      claimedInterfaceNumber = await prepareDongle(dongle);
  
+@@ -930,6 +953,13 @@ async function checkPollingRate(firstRun) {
+         setRate = [pollingRate, isActive];
+       }
+     }
++
++    lastKnownPollingRate = pollingRate;
++    if (pollingRate === targetRate) {
++      usbAccessPolicy.recordSuccess({
++        now: Date.now(),
++        targetRate: requestedTarget,
++      });
++    }
+   } catch (error) {
+     recordDiagnosticEvent('polling_check_error', {
+       error: error.message,
