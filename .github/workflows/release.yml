@@ -26,8 +26,6 @@ jobs:
   prepare-release:
     if: github.ref == 'refs/heads/main'
     runs-on: windows-2022
-    env:
-      GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.SCOOP_BUCKET_TOKEN || secrets.GH_PAT || secrets.PAT }}
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -35,20 +33,24 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Configure release automation credentials
-        shell: pwsh
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
-            throw 'No release automation token configured. Add RELEASE_TOKEN, SCOOP_BUCKET_TOKEN, GH_PAT, or PAT.'
-          }
-
-          gh auth setup-git
-
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
+
+      - name: Configure release automation credentials
+        shell: pwsh
+        env:
+          RELEASE_AUTOMATION_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.SCOOP_BUCKET_TOKEN || secrets.GH_PAT || secrets.PAT }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RELEASE_AUTOMATION_TOKEN)) {
+            throw 'No release automation token configured. Add RELEASE_TOKEN, SCOOP_BUCKET_TOKEN, GH_PAT, or PAT.'
+          }
+
+          "GH_TOKEN=$env:RELEASE_AUTOMATION_TOKEN" >> $env:GITHUB_ENV
+          $env:GH_TOKEN = $env:RELEASE_AUTOMATION_TOKEN
+          gh auth setup-git
 
       - name: Select or resume release
         shell: pwsh
