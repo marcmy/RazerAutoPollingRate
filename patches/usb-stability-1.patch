@@ -22,7 +22,7 @@ diff --git a/src/main.js b/src/main.js
  
  function getConfigDirectory() {
    return path.join(app.getPath('userData'), 'cfg');
-@@ -580,11 +587,6 @@ async function handlePickWindowShortcut() {
+@@ -580,10 +587,6 @@ async function handlePickWindowShortcut() {
  }
  
  async function getDongle() {
