@@ -1,5 +1,12 @@
 name: Validate polling changes
-on: pull_request
+on:
+  push:
+    branches:
+      - usb-stability-run
+    paths:
+      - validation-trigger.txt
+permissions:
+  contents: write
 jobs:
   validate:
     runs-on: windows-2022
@@ -14,7 +21,7 @@ jobs:
       - run: node scripts/apply-stability.js
       - run: npm ci
       - run: npm test
-      - uses: actions/upload-artifact@v4
+      - uses: stefanzweifel/git-auto-commit-action@v7
         with:
-          name: validated-main
-          path: src/main.js
+          commit_message: "fix: polling stability"
+          file_pattern: src/main.js
