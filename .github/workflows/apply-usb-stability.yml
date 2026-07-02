@@ -4,7 +4,7 @@ on:
     branches:
       - usb-stability-run
     paths:
-      - validation-trigger.txt
+      - .github/workflows/apply-usb-stability.yml
 permissions:
   contents: write
 jobs:
