@@ -1,0 +1,51 @@
+name: Apply USB stability refactor
+
+on:
+  push:
+    branches:
+      - usb-access-stability
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: windows-2022
+    steps:
+      - name: Check out branch
+        uses: actions/checkout@v6
+
+      - name: Apply source patches
+        shell: pwsh
+        run: |
+          git apply --check patches/usb-stability-1.patch
+          git apply patches/usb-stability-1.patch
+          git apply --check patches/usb-stability-2a.patch
+          git apply patches/usb-stability-2a.patch
+          git apply --check notes-test.txt
+          git apply notes-test.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Commit validated refactor
+        shell: pwsh
+        run: |
+          Remove-Item patches -Recurse -Force
+          Remove-Item notes-test.txt -Force
+          Remove-Item scripts/patch-main-usb-1.js -Force
+          Remove-Item .github/workflows/apply-usb-stability.yml -Force
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: reduce HyperPolling dongle USB churn"
+          git push origin HEAD:usb-access-stability
