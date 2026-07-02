@@ -26,11 +26,23 @@ jobs:
   prepare-release:
     if: github.ref == 'refs/heads/main'
     runs-on: windows-2022
+    env:
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.SCOOP_BUCKET_TOKEN || secrets.GH_PAT || secrets.PAT }}
     steps:
       - name: Check out source
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure release automation credentials
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+            throw 'No release automation token configured. Add RELEASE_TOKEN, SCOOP_BUCKET_TOKEN, GH_PAT, or PAT.'
+          }
+
+          gh auth setup-git
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
@@ -153,8 +165,6 @@ jobs:
       - name: Open or reuse release pull request
         if: env.RELEASE_ALREADY_MERGED != 'true'
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           $prJson = gh pr list `
             --repo $env:GITHUB_REPOSITORY `
@@ -207,8 +217,6 @@ jobs:
       - name: Dispatch required CI checks
         if: env.RELEASE_ALREADY_MERGED != 'true'
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           gh workflow run ci.yml `
             --repo $env:GITHUB_REPOSITORY `
@@ -220,8 +228,6 @@ jobs:
       - name: Wait for required CI checks
         if: env.RELEASE_ALREADY_MERGED != 'true'
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           $runId = $null
 
@@ -273,8 +279,6 @@ jobs:
       - name: Merge release pull request
         if: env.RELEASE_ALREADY_MERGED != 'true'
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           gh pr merge $env:RELEASE_PR_NUMBER `
             --repo $env:GITHUB_REPOSITORY `
@@ -301,8 +305,6 @@ jobs:
 
       - name: Dispatch Windows publishing
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           gh workflow run publish-release.yml `
             --repo $env:GITHUB_REPOSITORY `
