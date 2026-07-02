@@ -1,0 +1,43 @@
+diff --git a/src/main.js b/src/main.js
+--- a/src/main.js
++++ b/src/main.js
+@@ -20,6 +20,7 @@ const AutoLaunch = require('auto-launch');
+ const { execFile } = require('child_process');
+ 
+ const { createCheckGuard } = require('./lib/checkGuard');
++const { createUsbAccessPolicy } = require('./lib/usbAccessPolicy');
+ const { DiagnosticLogger } = require('./lib/diagnosticLogger');
+ const {
+   DEFAULT_SETTINGS,
+@@ -102,6 +103,12 @@ let settingsWindow = null;
+ let diagnosticLogger = null;
+ const assetsFolder = 'src/assets/';
+ const checkGuard = createCheckGuard();
++const usbAccessPolicy = createUsbAccessPolicy();
++const webUsb = new WebUSB({
++  devicesFound: (devices) => devices.find((device) => device.vendorId === 0x1532
++    && dongles[device.productId] !== undefined),
++});
++let lastKnownPollingRate = null;
+ 
+ function getConfigDirectory() {
+   return path.join(app.getPath('userData'), 'cfg');
+@@ -580,11 +587,6 @@ async function handlePickWindowShortcut() {
+ }
+ 
+ async function getDongle() {
+-  const webUsb = new WebUSB({
+-    devicesFound: (devices) => devices.find((device) => device.vendorId === 0x1532 && dongles[device.productId] !== undefined),
+-  });
+-
+   try {
+     const device = await webUsb.requestDevice({ filters: [{}] });
+     if (!device) {
+@@ -797,6 +799,7 @@ async function checkPollingRate(firstRun) {
+ async function checkPollingRate(firstRun) {
+   let dongle;
+   let claimedInterfaceNumber = null;
++  let usbAttempted = false;
+ 
+   try {
+     const { settings, entries } = loadConfig((message) => log(message, true));
