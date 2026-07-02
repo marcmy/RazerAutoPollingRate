@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.3.1
+
+- Added support for the Razer Viper V3 Pro wireless (`VID_1532&PID_00C1`).
+- Added support for the Razer Viper V4 Pro wired (`VID_1532&PID_00E5`) and wireless (`VID_1532&PID_00E6`).
+- Added per-device USB interface selection so Viper V4 Pro polling-rate commands use interface index `0x03` while existing devices continue using `0x00`.
+- Thanks to [@jacky50403](https://github.com/jacky50403) for the hardware-tested contribution in PR #21.
+
 ## v1.3.0
 
 - Decoupled the 1500 ms process-detection loop from physical dongle access so responsive app switching no longer requires opening and querying the dongle every cycle.
