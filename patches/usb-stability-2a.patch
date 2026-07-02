@@ -1,0 +1,27 @@
+diff --git a/src/main.js b/src/main.js
+--- a/src/main.js
++++ b/src/main.js
+@@ -854,6 +854,23 @@ async function checkPollingRate(firstRun) {
+         requestedTarget,
+       ].join('|'),
+     });
++
++    const usbDecision = usbAccessPolicy.shouldAccess({
++      now: Date.now(),
++      targetRate: requestedTarget,
++      enabled: detectionEnabled,
++      firstRun: Boolean(firstRun),
++    });
++    recordDiagnosticEvent('usb_access_decision', {
++      access: usbDecision.access,
++      reason: usbDecision.reason,
++      requestedTarget,
++      retryAfter: usbDecision.retryAfter || null,
++      targetChanged: Boolean(usbDecision.targetChanged),
++    }, {
++      verbose: true,
++      key: `${usbDecision.access}:${usbDecision.reason}:${requestedTarget}`,
++    });
+     dongle = await getDongle();
+     claimedInterfaceNumber = await prepareDongle(dongle);
+ 
