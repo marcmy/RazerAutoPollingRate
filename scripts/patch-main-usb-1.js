@@ -1,21 +1,15 @@
 const fs = require('fs');
-const file = 'src/main.js';
-let source = fs.readFileSync(file, 'utf8');
-function patch(before, after) {
-  if (!source.includes(before)) throw new Error('Missing patch anchor');
-  source = source.replace(before, after);
+const { execFileSync } = require('child_process');
+const run = (command, args) => execFileSync(command, args, { stdio: 'inherit' });
+
+for (const patch of ['patches/usb-stability-1.patch', 'patches/usb-stability-2a.patch', 'notes-test.txt']) {
+  run('git', ['apply', '--check', patch]);
+  run('git', ['apply', patch]);
 }
-patch(
-  "const { createCheckGuard } = require('./lib/checkGuard');",
-  "const { createCheckGuard } = require('./lib/checkGuard');\nconst { createUsbAccessPolicy } = require('./lib/usbAccessPolicy');",
-);
-patch(
-  'const checkGuard = createCheckGuard();',
-  `const checkGuard = createCheckGuard();
-const usbAccessPolicy = createUsbAccessPolicy();
-const webUsb = new WebUSB({
-  devicesFound: (devices) => devices.find((device) => device.vendorId === 0x1532 && dongles[device.productId] !== undefined),
-});
-let lastKnownPollingRate = null;`,
-);
-fs.writeFileSync(file, source);
+run('node', ['--check', 'src/main.js']);
+run('npm.cmd', ['ci']);
+run('npm.cmd', ['test']);
+fs.rmSync('patches', { recursive: true, force: true });
+fs.rmSync('notes-test.txt', { force: true });
+fs.rmSync('.github/workflows/apply-usb-stability.yml', { force: true });
+fs.rmSync(__filename, { force: true });
