@@ -12,6 +12,63 @@ permissions:
   contents: read
 
 jobs:
+  apply-v132-patch:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/marc/v1.3.2-usb-regression'
+    runs-on: windows-2022
+    steps:
+      - name: Check out patch branch
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Configure repository credentials
+        shell: pwsh
+        env:
+          PATCH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.SCOOP_BUCKET_TOKEN || secrets.GH_PAT || secrets.PAT }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PATCH_TOKEN)) {
+            throw 'No repository token configured for the v1.3.2 patch.'
+          }
+
+          "GH_TOKEN=$env:PATCH_TOKEN" >> $env:GITHUB_ENV
+          $env:GH_TOKEN = $env:PATCH_TOKEN
+          gh auth setup-git
+
+      - name: Apply regression fix
+        shell: pwsh
+        run: |
+          $patches = @(
+            '.github/v132-main-query.patch'
+            '.github/v132-main-loop.patch'
+            '.github/v132-debug-interval.patch'
+            '.github/v132-misc.patch'
+          )
+
+          foreach ($patch in $patches) {
+            git apply --check $patch
+            git apply $patch
+          }
+
+          git rm src/lib/usbAccessPolicy.js test/usbAccessPolicy.test.js
+          git rm @patches
+          git checkout origin/main -- .github/workflows/ci.yml
+
+          npm ci
+          npm test
+
+          git config user.name 'marcmy'
+          git config user.email '21000174+marcmy@users.noreply.github.com'
+          git add --all
+          git commit -m 'fix: restore continuous polling enforcement'
+          git push origin HEAD:marc/v1.3.2-usb-regression
+
   test:
     runs-on: windows-2022
     steps:
