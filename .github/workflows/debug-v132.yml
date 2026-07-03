@@ -1,4 +1,4 @@
-name: Diagnose v1.3.2 Transform
+name: Assemble v1.3.2 Commit
 
 on:
   pull_request:
@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 jobs:
-  diagnose:
+  assemble:
     if: github.head_ref == 'marc/v1.3.2-usb-regression'
     runs-on: ubuntu-latest
     steps:
@@ -18,32 +18,113 @@ jobs:
           fetch-depth: 0
           show-progress: false
 
-      - name: Run exact source transforms
-        shell: pwsh
-        run: .github/apply-v132.ps1
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
 
-      - name: Remove obsolete policy and scaffolding
+      - name: Configure repository credentials
+        shell: pwsh
+        env:
+          ASSEMBLY_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.SCOOP_BUCKET_TOKEN || secrets.GH_PAT || secrets.PAT }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:ASSEMBLY_TOKEN)) {
+            throw 'No repository token configured for commit assembly.'
+          }
+          "GH_TOKEN=$env:ASSEMBLY_TOKEN" >> $env:GITHUB_ENV
+
+      - name: Transform and test source
         shell: pwsh
         run: |
-          git rm src/lib/usbAccessPolicy.js test/usbAccessPolicy.test.js
-          git rm '.github/v132-*.patch' .github/apply-v132.ps1
+          & .github/apply-v132.ps1
+          npm ci
+          npm test
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Assemble Git objects
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
 
-      - name: Run tests
-        run: npm test
+          function Invoke-GhJson([string] $Method, [string] $Endpoint, [hashtable] $Body) {
+            $tempPath = [IO.Path]::GetTempFileName()
+            try {
+              $json = $Body | ConvertTo-Json -Depth 20 -Compress
+              [IO.File]::WriteAllText($tempPath, $json, [Text.UTF8Encoding]::new($false))
+              return gh api --method $Method $Endpoint --input $tempPath | ConvertFrom-Json
+            } finally {
+              Remove-Item $tempPath -Force -ErrorAction SilentlyContinue
+            }
+          }
 
-      - name: Upload validated source
+          $repo = $env:GITHUB_REPOSITORY
+          $branch = 'marc/v1.3.2-usb-regression'
+          $ref = gh api "repos/$repo/git/ref/heads/$branch" | ConvertFrom-Json
+          $parentSha = $ref.object.sha
+          $parentCommit = gh api "repos/$repo/git/commits/$parentSha" | ConvertFrom-Json
+          $baseTreeSha = $parentCommit.tree.sha
+
+          $updatedPaths = @(
+            'CHANGELOG.md',
+            'src/main.js',
+            'src/lib/appConfig.js',
+            'src/lib/retryImmediately.js',
+            'test/appConfig.test.js',
+            'test/retryImmediately.test.js',
+            'test/run-tests.js'
+          )
+
+          $treeEntries = @()
+          foreach ($path in $updatedPaths) {
+            $blob = Invoke-GhJson 'POST' "repos/$repo/git/blobs" @{
+              content = [IO.File]::ReadAllText($path)
+              encoding = 'utf-8'
+            }
+            $treeEntries += @{
+              path = $path
+              mode = '100644'
+              type = 'blob'
+              sha = $blob.sha
+            }
+          }
+
+          $deletedPaths = @(
+            '.github/apply-v132.ps1',
+            '.github/v132-main-query.patch',
+            '.github/v132-main-loop.patch',
+            '.github/v132-debug-interval.patch',
+            '.github/v132-misc.patch',
+            'src/lib/usbAccessPolicy.js',
+            'test/usbAccessPolicy.test.js'
+          )
+
+          foreach ($path in $deletedPaths) {
+            $treeEntries += @{
+              path = $path
+              mode = '100644'
+              type = 'blob'
+              sha = $null
+            }
+          }
+
+          $newTree = Invoke-GhJson 'POST' "repos/$repo/git/trees" @{
+            base_tree = $baseTreeSha
+            tree = $treeEntries
+          }
+          $newCommit = Invoke-GhJson 'POST' "repos/$repo/git/commits" @{
+            message = 'fix: restore continuous polling enforcement'
+            tree = $newTree.sha
+            parents = @($parentSha)
+          }
+
+          [IO.File]::WriteAllText('v132-commit-sha.txt', $newCommit.sha, [Text.UTF8Encoding]::new($false))
+          Write-Host "Assembled commit $($newCommit.sha)"
+
+      - name: Upload assembled commit SHA
         uses: actions/upload-artifact@v4
         with:
-          name: v132-transformed-source
+          name: v132-assembled-commit
+          path: v132-commit-sha.txt
           if-no-files-found: error
-          path: |
-            CHANGELOG.md
-            src/main.js
-            src/lib/appConfig.js
-            src/lib/retryImmediately.js
-            test/appConfig.test.js
-            test/retryImmediately.test.js
-            test/run-tests.js
