@@ -42,30 +42,37 @@ jobs:
           $env:GH_TOKEN = $env:PATCH_TOKEN
           gh auth setup-git
 
-      - name: Apply regression fix
+      - name: Apply exact source transforms
+        shell: pwsh
+        run: .github/apply-v132.ps1
+
+      - name: Remove obsolete policy and scaffolding
         shell: pwsh
         run: |
-          Set-StrictMode -Version Latest
-          $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
+          git rm src/lib/usbAccessPolicy.js test/usbAccessPolicy.test.js
+          git rm '.github/v132-*.patch' .github/apply-v132.ps1
 
-          try {
-            & .github/apply-v132.ps1
+      - name: Install transformed dependencies
+        run: npm ci
 
-            git rm src/lib/usbAccessPolicy.js test/usbAccessPolicy.test.js
-            git rm '.github/v132-*.patch' .github/apply-v132.ps1
+      - name: Test transformed source
+        run: npm test
 
-            npm ci
-            npm test
+      - name: Commit transformed source
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          git config user.name 'marcmy'
+          git config user.email '21000174+marcmy@users.noreply.github.com'
+          git add --all
+          git commit -m 'fix: restore continuous polling enforcement'
 
-            git config user.name 'marcmy'
-            git config user.email '21000174+marcmy@users.noreply.github.com'
-            git add --all
-            git commit -m 'fix: restore continuous polling enforcement'
-            git push origin HEAD:marc/v1.3.2-usb-regression
-          } catch {
-            throw
-          }
+      - name: Push transformed source
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          git push origin HEAD:marc/v1.3.2-usb-regression
 
   test:
     runs-on: windows-2022
