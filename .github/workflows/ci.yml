@@ -14,7 +14,7 @@ permissions:
 jobs:
   apply-v132-patch:
     if: (github.event_name == 'push' && github.ref == 'refs/heads/marc/v1.3.2-usb-regression') || (github.event_name == 'pull_request' && github.head_ref == 'marc/v1.3.2-usb-regression')
-    runs-on: windows-2022
+    runs-on: ubuntu-latest
     steps:
       - name: Check out patch branch
         uses: actions/checkout@v6
