@@ -1,0 +1,28 @@
+name: Report v1.3.2 State
+
+on:
+  pull_request:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  report:
+    if: github.head_ref == 'marc/dispatch-v1.3.2'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: marc/dispatch-v1.3.2
+
+      - name: Capture release runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml --event workflow_dispatch --limit 5 --json databaseId,status,conclusion,createdAt,headSha,url > release-runs.json
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add release-runs.json
+          git commit -m "debug: capture v1.3.2 release state"
+          git push origin HEAD:marc/dispatch-v1.3.2
