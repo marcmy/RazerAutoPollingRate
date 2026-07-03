@@ -1,0 +1,160 @@
+diff --git a/src/lib/appConfig.js b/src/lib/appConfig.js
+index acfba12..0000000 100644
+--- a/src/lib/appConfig.js
++++ b/src/lib/appConfig.js
+@@ -12,6 +12,7 @@ const DEFAULT_SETTINGS = {
+   autostart: true,
+   diagnosticLogging: false,
+   verboseDiagnosticLogging: false,
++  pollingCheckIntervalMs: 1500,
+ };
++
++const MIN_POLLING_CHECK_INTERVAL_MS = 200;
++const MAX_POLLING_CHECK_INTERVAL_MS = 60000;
+@@ -27,6 +30,19 @@ function parseBoolean(value, fallback) {
+   return fallback;
+ }
++
++function normalizePollingCheckIntervalMs(value) {
++  const text = String(value ?? '').trim();
++  if (!/^\d+$/.test(text)) {
++    return DEFAULT_SETTINGS.pollingCheckIntervalMs;
++  }
++
++  const interval = Number(text);
++  if (!Number.isSafeInteger(interval)
++    || interval < MIN_POLLING_CHECK_INTERVAL_MS
++    || interval > MAX_POLLING_CHECK_INTERVAL_MS) {
++    return DEFAULT_SETTINGS.pollingCheckIntervalMs;
++  }
++
++  return interval;
++}
+@@ -78,6 +94,7 @@ function normalizeSettings(rawSettings = {}) {
+       rawSettings.verbose_diagnostic_logging,
+       DEFAULT_SETTINGS.verboseDiagnosticLogging,
+     ),
++    pollingCheckIntervalMs: normalizePollingCheckIntervalMs(rawSettings.polling_check_interval_ms),
+   };
+ }
+@@ -119,6 +136,8 @@ function serializeAppConfig(settings, entries) {
+     `autostart=${normalizedSettings.autostart ? 'true' : 'false'}`,
+     `diagnostic_logging=${normalizedSettings.diagnosticLogging ? 'true' : 'false'}`,
+     `verbose_diagnostic_logging=${normalizedSettings.verboseDiagnosticLogging ? 'true' : 'false'}`,
++    '# Debug only: default 1500 ms; accepted range 200-60000 ms.',
++    `polling_check_interval_ms=${normalizePollingCheckIntervalMs(normalizedSettings.pollingCheckIntervalMs)}`,
+     '',
+     '[rules]',
+@@ -140,6 +159,9 @@ module.exports = {
+   DEFAULT_SETTINGS,
++  MAX_POLLING_CHECK_INTERVAL_MS,
++  MIN_POLLING_CHECK_INTERVAL_MS,
+   configExists,
+   normalizeSettings,
++  normalizePollingCheckIntervalMs,
+   parseIni,
+   readAppConfig,
+   serializeAppConfig,
+diff --git a/src/main.js b/src/main.js
+index 0000000..0000000 100644
+--- a/src/main.js
++++ b/src/main.js
+@@ -109,6 +109,7 @@ let defaultGamePollingRate = 1000;
+ let detectionMode = 'foreground';
+ let diagnosticLoggingEnabled = false;
+ let verboseDiagnosticLoggingEnabled = false;
++let pollingCheckIntervalMs = DEFAULT_SETTINGS.pollingCheckIntervalMs;
+ let detectionEnabled = true;
+ let pickingWindow = false;
+ let hasStopped = false;
+@@ -207,6 +208,7 @@ function getCurrentSettings() {
+     autostart: Boolean(autostartEnabled),
+     diagnosticLogging: Boolean(diagnosticLoggingEnabled),
+     verboseDiagnosticLogging: Boolean(verboseDiagnosticLoggingEnabled),
++    pollingCheckIntervalMs,
+   };
+ }
+@@ -218,6 +220,7 @@ function applySettings(settings) {
+   autostartEnabled = Boolean(settings.autostart);
+   diagnosticLoggingEnabled = Boolean(settings.diagnosticLogging);
+   verboseDiagnosticLoggingEnabled = Boolean(settings.verboseDiagnosticLogging);
++  pollingCheckIntervalMs = settings.pollingCheckIntervalMs || DEFAULT_SETTINGS.pollingCheckIntervalMs;
+ }
+@@ -297,6 +300,7 @@ function setupSettingsIpc() {
+         autostart: Boolean(payload.settings.autostart),
+         diagnosticLogging: Boolean(payload.settings.diagnosticLogging),
+         verboseDiagnosticLogging: Boolean(payload.settings.verboseDiagnosticLogging),
++        pollingCheckIntervalMs,
+       };
+@@ -401,7 +405,7 @@ async function runLoop() {
+ 
+   while (true) {
+-    await new Promise((res) => setTimeout(res, 1500));
++    await new Promise((res) => setTimeout(res, pollingCheckIntervalMs));
+     if (stop) {
+       break;
+@@ -884,6 +888,12 @@ async function checkPollingRate(firstRun) {
+       key: `true:${firstRun ? 'startup' : 'continuous_enforcement'}:${requestedTarget}`,
+     });
+ 
++    recordDiagnosticEvent('polling_probe', {
++      checkIntervalMs: pollingCheckIntervalMs,
++      firstRun: Boolean(firstRun),
++      requestedTarget,
++    }, { verbose: true });
++
+     dongle = await getDongle();
+     claimedInterfaceNumber = await prepareDongle(dongle);
+@@ -930,6 +940,7 @@ async function checkPollingRate(firstRun) {
+       currentRate: pollingRate,
+       targetRate,
+       requestedTarget,
++      checkIntervalMs: pollingCheckIntervalMs,
+       rules: entries.length,
+     }, { verbose: true });
+diff --git a/test/appConfig.test.js b/test/appConfig.test.js
+index 2567f76..0000000 100644
+--- a/test/appConfig.test.js
++++ b/test/appConfig.test.js
+@@ -9,6 +9,7 @@ const {
+   DEFAULT_SETTINGS,
++  normalizePollingCheckIntervalMs,
+   readAppConfig,
+   serializeAppConfig,
+   writeAppConfig,
+@@ -26,6 +27,7 @@ test('config.ini serializes settings and ordered rules', () => {
+     autostart: false,
+     diagnosticLogging: true,
+     verboseDiagnosticLogging: true,
++    pollingCheckIntervalMs: 500,
+   }, entries);
+@@ -35,6 +37,7 @@ test('config.ini serializes settings and ordered rules', () => {
+   assert.match(contents, /autostart=false/);
+   assert.match(contents, /diagnostic_logging=true/);
+   assert.match(contents, /verbose_diagnostic_logging=true/);
++  assert.match(contents, /polling_check_interval_ms=500/);
+   assert.match(contents, /\[rules\]/);
+@@ -52,6 +55,7 @@ test('config.ini reads settings and rules back', () => {
+     'autostart=true',
+     'diagnostic_logging=true',
+     'verbose_diagnostic_logging=false',
++    'polling_check_interval_ms=200',
+     '',
+@@ -68,6 +72,7 @@ test('config.ini reads settings and rules back', () => {
+     autostart: true,
+     diagnosticLogging: true,
+     verboseDiagnosticLogging: false,
++    pollingCheckIntervalMs: 200,
+   });
+@@ -100,6 +105,13 @@ test('verbose diagnostic logging can stay selected while diagnostic logging is off', () => {
+   assert.equal(settings.verboseDiagnosticLogging, true);
+ });
++
++test('debug polling interval accepts 200 ms and rejects out-of-range values', () => {
++  assert.equal(normalizePollingCheckIntervalMs('200'), 200);
++  assert.equal(normalizePollingCheckIntervalMs('500'), 500);
++  assert.equal(normalizePollingCheckIntervalMs('199'), DEFAULT_SETTINGS.pollingCheckIntervalMs);
++  assert.equal(normalizePollingCheckIntervalMs('not-a-number'), DEFAULT_SETTINGS.pollingCheckIntervalMs);
++});
+ 
+ test('writeAppConfig writes a readable config.ini', () => {
