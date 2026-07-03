@@ -1,0 +1,88 @@
+diff --git a/src/main.js b/src/main.js
+index 4c716d3..0000000 100644
+--- a/src/main.js
++++ b/src/main.js
+@@ -20,8 +20,8 @@ const AutoLaunch = require('auto-launch');
+ const { execFile } = require('child_process');
+ 
+ const { createCheckGuard } = require('./lib/checkGuard');
+-const { createUsbAccessPolicy } = require('./lib/usbAccessPolicy');
+ const { DiagnosticLogger } = require('./lib/diagnosticLogger');
++const { retryImmediately } = require('./lib/retryImmediately');
+ const {
+   DEFAULT_SETTINGS,
+   configExists,
+@@ -100,13 +100,7 @@ let settingsWindow = null;
+ let diagnosticLogger = null;
+ const assetsFolder = 'src/assets/';
+ const checkGuard = createCheckGuard();
+-const usbAccessPolicy = createUsbAccessPolicy();
+-const webUsb = new WebUSB({
+-  devicesFound: (devices) => devices.find((device) => device.vendorId === 0x1532
+-    && dongles[device.productId] !== undefined),
+-});
+-let lastKnownPollingRate = null;
++let lastPollingError = null;
+ 
+ function getConfigDirectory() {
+   return path.join(app.getPath('userData'), 'cfg');
+@@ -585,6 +579,11 @@ async function handlePickWindowShortcut() {
+ }
+ 
+ async function getDongle() {
++  const webUsb = new WebUSB({
++    devicesFound: (devices) => devices.find((device) => device.vendorId === 0x1532
++      && dongles[device.productId] !== undefined),
++  });
++
+   try {
+     const device = await webUsb.requestDevice({ filters: [{}] });
+     if (!device) {
+@@ -635,7 +634,7 @@ async function cleanupDongle(dongle, claimedInterfaceNumber) {
+   }
+ }
+ 
+-async function getPollingRate(dongle) {
++async function getPollingRateOnce(dongle) {
+   const targetIndex = currentModel.interfaceIndex !== undefined ? currentModel.interfaceIndex : 0x00;
+ 
+   await dongle.controlTransferOut({
+@@ -655,14 +654,38 @@ async function getPollingRate(dongle) {
+     index: targetIndex,
+   }, 90);
+ 
+-  const pollingRate = getRateForReportByte(reply.data.getInt8(9));
++  const responseLength = reply && reply.data ? reply.data.byteLength : 0;
++  if (!reply || !reply.data || responseLength <= 9) {
++    throw new Error(`Dongle returned a short polling-rate response (${responseLength} bytes)`);
++  }
++
++  const responseByte = reply.data.getUint8(9);
++  const pollingRate = getRateForReportByte(responseByte);
+   if (!pollingRate) {
+-    throw new Error('Dongle returned an unknown polling-rate response');
++    throw new Error(
++      `Dongle returned an unknown polling-rate response (byte 0x${responseByte.toString(16).padStart(2, '0')}, length ${responseLength})`,
++    );
+   }
+ 
+   return pollingRate;
+ }
+ 
++async function getPollingRate(dongle) {
++  return retryImmediately(() => getPollingRateOnce(dongle), {
++    attempts: 3,
++    onFailure: (error, attempt, attempts) => {
++      recordDiagnosticEvent('polling_rate_query_attempt_failed', {
++        attempt,
++        attempts,
++        error: error.message,
++      }, {
++        verbose: true,
++        key: `${attempt}:${error.message}`,
++      });
++    },
++  });
++}
++
+ async function setPollingRate(dongle, pollingRate) {
