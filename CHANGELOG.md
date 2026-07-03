@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.3.2
+
+- Restored continuous 1500 ms dongle verification while detection is enabled so polling-rate changes from Razer Synapse are corrected promptly.
+- Replaced the v1.3.0 target-change gating, five-minute health checks, and exponential USB backoff with continuous enforcement.
+- Added three immediate polling-rate query attempts within the same open USB session before reporting a check failure.
+- Added the debug-only `polling_check_interval_ms` config value (default `1500`, minimum `200`) and per-probe verbose diagnostics for testing shorter enforcement intervals.
+- Kept USB access fully disabled when the runtime detection toggle is off and suppressed repeated identical error notifications while recovery checks continue.
+
 ## v1.3.1
 
 - Added support for the Razer Viper V3 Pro wireless (`VID_1532&PID_00C1`).

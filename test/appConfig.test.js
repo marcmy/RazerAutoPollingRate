@@ -6,6 +6,7 @@ const path = require('node:path');
 
 const {
   DEFAULT_SETTINGS,
+  normalizePollingCheckIntervalMs,
   readAppConfig,
   serializeAppConfig,
   writeAppConfig,
@@ -24,6 +25,7 @@ test('config.ini serializes settings and ordered rules', () => {
     autostart: false,
     diagnosticLogging: true,
     verboseDiagnosticLogging: true,
+    pollingCheckIntervalMs: 500,
   }, entries);
 
   assert.match(contents, /\[settings\]/);
@@ -33,6 +35,7 @@ test('config.ini serializes settings and ordered rules', () => {
   assert.match(contents, /autostart=false/);
   assert.match(contents, /diagnostic_logging=true/);
   assert.match(contents, /verbose_diagnostic_logging=true/);
+  assert.match(contents, /polling_check_interval_ms=500/);
   assert.match(contents, /\[rules\]/);
   assert.match(contents, /1=r5apex.exe 4000/);
   assert.match(contents, /2="C:\\Games\\Quake Live\\quake_live_x64.exe" 1000/);
@@ -50,6 +53,7 @@ test('config.ini reads settings and rules back', () => {
     'autostart=true',
     'diagnostic_logging=true',
     'verbose_diagnostic_logging=false',
+    'polling_check_interval_ms=200',
     '',
     '[rules]',
     '2=quake_live_x64.exe 1000',
@@ -66,6 +70,7 @@ test('config.ini reads settings and rules back', () => {
     autostart: true,
     diagnosticLogging: true,
     verboseDiagnosticLogging: false,
+    pollingCheckIntervalMs: 200,
   });
   assert.deepEqual(entries.map((entry) => entry.rawTarget), ['r5apex.exe', 'quake_live_x64.exe']);
   assert.deepEqual(entries.map((entry) => entry.pollingRate), [4000, 1000]);
@@ -95,6 +100,13 @@ test('verbose diagnostic logging can stay selected while diagnostic logging is o
 
   assert.equal(settings.diagnosticLogging, false);
   assert.equal(settings.verboseDiagnosticLogging, true);
+});
+
+test('debug polling interval accepts 200 ms and rejects invalid values', () => {
+  assert.equal(normalizePollingCheckIntervalMs('200'), 200);
+  assert.equal(normalizePollingCheckIntervalMs('500'), 500);
+  assert.equal(normalizePollingCheckIntervalMs('199'), DEFAULT_SETTINGS.pollingCheckIntervalMs);
+  assert.equal(normalizePollingCheckIntervalMs('not-a-number'), DEFAULT_SETTINGS.pollingCheckIntervalMs);
 });
 
 test('writeAppConfig writes a readable config.ini', () => {

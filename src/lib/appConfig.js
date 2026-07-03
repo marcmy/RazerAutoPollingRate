@@ -10,7 +10,11 @@ const DEFAULT_SETTINGS = {
   autostart: true,
   diagnosticLogging: false,
   verboseDiagnosticLogging: false,
+  pollingCheckIntervalMs: 1500,
 };
+
+const MIN_POLLING_CHECK_INTERVAL_MS = 200;
+const MAX_POLLING_CHECK_INTERVAL_MS = 60000;
 
 function parseBoolean(value, fallback) {
   const normalized = String(value || '').trim().toLowerCase();
@@ -23,6 +27,22 @@ function parseBoolean(value, fallback) {
   }
 
   return fallback;
+}
+
+function normalizePollingCheckIntervalMs(value) {
+  const text = String(value ?? '').trim();
+  if (!/^\d+$/.test(text)) {
+    return DEFAULT_SETTINGS.pollingCheckIntervalMs;
+  }
+
+  const interval = Number(text);
+  if (!Number.isSafeInteger(interval)
+    || interval < MIN_POLLING_CHECK_INTERVAL_MS
+    || interval > MAX_POLLING_CHECK_INTERVAL_MS) {
+    return DEFAULT_SETTINGS.pollingCheckIntervalMs;
+  }
+
+  return interval;
 }
 
 function parseIni(contents) {
@@ -76,6 +96,7 @@ function normalizeSettings(rawSettings = {}) {
       rawSettings.verbose_diagnostic_logging,
       DEFAULT_SETTINGS.verboseDiagnosticLogging,
     ),
+    pollingCheckIntervalMs: normalizePollingCheckIntervalMs(rawSettings.polling_check_interval_ms),
   };
 }
 
@@ -117,6 +138,8 @@ function serializeAppConfig(settings, entries) {
     `autostart=${normalizedSettings.autostart ? 'true' : 'false'}`,
     `diagnostic_logging=${normalizedSettings.diagnosticLogging ? 'true' : 'false'}`,
     `verbose_diagnostic_logging=${normalizedSettings.verboseDiagnosticLogging ? 'true' : 'false'}`,
+    '# Debug only: default 1500 ms; accepted range 200-60000 ms.',
+    `polling_check_interval_ms=${normalizePollingCheckIntervalMs(normalizedSettings.pollingCheckIntervalMs)}`,
     '',
     '[rules]',
     ...ruleLines.map((line, index) => `${index + 1}=${line}`),
@@ -137,7 +160,10 @@ function configExists(configPath) {
 
 module.exports = {
   DEFAULT_SETTINGS,
+  MAX_POLLING_CHECK_INTERVAL_MS,
+  MIN_POLLING_CHECK_INTERVAL_MS,
   configExists,
+  normalizePollingCheckIntervalMs,
   normalizeSettings,
   parseIni,
   readAppConfig,
