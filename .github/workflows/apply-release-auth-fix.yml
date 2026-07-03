@@ -1,0 +1,60 @@
+name: Apply Release Git Auth Fix
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.head_ref == 'marc/fix-release-git-auth'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: marc/fix-release-git-auth
+          fetch-depth: 0
+
+      - name: Split Git and API credentials
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+
+          $path = '.github/workflows/release.yml'
+          $content = [IO.File]::ReadAllText($path)
+
+          $oldCheckout = @'
+          fetch-depth: 0
+          persist-credentials: false
+'@
+          $newCheckout = @'
+          fetch-depth: 0
+'@
+
+          $oldAuth = @'
+          "GH_TOKEN=$env:RELEASE_AUTOMATION_TOKEN" >> $env:GITHUB_ENV
+          $env:GH_TOKEN = $env:RELEASE_AUTOMATION_TOKEN
+          gh auth setup-git
+'@
+          $newAuth = @'
+          "GH_TOKEN=$env:RELEASE_AUTOMATION_TOKEN" >> $env:GITHUB_ENV
+'@
+
+          if (-not $content.Contains($oldCheckout)) {
+            throw 'Expected checkout credential block was not found.'
+          }
+          if (-not $content.Contains($oldAuth)) {
+            throw 'Expected release credential block was not found.'
+          }
+
+          $content = $content.Replace($oldCheckout, $newCheckout).Replace($oldAuth, $newAuth)
+          [IO.File]::WriteAllText($path, $content, [Text.UTF8Encoding]::new($false))
+
+          git rm .github/workflows/apply-release-auth-fix.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .github/workflows/release.yml
+          git commit -m 'fix: split release Git and API credentials'
+          git push origin HEAD:marc/fix-release-git-auth
