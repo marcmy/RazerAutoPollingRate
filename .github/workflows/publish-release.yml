@@ -101,6 +101,47 @@ jobs:
               "$($hash.Hash.ToLower())  $relativePath"
             } | Set-Content -Encoding ASCII SHA256SUMS.txt
 
+      - name: Generate release notes from changelog
+        shell: pwsh
+        run: |
+          $lines = @(Get-Content -LiteralPath 'CHANGELOG.md')
+          $heading = "## $env:RELEASE_TAG"
+          $start = [Array]::IndexOf($lines, $heading)
+
+          if ($start -lt 0) {
+            throw "CHANGELOG.md does not contain an exact '$heading' section"
+          }
+
+          $end = $lines.Count
+          for ($index = $start + 1; $index -lt $lines.Count; $index++) {
+            if ($lines[$index] -match '^##\s+') {
+              $end = $index
+              break
+            }
+          }
+
+          $section = if ($end -gt ($start + 1)) {
+            @($lines[($start + 1)..($end - 1)])
+          }
+          else {
+            @()
+          }
+
+          while ($section.Count -gt 0 -and [string]::IsNullOrWhiteSpace($section[0])) {
+            $section = @($section | Select-Object -Skip 1)
+          }
+          while ($section.Count -gt 0 -and [string]::IsNullOrWhiteSpace($section[-1])) {
+            $section = @($section | Select-Object -SkipLast 1)
+          }
+
+          if ($section.Count -eq 0) {
+            throw "The $heading changelog section is empty"
+          }
+
+          $changelogUrl = "https://github.com/$env:GITHUB_REPOSITORY/blob/$env:RELEASE_COMMIT/CHANGELOG.md"
+          $notes = @($section) + @('', '---', '', "[Complete changelog]($changelogUrl)")
+          [IO.File]::WriteAllLines('RELEASE_NOTES.md', $notes, [Text.UTF8Encoding]::new($false))
+
       - name: Create or update draft release
         shell: pwsh
         env:
@@ -115,10 +156,19 @@ jobs:
               --repo $env:GITHUB_REPOSITORY `
               --target $env:RELEASE_COMMIT `
               --title "Razer Auto Polling Rate $env:RELEASE_VERSION" `
-              --generate-notes `
+              --notes-file RELEASE_NOTES.md `
               --draft
             if ($LASTEXITCODE -ne 0) {
               throw "Unable to create draft release"
+            }
+          }
+          else {
+            gh release edit $env:RELEASE_TAG `
+              --repo $env:GITHUB_REPOSITORY `
+              --title "Razer Auto Polling Rate $env:RELEASE_VERSION" `
+              --notes-file RELEASE_NOTES.md
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to update draft release notes"
             }
           }
 
