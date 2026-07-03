@@ -2,13 +2,29 @@
 
 ## v1.3.2
 
-- Restored continuous 1500 ms dongle verification while detection is enabled so polling-rate changes from Razer Synapse are corrected promptly.
-- Replaced the v1.3.0 target-change gating, five-minute health checks, and exponential USB backoff with continuous enforcement.
+### Added
+
+- Added support for the Razer Viper V3 Pro wireless (`VID_1532&PID_00C1`).
+- Added support for the Razer Viper V4 Pro wired (`VID_1532&PID_00E5`) and wireless (`VID_1532&PID_00E6`).
+- Added per-device USB interface selection so Viper V4 Pro polling-rate commands use interface index `0x03` while existing devices continue using `0x00`.
+- Added the debug-only `polling_check_interval_ms` config value, defaulting to `1500` ms with an accepted range of `200`–`60000` ms.
+- Added per-probe verbose diagnostics for comparing polling-check intervals and investigating transient dongle responses.
+
+### Fixed
+
+- Restored continuous dongle verification while detection is enabled so polling-rate changes from Razer Synapse are corrected promptly.
+- Removed the v1.3.0 target-change gating, five-minute health checks, and exponential USB backoff that delayed recovery and weakened continuous enforcement.
 - Added three immediate polling-rate query attempts within the same open USB session before reporting a check failure.
-- Added the debug-only `polling_check_interval_ms` config value (default `1500`, minimum `200`) and per-probe verbose diagnostics for testing shorter enforcement intervals.
-- Kept USB access fully disabled when the runtime detection toggle is off and suppressed repeated identical error notifications while recovery checks continue.
+- Kept USB access fully disabled while the runtime detection toggle is off.
+- Suppressed repeated identical error notifications while normal recovery checks continue.
+
+### Contributors
+
+- Thanks to [@jacky50403](https://github.com/jacky50403) for the hardware-tested Viper V3 Pro and Viper V4 Pro support in [PR #21](https://github.com/marcmy/RazerAutoPollingRate/pull/21).
 
 ## v1.3.1
+
+> Superseded almost immediately by v1.3.2. These hardware-support changes are also included in the v1.3.2 notes.
 
 - Added support for the Razer Viper V3 Pro wireless (`VID_1532&PID_00C1`).
 - Added support for the Razer Viper V4 Pro wired (`VID_1532&PID_00E5`) and wireless (`VID_1532&PID_00E6`).
