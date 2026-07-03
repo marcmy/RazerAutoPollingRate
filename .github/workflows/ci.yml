@@ -65,8 +65,8 @@ jobs:
             git commit -m 'fix: restore continuous polling enforcement'
             git push origin HEAD:marc/v1.3.2-usb-regression
           } catch {
-            $details = $_ | Out-String
-            gh pr comment 30 --repo $env:GITHUB_REPOSITORY --body "v1.3.2 patch runner failed:`n``````text`n$details`n``````"
+            $details = ($_ | Out-String).Trim()
+            gh pr comment 30 --repo $env:GITHUB_REPOSITORY --body "v1.3.2 patch runner failed: $details"
             throw
           }
 
