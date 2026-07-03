@@ -28,14 +28,22 @@ jobs:
           git rm src/lib/usbAccessPolicy.js test/usbAccessPolicy.test.js
           git rm '.github/v132-*.patch' .github/apply-v132.ps1
 
-      - name: Restore normal CI workflow
-        run: git checkout origin/main -- .github/workflows/ci.yml
-
       - name: Install dependencies
         run: npm ci
 
       - name: Run tests
         run: npm test
 
-      - name: Show final status
-        run: git status --short
+      - name: Upload validated source
+        uses: actions/upload-artifact@v4
+        with:
+          name: v132-transformed-source
+          if-no-files-found: error
+          path: |
+            CHANGELOG.md
+            src/main.js
+            src/lib/appConfig.js
+            src/lib/retryImmediately.js
+            test/appConfig.test.js
+            test/retryImmediately.test.js
+            test/run-tests.js
