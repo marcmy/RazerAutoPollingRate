@@ -24,33 +24,17 @@ jobs:
 
           $path = '.github/workflows/release.yml'
           $content = [IO.File]::ReadAllText($path)
+          $updated = $content -replace '(?m)^          persist-credentials: false\r?\n', ''
+          $updated = $updated -replace '(?m)^          \$env:GH_TOKEN = \$env:RELEASE_AUTOMATION_TOKEN\r?\n          gh auth setup-git\r?\n', ''
 
-          $oldCheckout = @'
-          fetch-depth: 0
-          persist-credentials: false
-'@
-          $newCheckout = @'
-          fetch-depth: 0
-'@
-
-          $oldAuth = @'
-          "GH_TOKEN=$env:RELEASE_AUTOMATION_TOKEN" >> $env:GITHUB_ENV
-          $env:GH_TOKEN = $env:RELEASE_AUTOMATION_TOKEN
-          gh auth setup-git
-'@
-          $newAuth = @'
-          "GH_TOKEN=$env:RELEASE_AUTOMATION_TOKEN" >> $env:GITHUB_ENV
-'@
-
-          if (-not $content.Contains($oldCheckout)) {
-            throw 'Expected checkout credential block was not found.'
+          if ($updated -eq $content) {
+            throw 'Expected release credential blocks were not changed.'
           }
-          if (-not $content.Contains($oldAuth)) {
-            throw 'Expected release credential block was not found.'
+          if ($updated.Contains('persist-credentials: false') -or $updated.Contains('gh auth setup-git')) {
+            throw 'Release credential cleanup was incomplete.'
           }
 
-          $content = $content.Replace($oldCheckout, $newCheckout).Replace($oldAuth, $newAuth)
-          [IO.File]::WriteAllText($path, $content, [Text.UTF8Encoding]::new($false))
+          [IO.File]::WriteAllText($path, $updated, [Text.UTF8Encoding]::new($false))
 
           git rm .github/workflows/apply-release-auth-fix.yml
           git config user.name github-actions[bot]
