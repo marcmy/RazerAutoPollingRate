@@ -1,7 +1,9 @@
 name: Dispatch v1.3.2 Publisher
 
 on:
-  pull_request:
+  push:
+    branches:
+      - marc/dispatch-v1.3.2
 
 permissions:
   actions: write
@@ -9,7 +11,6 @@ permissions:
 
 jobs:
   dispatch:
-    if: github.head_ref == 'marc/dispatch-v1.3.2'
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch Windows publisher
