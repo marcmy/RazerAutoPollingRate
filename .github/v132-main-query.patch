@@ -47,7 +47,7 @@ index 4c716d3..0000000 100644
    const targetIndex = currentModel.interfaceIndex !== undefined ? currentModel.interfaceIndex : 0x00;
  
    await dongle.controlTransferOut({
-@@ -655,14 +654,38 @@ async function getPollingRate(dongle) {
+@@ -655,14 +654,35 @@ async function getPollingRate(dongle) {
      index: targetIndex,
    }, 90);
  
@@ -77,10 +77,7 @@ index 4c716d3..0000000 100644
 +        attempt,
 +        attempts,
 +        error: error.message,
-+      }, {
-+        verbose: true,
-+        key: `${attempt}:${error.message}`,
-+      });
++      }, { verbose: true });
 +    },
 +  });
 +}
