@@ -19,8 +19,8 @@ const AutoLaunch = require('auto-launch');
 const { execFile } = require('child_process');
 
 const { createCheckGuard } = require('./lib/checkGuard');
-const { createUsbAccessPolicy } = require('./lib/usbAccessPolicy');
 const { DiagnosticLogger } = require('./lib/diagnosticLogger');
+const { retryImmediately } = require('./lib/retryImmediately');
 const {
   DEFAULT_SETTINGS,
   configExists,
@@ -109,6 +109,7 @@ let defaultGamePollingRate = 1000;
 let detectionMode = 'foreground';
 let diagnosticLoggingEnabled = false;
 let verboseDiagnosticLoggingEnabled = false;
+let pollingCheckIntervalMs = DEFAULT_SETTINGS.pollingCheckIntervalMs;
 let detectionEnabled = true;
 let pickingWindow = false;
 let hasStopped = false;
@@ -117,12 +118,7 @@ let settingsWindow = null;
 let diagnosticLogger = null;
 const assetsFolder = 'src/assets/';
 const checkGuard = createCheckGuard();
-const usbAccessPolicy = createUsbAccessPolicy();
-const webUsb = new WebUSB({
-  devicesFound: (devices) => devices.find((device) => device.vendorId === 0x1532
-    && dongles[device.productId] !== undefined),
-});
-let lastKnownPollingRate = null;
+let lastPollingError = null;
 
 function getConfigDirectory() {
   return path.join(app.getPath('userData'), 'cfg');
@@ -205,6 +201,7 @@ function getCurrentSettings() {
     autostart: Boolean(autostartEnabled),
     diagnosticLogging: Boolean(diagnosticLoggingEnabled),
     verboseDiagnosticLogging: Boolean(verboseDiagnosticLoggingEnabled),
+    pollingCheckIntervalMs,
   };
 }
 
@@ -215,6 +212,7 @@ function applySettings(settings) {
   autostartEnabled = Boolean(settings.autostart);
   diagnosticLoggingEnabled = Boolean(settings.diagnosticLogging);
   verboseDiagnosticLoggingEnabled = Boolean(settings.verboseDiagnosticLogging);
+  pollingCheckIntervalMs = settings.pollingCheckIntervalMs || DEFAULT_SETTINGS.pollingCheckIntervalMs;
 }
 
 function loadConfig(warn = (message) => log(message, true)) {
@@ -294,6 +292,7 @@ function setupSettingsIpc() {
         autostart: Boolean(payload.settings.autostart),
         diagnosticLogging: Boolean(payload.settings.diagnosticLogging),
         verboseDiagnosticLogging: Boolean(payload.settings.verboseDiagnosticLogging),
+        pollingCheckIntervalMs,
       };
       if (settings.inactivePollingRate > 1000) {
         return { ok: false, warnings: ['Inactive polling rate must be 125, 250, 500, or 1000 Hz.'] };
@@ -399,7 +398,7 @@ async function runLoop() {
   await guardedCheckPollingRate(true);
 
   while (true) {
-    await new Promise((res) => setTimeout(res, 1500));
+    await new Promise((res) => setTimeout(res, pollingCheckIntervalMs));
     if (stop) {
       break;
     }
@@ -601,6 +600,11 @@ async function handlePickWindowShortcut() {
 }
 
 async function getDongle() {
+  const webUsb = new WebUSB({
+    devicesFound: (devices) => devices.find((device) => device.vendorId === 0x1532
+      && dongles[device.productId] !== undefined),
+  });
+
   try {
     const device = await webUsb.requestDevice({ filters: [{}] });
     if (!device) {
@@ -655,7 +659,7 @@ async function cleanupDongle(dongle, claimedInterfaceNumber) {
   }
 }
 
-async function getPollingRate(dongle) {
+async function getPollingRateOnce(dongle) {
   const targetIndex = currentModel.interfaceIndex !== undefined ? currentModel.interfaceIndex : 0x00;
 
   await dongle.controlTransferOut({
@@ -676,12 +680,33 @@ async function getPollingRate(dongle) {
     index: targetIndex,
   }, 90);
 
-  const pollingRate = getRateForReportByte(reply.data.getInt8(9));
+  const responseLength = reply && reply.data ? reply.data.byteLength : 0;
+  if (!reply || !reply.data || responseLength <= 9) {
+    throw new Error(`Dongle returned a short polling-rate response (${responseLength} bytes)`);
+  }
+
+  const responseByte = reply.data.getUint8(9);
+  const pollingRate = getRateForReportByte(responseByte);
   if (!pollingRate) {
-    throw new Error('Dongle returned an unknown polling-rate response');
+    throw new Error(
+      `Dongle returned an unknown polling-rate response (byte 0x${responseByte.toString(16).padStart(2, '0')}, length ${responseLength})`,
+    );
   }
 
   return pollingRate;
+}
+
+async function getPollingRate(dongle) {
+  return retryImmediately(() => getPollingRateOnce(dongle), {
+    attempts: 3,
+    onFailure: (error, attempt, attempts) => {
+      recordDiagnosticEvent('polling_rate_query_attempt_failed', {
+        attempt,
+        attempts,
+        error: error.message,
+      }, { verbose: true });
+    },
+  });
 }
 
 async function setPollingRate(dongle, pollingRate) {
@@ -821,7 +846,6 @@ function updateDiagnosticSession(entries, runningProcesses, lookupError) {
 async function checkPollingRate(firstRun) {
   let dongle;
   let claimedInterfaceNumber = null;
-  let usbAttempted = false;
 
   try {
     const { settings, entries } = loadConfig((message) => log(message, true));
@@ -878,28 +902,32 @@ async function checkPollingRate(firstRun) {
       ].join('|'),
     });
 
-    const usbDecision = usbAccessPolicy.shouldAccess({
-      now: Date.now(),
-      targetRate: requestedTarget,
-      enabled: detectionEnabled,
-      firstRun: Boolean(firstRun),
-    });
-    recordDiagnosticEvent('usb_access_decision', {
-      access: usbDecision.access,
-      reason: usbDecision.reason,
-      requestedTarget,
-      retryAfter: usbDecision.retryAfter || null,
-      targetChanged: Boolean(usbDecision.targetChanged),
-    }, {
-      verbose: true,
-      key: `${usbDecision.access}:${usbDecision.reason}:${requestedTarget}`,
-    });
-
-    if (!usbDecision.access) {
+    if (!detectionEnabled) {
+      recordDiagnosticEvent('usb_access_decision', {
+        access: false,
+        reason: 'disabled',
+        requestedTarget,
+      }, {
+        verbose: true,
+        key: `false:disabled:${requestedTarget}`,
+      });
       return;
     }
 
-    usbAttempted = true;
+    recordDiagnosticEvent('usb_access_decision', {
+      access: true,
+      reason: firstRun ? 'startup' : 'continuous_enforcement',
+      requestedTarget,
+    }, {
+      verbose: true,
+      key: `true:${firstRun ? 'startup' : 'continuous_enforcement'}:${requestedTarget}`,
+    });
+    recordDiagnosticEvent('polling_probe', {
+      checkIntervalMs: pollingCheckIntervalMs,
+      firstRun: Boolean(firstRun),
+      requestedTarget,
+    }, { verbose: true });
+
     dongle = await getDongle();
     claimedInterfaceNumber = await prepareDongle(dongle);
 
@@ -927,6 +955,7 @@ async function checkPollingRate(firstRun) {
       currentRate: pollingRate,
       targetRate,
       requestedTarget,
+      checkIntervalMs: pollingCheckIntervalMs,
       rules: entries.length,
     }, { verbose: true });
 
@@ -977,39 +1006,23 @@ async function checkPollingRate(firstRun) {
       }
     }
 
-    lastKnownPollingRate = pollingRate;
-    if (pollingRate === targetRate) {
-      usbAccessPolicy.recordSuccess({
-        now: Date.now(),
-        targetRate: requestedTarget,
-      });
-    } else {
-      const failure = usbAccessPolicy.recordFailure({ now: Date.now() });
-      recordDiagnosticEvent('usb_access_backoff', {
-        reason: 'target rate was not applied',
-        backoffMs: failure.backoffMs,
-        consecutiveErrors: failure.consecutiveErrors,
-      });
-    }
+    lastPollingError = null;
   } catch (error) {
-    if (usbAttempted) {
-      const failure = usbAccessPolicy.recordFailure({ now: Date.now() });
-      recordDiagnosticEvent('usb_access_backoff', {
-        reason: error.message,
-        backoffMs: failure.backoffMs,
-        consecutiveErrors: failure.consecutiveErrors,
-      });
-    }
-    recordDiagnosticEvent('polling_check_error', {
-      error: error.message,
-    });
-    setTrayStatus({
-      icon: 'loading.png',
-      tooltip: `Razer Auto Polling Rate error: ${error.message}`,
-    });
+    const errorMessage = error && error.message ? error.message : String(error);
     setRate = [0, false];
-    console.error(error);
-    log(error.toString(), true);
+
+    if (lastPollingError !== errorMessage) {
+      recordDiagnosticEvent('polling_check_error', {
+        error: errorMessage,
+      });
+      setTrayStatus({
+        icon: 'loading.png',
+        tooltip: `Razer Auto Polling Rate error: ${errorMessage}`,
+      });
+      console.error(error);
+      log(error.toString(), true);
+      lastPollingError = errorMessage;
+    }
   } finally {
     await cleanupDongle(dongle, claimedInterfaceNumber);
   }
