@@ -15,6 +15,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           ref: marc/v1.3.2-usb-regression
+          fetch-depth: 0
           show-progress: false
 
       - name: Run exact source transforms
