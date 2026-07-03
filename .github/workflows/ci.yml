@@ -54,7 +54,6 @@ jobs:
 
             git rm src/lib/usbAccessPolicy.js test/usbAccessPolicy.test.js
             git rm '.github/v132-*.patch' .github/apply-v132.ps1
-            git checkout origin/main -- .github/workflows/ci.yml
 
             npm ci
             npm test
@@ -65,8 +64,6 @@ jobs:
             git commit -m 'fix: restore continuous polling enforcement'
             git push origin HEAD:marc/v1.3.2-usb-regression
           } catch {
-            $details = ($_ | Out-String).Trim()
-            gh pr comment 30 --repo $env:GITHUB_REPOSITORY --body "v1.3.2 patch runner failed: $details"
             throw
           }
 
