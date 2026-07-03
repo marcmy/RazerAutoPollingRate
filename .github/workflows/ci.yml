@@ -12,68 +12,6 @@ permissions:
   contents: read
 
 jobs:
-  apply-v132-patch:
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/marc/v1.3.2-usb-regression') || (github.event_name == 'pull_request' && github.head_ref == 'marc/v1.3.2-usb-regression')
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out patch branch
-        uses: actions/checkout@v6
-        with:
-          ref: marc/v1.3.2-usb-regression
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-
-      - name: Configure repository credentials
-        shell: pwsh
-        env:
-          PATCH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.SCOOP_BUCKET_TOKEN || secrets.GH_PAT || secrets.PAT }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:PATCH_TOKEN)) {
-            throw 'No repository token configured for the v1.3.2 patch.'
-          }
-
-          "GH_TOKEN=$env:PATCH_TOKEN" >> $env:GITHUB_ENV
-          $env:GH_TOKEN = $env:PATCH_TOKEN
-          gh auth setup-git
-
-      - name: Apply exact source transforms
-        shell: pwsh
-        run: .github/apply-v132.ps1
-
-      - name: Remove obsolete policy and scaffolding
-        shell: pwsh
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          git rm src/lib/usbAccessPolicy.js test/usbAccessPolicy.test.js
-          git rm '.github/v132-*.patch' .github/apply-v132.ps1
-
-      - name: Install transformed dependencies
-        run: npm ci
-
-      - name: Test transformed source
-        run: npm test
-
-      - name: Commit transformed source
-        shell: pwsh
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          git config user.name 'marcmy'
-          git config user.email '21000174+marcmy@users.noreply.github.com'
-          git add --all
-          git commit -m 'fix: restore continuous polling enforcement'
-
-      - name: Push transformed source
-        shell: pwsh
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          git push origin HEAD:marc/v1.3.2-usb-regression
-
   test:
     runs-on: windows-2022
     steps:
