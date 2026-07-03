@@ -9,52 +9,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  update-v132-release-notes:
-    if: github.event_name == 'pull_request' && github.head_ref == 'marc/changelog-release-notes'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Check out changelog branch
-        uses: actions/checkout@v6
-        with:
-          ref: marc/changelog-release-notes
-
-      - name: Extract v1.3.2 changelog section
-        shell: pwsh
-        run: |
-          $lines = @(Get-Content -LiteralPath 'CHANGELOG.md')
-          $heading = '## v1.3.2'
-          $start = [Array]::IndexOf($lines, $heading)
-          if ($start -lt 0) {
-            throw "CHANGELOG.md does not contain $heading"
-          }
-
-          $end = $lines.Count
-          for ($index = $start + 1; $index -lt $lines.Count; $index++) {
-            if ($lines[$index] -match '^##\s+') {
-              $end = $index
-              break
-            }
-          }
-
-          $section = @($lines[($start + 1)..($end - 1)])
-          while ($section.Count -gt 0 -and [string]::IsNullOrWhiteSpace($section[0])) {
-            $section = @($section | Select-Object -Skip 1)
-          }
-          while ($section.Count -gt 0 -and [string]::IsNullOrWhiteSpace($section[-1])) {
-            $section = @($section | Select-Object -SkipLast 1)
-          }
-
-          $notes = @($section) + @('', '---', '', '[Complete changelog](https://github.com/marcmy/RazerAutoPollingRate/blob/main/CHANGELOG.md)')
-          [IO.File]::WriteAllLines('RELEASE_NOTES.md', $notes, [Text.UTF8Encoding]::new($false))
-
-      - name: Replace published v1.3.2 notes
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release edit v1.3.2 --repo "$GITHUB_REPOSITORY" --title "Razer Auto Polling Rate 1.3.2" --notes-file RELEASE_NOTES.md
-
   test:
     runs-on: windows-2022
     steps:
