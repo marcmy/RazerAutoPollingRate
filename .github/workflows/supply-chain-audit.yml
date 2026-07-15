@@ -10,6 +10,8 @@ on:
     # Every Monday at 07:23 UTC
     - cron: "23 7 * * 1"
 
+permissions: {}
+
 jobs:
   trivy:
     name: Trivy security scan
