@@ -23,7 +23,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
       - name: Scan repository with Trivy
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -49,7 +49,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
       - name: Generate SPDX SBOM with Syft
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         with:
           path: .
           format: spdx-json
