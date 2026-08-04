@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.3.3
+
 ### Added
 
 - Added support for the Razer DeathAdder V4 Pro wired (`VID_1532&PID_00BE`) and wireless (`VID_1532&PID_00BF`) at up to 8000 Hz.
