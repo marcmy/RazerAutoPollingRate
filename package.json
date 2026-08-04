@@ -36,7 +36,7 @@
     "dongle"
   ],
   "overrides": {
-    "tar": "7.5.16",
+    "tar": "7.5.22",
     "tmp": "0.2.7"
   },
   "allowScripts": {
