@@ -19,6 +19,7 @@ const AutoLaunch = require('auto-launch');
 const { execFile } = require('child_process');
 
 const { createCheckGuard } = require('./lib/checkGuard');
+const { dongles } = require('./lib/devices');
 const { DiagnosticLogger } = require('./lib/diagnosticLogger');
 const { retryImmediately } = require('./lib/retryImmediately');
 const {
@@ -55,48 +56,6 @@ function log(out, error = false) {
   const date = new Date().toLocaleTimeString('en-US', { hour12: false, hour: 'numeric', minute: 'numeric' });
   fs.appendFileSync(path.join(app.getPath('userData'), 'error.log'), `[ ${date} ] ${error ? 'ERROR: ' : 'LOG: '}${out}\n`);
 }
-
-const models = {
-  None: 0,
-  HyperPollingDongle: 1,
-  ViperSE: 2,
-  DockPro: 3,
-  ViperV3Pro: 4,
-  ViperV4Pro: 5,
-};
-
-const dongles = {
-  0x009F: {
-    model: models.ViperSE,
-    is8kCompatible: true,
-  },
-  0x00B3: {
-    model: models.HyperPollingDongle,
-    is8kCompatible: true,
-  },
-  0x00C3: {
-    model: models.HyperPollingDongle,
-    is8kCompatible: true,
-  },
-  0x00A4: {
-    model: models.DockPro,
-    is8kCompatible: true,
-  },
-  0x00C1: {
-    model: models.ViperV3Pro,
-    is8kCompatible: true,
-  },
-  0x00E5: {
-    model: models.ViperV4Pro,
-    is8kCompatible: true,
-    interfaceIndex: 0x03,
-  },
-  0x00E6: {
-    model: models.ViperV4Pro,
-    is8kCompatible: true,
-    interfaceIndex: 0x03,
-  },
-};
 
 let tray;
 let autostartEnabled;
