@@ -25,7 +25,7 @@ jobs:
     runs-on: windows-2022
     steps:
       - name: Check out release commit
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ inputs.commit }}
           fetch-depth: 0
