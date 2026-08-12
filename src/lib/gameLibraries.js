@@ -6,6 +6,7 @@ const winPath = path.win32;
 const HELPER_DIRECTORY_PATTERN = /^(?:_commonredist|redist|redistributables|support|installer|installers|uninstall|uninstaller|crash(?:msg|pad|reporter|handler|sender)?|easyanticheat|battleye)$/i;
 const HELPER_EXECUTABLE_PATTERN = /(?:unins|uninstall|setup|installer|crash(?:msg|pad|reporter|handler|sender)?|report(?:er)?|easyanticheat|eac|battleye|beservice|vc_redist|vcredist|dxsetup|dotnet|ue4prereq|ue5prereq|cefprocess|helper|updater|update)\b/i;
 const NON_GAME_FOLDER_PATTERN = /^(?:launcher|launchers|riot client|social club|redistributables|support|tools?)$/i;
+const PROVIDER_UTILITY_GAME_NAME_PATTERN = /\b(?:launcher|client)\b/i;
 const GAME_IDENTITY_NOISE_TOKENS = new Set([
   'x64', 'x86', 'win64', 'win32', 'shipping', 'release', 'launcher',
   'steam', 'gog', 'epic', 'dx11', 'dx12', 'd3d11', 'd3d12', 'vulkan',
@@ -417,6 +418,15 @@ function scanLibraryGames(libraries = [], options = {}) {
     children.forEach((child) => {
       const gameRoot = winPath.join(library.root, child.name);
       const gameName = steamNames.get(normalizeWindowsPath(gameRoot)) || child.name;
+
+      // Known provider libraries can contain standalone launchers/clients that are
+      // installed independently from any playable game. Do not present those as
+      // games. Custom folders stay permissive because users may intentionally keep
+      // unusual community clients or alternate engines there.
+      if (!library.custom && PROVIDER_UTILITY_GAME_NAME_PATTERN.test(gameName)) {
+        return;
+      }
+
       const executablePath = findLikelyExecutable(gameRoot, gameName, { fsImpl });
       if (!executablePath) {
         return;
@@ -438,7 +448,7 @@ function scanLibraryGames(libraries = [], options = {}) {
     // A custom folder can point directly at one game instead of a multi-game library.
     // Only fall back to the root itself when no child game was discovered, otherwise
     // a generic library root would show an extra synthetic card for the whole folder.
-    if (games.length === gamesBeforeLibrary) {
+    if (library.custom && games.length === gamesBeforeLibrary) {
       const gameRoot = library.root;
       const gameName = winPath.basename(gameRoot) || library.name;
       const executablePath = findLikelyExecutable(gameRoot, gameName, { fsImpl });
