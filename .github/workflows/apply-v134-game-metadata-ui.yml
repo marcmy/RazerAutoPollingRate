@@ -23,13 +23,23 @@ jobs:
         with:
           node-version: 24
 
+      - name: Fix temporary patch script escaping
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('tools/patch-v134-game-metadata-ui.js')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace("${card.source || 'Manual'}", "\\${card.source || 'Manual'}")
+          path.write_text(text, encoding='utf-8')
+          PY
+
       - name: Apply patch
         run: node tools/patch-v134-game-metadata-ui.js
 
       - name: Validate
         run: |
           node --check src/main.js
-          node --check src/settings.html || true
           node --check src/lib/appConfig.js
           node --check src/lib/gameMetadata.js
           npm ci
