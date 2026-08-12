@@ -1,0 +1,361 @@
+name: Fix v1.3.4 launcher selection and icons
+
+on:
+  push:
+    branches:
+      - v1.3.4-game-library-ui
+    paths:
+      - .github/workflows/fix-v134-launchers-icons.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: v1.3.4-game-library-ui
+
+      - name: Patch discovery and icon extraction
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(text, old, new, label):
+              if old not in text:
+                  raise SystemExit(f'Missing expected block: {label}')
+              return text.replace(old, new, 1)
+
+          game_path = Path('src/lib/gameLibraries.js')
+          game = game_path.read_text(encoding='utf-8')
+
+          old = """function findLikelyExecutable(gameRoot, gameName, options = {}) {
+            const fsImpl = options.fsImpl || fs;
+            const maxDepth = Number.isInteger(options.maxDepth) ? options.maxDepth : 3;
+            const maxVisited = Number.isInteger(options.maxVisited) ? options.maxVisited : 500;
+            const candidates = [];
+            let visited = 0;
+
+            function walk(directory, depth) {
+              if (depth > maxDepth || visited >= maxVisited) {
+                return;
+              }
+
+              let items;
+              try {
+                items = fsImpl.readdirSync(directory, { withFileTypes: true });
+              } catch {
+                return;
+              }
+
+              for (const item of items) {
+                if (visited >= maxVisited) {
+                  break;
+                }
+                visited += 1;
+                const fullPath = winPath.join(directory, item.name);
+
+                if (item.isDirectory()) {
+                  if (!HELPER_DIRECTORY_PATTERN.test(item.name)) {
+                    walk(fullPath, depth + 1);
+                  }
+                  continue;
+                }
+
+                if (item.isFile() && /\\.exe$/i.test(item.name)) {
+                  const baseName = winPath.basename(item.name, '.exe');
+                  if (HELPER_EXECUTABLE_PATTERN.test(baseName)) {
+                    continue;
+                  }
+
+                  candidates.push({
+                    path: fullPath,
+                    score: executableScore(fullPath, gameName, gameRoot, fsImpl),
+                  });
+                }
+              }
+            }
+
+            walk(gameRoot, 0);
+            candidates.sort((left, right) => right.score - left.score || left.path.localeCompare(right.path));
+            return candidates.length > 0 ? candidates[0].path : null;
+          }
+          """
+
+          new = """function findLikelyExecutable(gameRoot, gameName, options = {}) {
+            const fsImpl = options.fsImpl || fs;
+            const maxDepth = Number.isInteger(options.maxDepth) ? options.maxDepth : 3;
+            const maxVisited = Number.isInteger(options.maxVisited) ? options.maxVisited : 1500;
+            const candidates = [];
+            const launcherCandidates = [];
+            let visited = 0;
+
+            function directoryPriority(name) {
+              if (/^(?:rerelease|remaster(?:ed)?|enhanced)$/i.test(name)) return 100;
+              if (/^(?:binaries|bin)$/i.test(name)) return 80;
+              if (/^(?:win64|x64|game)$/i.test(name)) return 60;
+              return 0;
+            }
+
+            function walk(directory, depth) {
+              if (depth > maxDepth || visited >= maxVisited) {
+                return;
+              }
+
+              let items;
+              try {
+                items = fsImpl.readdirSync(directory, { withFileTypes: true });
+              } catch {
+                return;
+              }
+
+              // Inspect files at this level before descending. Large asset/support
+              // directories must not consume the traversal budget before a root EXE
+              // (for example r5apex_dx12.exe) gets considered.
+              for (const item of items.filter((entry) => entry.isFile())) {
+                if (visited >= maxVisited) break;
+                visited += 1;
+                if (!/\\.exe$/i.test(item.name)) continue;
+
+                const fullPath = winPath.join(directory, item.name);
+                const baseName = winPath.basename(item.name, '.exe');
+                if (HELPER_EXECUTABLE_PATTERN.test(baseName)) continue;
+
+                const candidate = {
+                  path: fullPath,
+                  score: executableScore(fullPath, gameName, gameRoot, fsImpl),
+                };
+
+                // Launchers are useful only as a last resort. They frequently exit as
+                // soon as the actual game starts, which would immediately drop the
+                // polling rate back to the inactive value.
+                if (/launcher/i.test(baseName)) {
+                  launcherCandidates.push(candidate);
+                } else {
+                  candidates.push(candidate);
+                }
+              }
+
+              const directories = items
+                .filter((entry) => entry.isDirectory() && !HELPER_DIRECTORY_PATTERN.test(entry.name))
+                .sort((left, right) => directoryPriority(right.name) - directoryPriority(left.name));
+
+              for (const item of directories) {
+                if (visited >= maxVisited) break;
+                visited += 1;
+                walk(winPath.join(directory, item.name), depth + 1);
+              }
+            }
+
+            walk(gameRoot, 0);
+            const pool = candidates.length > 0 ? candidates : launcherCandidates;
+            pool.sort((left, right) => right.score - left.score || left.path.localeCompare(right.path));
+            return pool.length > 0 ? pool[0].path : null;
+          }
+          """
+          game = replace_once(game, old, new, 'findLikelyExecutable')
+          game_path.write_text(game, encoding='utf-8')
+
+          main_path = Path('src/main.js')
+          main = main_path.read_text(encoding='utf-8')
+
+          old = """async function getExecutableIconDataUrl(executablePath) {
+            if (!executablePath || !fs.existsSync(executablePath)) {
+              return null;
+            }
+
+            try {
+              const image = await app.getFileIcon(executablePath, { size: 'large' });
+              return image && !image.isEmpty() ? image.toDataURL() : null;
+            } catch {
+              return null;
+            }
+          }
+          """
+
+          new = """const executableIconCache = new Map();
+          let genericExecutableIconPromise = null;
+
+          function execFileText(file, args, options = {}) {
+            return new Promise((resolve, reject) => {
+              execFile(file, args, {
+                windowsHide: true,
+                maxBuffer: 2 * 1024 * 1024,
+                ...options,
+              }, (error, stdout, stderr) => {
+                if (error) {
+                  reject(error);
+                  return;
+                }
+                resolve(String(stdout || '').trim());
+              });
+            });
+          }
+
+          async function getGenericExecutableIconDataUrl() {
+            if (process.platform !== 'win32') {
+              return null;
+            }
+
+            if (!genericExecutableIconPromise) {
+              genericExecutableIconPromise = (async () => {
+                const probe = path.join(app.getPath('temp'), `rapr-generic-${process.pid}.exe`);
+                try {
+                  fs.writeFileSync(probe, '');
+                  const image = await app.getFileIcon(probe, { size: 'large' });
+                  return image && !image.isEmpty() ? image.toDataURL() : null;
+                } catch {
+                  return null;
+                } finally {
+                  try { fs.unlinkSync(probe); } catch { /* best effort */ }
+                }
+              })();
+            }
+
+            return genericExecutableIconPromise;
+          }
+
+          async function extractEmbeddedExecutableIconDataUrl(executablePath) {
+            if (process.platform !== 'win32') {
+              return null;
+            }
+
+            const command = [
+              'Add-Type -AssemblyName System.Drawing;',
+              '$icon = [System.Drawing.Icon]::ExtractAssociatedIcon($env:RAPR_ICON_PATH);',
+              'if ($null -eq $icon) { exit 2 };',
+              '$bitmap = $icon.ToBitmap();',
+              '$stream = New-Object System.IO.MemoryStream;',
+              '$bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png);',
+              '[Console]::Out.Write([Convert]::ToBase64String($stream.ToArray()));',
+              '$stream.Dispose(); $bitmap.Dispose(); $icon.Dispose();',
+            ].join(' ');
+
+            try {
+              const base64 = await execFileText(
+                'powershell.exe',
+                ['-NoProfile', '-NonInteractive', '-Command', command],
+                {
+                  env: { ...process.env, RAPR_ICON_PATH: executablePath },
+                  timeout: 5000,
+                },
+              );
+              return base64 ? `data:image/png;base64,${base64}` : null;
+            } catch {
+              return null;
+            }
+          }
+
+          async function getExecutableIconDataUrl(executablePath) {
+            if (!executablePath || !fs.existsSync(executablePath)) {
+              return null;
+            }
+
+            const key = normalizeWindowsPath(executablePath);
+            if (executableIconCache.has(key)) {
+              return executableIconCache.get(key);
+            }
+
+            const iconPromise = (async () => {
+              let shellIcon = null;
+              try {
+                const image = await app.getFileIcon(executablePath, { size: 'large' });
+                shellIcon = image && !image.isEmpty() ? image.toDataURL() : null;
+              } catch {
+                // Fall through to embedded-resource extraction below.
+              }
+
+              const genericIcon = await getGenericExecutableIconDataUrl();
+              if (!shellIcon || (genericIcon && shellIcon === genericIcon)) {
+                const embeddedIcon = await extractEmbeddedExecutableIconDataUrl(executablePath);
+                if (embeddedIcon) {
+                  return embeddedIcon;
+                }
+              }
+
+              return shellIcon;
+            })();
+
+            executableIconCache.set(key, iconPromise);
+            return iconPromise;
+          }
+          """
+          main = replace_once(main, old, new, 'getExecutableIconDataUrl')
+          main_path.write_text(main, encoding='utf-8')
+
+          test_path = Path('test/gameLibraries.test.js')
+          tests = test_path.read_text(encoding='utf-8')
+          tests += r'''
+
+test('non-launcher executable wins even when launcher scores higher', () => {
+  const root = 'D:\\SteamLibrary\\steamapps\\common\\Apex Legends';
+  const fsImpl = {
+    readdirSync(directory) {
+      if (directory === root) {
+        return [
+          { name: 'ApexLauncher.exe', isDirectory: () => false, isFile: () => true },
+          { name: 'r5apex_dx12.exe', isDirectory: () => false, isFile: () => true },
+        ];
+      }
+      return [];
+    },
+    statSync(file) {
+      return { size: /launcher/i.test(file) ? 500_000_000 : 10_000_000 };
+    },
+  };
+
+  assert.equal(
+    findLikelyExecutable(root, 'Apex Legends', { fsImpl }),
+    `${root}\\r5apex_dx12.exe`,
+  );
+});
+
+test('root executables are inspected before deep directories consume the scan budget', () => {
+  const root = 'D:\\Games\\Example';
+  const huge = `${root}\\A-Huge-Assets`;
+  const fsImpl = {
+    readdirSync(directory) {
+      if (directory === root) {
+        return [
+          { name: 'A-Huge-Assets', isDirectory: () => true, isFile: () => false },
+          { name: 'ExampleGame.exe', isDirectory: () => false, isFile: () => true },
+        ];
+      }
+      if (directory === huge) {
+        return Array.from({ length: 100 }, (_, index) => ({
+          name: `asset-${index}.bin`,
+          isDirectory: () => false,
+          isFile: () => true,
+        }));
+      }
+      return [];
+    },
+    statSync() {
+      return { size: 50_000_000 };
+    },
+  };
+
+  assert.equal(
+    findLikelyExecutable(root, 'Example Game', { fsImpl, maxVisited: 3 }),
+    `${root}\\ExampleGame.exe`,
+  );
+});
+'''
+          test_path.write_text(tests, encoding='utf-8')
+
+      - name: Validate
+        run: |
+          node --check src/main.js
+          node --check src/lib/gameLibraries.js
+          node --test test/gameLibraries.test.js
+
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/main.js src/lib/gameLibraries.js test/gameLibraries.test.js
+          git commit -m "Improve game executable selection and icons"
+          git push origin HEAD:v1.3.4-game-library-ui
