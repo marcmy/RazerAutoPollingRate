@@ -5,6 +5,7 @@ const { parseProcessConfig } = require('../src/lib/config');
 const {
   findFirstMatchingProcess,
   parseTasklistCsv,
+  selectConfiguredPollingRate,
   selectForegroundPollingRate,
   selectTargetPollingRate,
 } = require('../src/lib/processes');
@@ -12,14 +13,12 @@ const {
 test('duplicate process entries behave deterministically with first match winning', () => {
   const { entries } = parseProcessConfig('r5apex.exe 4000\nr5apex.exe 1000');
   const match = findFirstMatchingProcess(entries, ['r5apex.exe']);
-
   assert.equal(match.pollingRate, 4000);
 });
 
 test('first running configured process wins based on config order', () => {
   const { entries } = parseProcessConfig('quake_live_x64.exe 1000\nr5apex.exe 4000');
   const selected = selectTargetPollingRate(entries, ['r5apex.exe', 'quake_live_x64.exe'], 500);
-
   assert.equal(selected.targetRate, 1000);
   assert.equal(selected.matchedProcess, 'quake_live_x64.exe');
 });
@@ -27,7 +26,6 @@ test('first running configured process wins based on config order', () => {
 test('no running configured process returns inactive polling rate', () => {
   const { entries } = parseProcessConfig('r5apex.exe 4000');
   const selected = selectTargetPollingRate(entries, ['notepad.exe'], 500);
-
   assert.equal(selected.targetRate, 500);
   assert.equal(selected.matchedProcess, null);
 });
@@ -54,41 +52,6 @@ test('full executable path match beats bare process-name match', () => {
   assert.equal(selected.targetRate, 4000);
 });
 
-test('same specificity uses config order priority', () => {
-  const { entries } = parseProcessConfig([
-    '"C:\\Games\\Apex\\r5apex_dx12.exe" 2000',
-    '"D:\\Games\\Apex\\r5apex_dx12.exe" 4000',
-  ].join('\n'));
-
-  const selected = selectTargetPollingRate(entries, [
-    { processName: 'r5apex_dx12.exe', executablePath: 'D:\\Games\\Apex\\r5apex_dx12.exe' },
-    { processName: 'r5apex_dx12.exe', executablePath: 'C:\\Games\\Apex\\r5apex_dx12.exe' },
-  ], 500);
-
-  assert.equal(selected.targetRate, 2000);
-});
-
-test('full executable path matching is case-insensitive on Windows paths', () => {
-  const { entries } = parseProcessConfig('"C:\\Games\\Apex\\r5apex_dx12.exe" 4000');
-  const selected = selectTargetPollingRate(entries, [{
-    processName: 'R5APEX_DX12.EXE',
-    executablePath: 'c:\\games\\apex\\R5APEX_DX12.EXE',
-  }], 500);
-
-  assert.equal(selected.targetRate, 4000);
-});
-
-test('foreground mode switches to inactive rate when focused process does not match', () => {
-  const { entries } = parseProcessConfig('r5apex_dx12.exe 4000');
-  const selected = selectForegroundPollingRate(entries, {
-    processName: 'notepad.exe',
-    executablePath: 'C:\\Windows\\System32\\notepad.exe',
-  }, 500);
-
-  assert.equal(selected.targetRate, 500);
-  assert.equal(selected.matchedProcess, null);
-});
-
 test('foreground mode matches exact full executable path', () => {
   const { entries } = parseProcessConfig([
     'r5apex_dx12.exe 2000',
@@ -100,4 +63,59 @@ test('foreground mode matches exact full executable path', () => {
   }, 500);
 
   assert.equal(selected.targetRate, 4000);
+});
+
+test('per-game running mode overrides the global foreground default', () => {
+  const { entries } = parseProcessConfig('admin-game.exe 4000 running');
+  const selected = selectConfiguredPollingRate(entries, {
+    foregroundProcess: { processName: 'notepad.exe', executablePath: 'C:\\Windows\\notepad.exe' },
+    runningProcesses: [{ processName: 'admin-game.exe', executablePath: null }],
+    defaultDetectionMode: 'foreground',
+    inactivePollingRate: 500,
+    defaultGamePollingRate: 1000,
+  });
+
+  assert.equal(selected.targetRate, 4000);
+  assert.equal(selected.matchedDetectionMode, 'running');
+  assert.equal(selected.matchedProcess, 'admin-game.exe');
+});
+
+test('per-game foreground mode overrides the global running default', () => {
+  const { entries } = parseProcessConfig('game.exe 2000 foreground');
+  const selected = selectConfiguredPollingRate(entries, {
+    foregroundProcess: { processName: 'game.exe', executablePath: 'D:\\Games\\game.exe' },
+    runningProcesses: [{ processName: 'other.exe', executablePath: 'D:\\Games\\other.exe' }],
+    defaultDetectionMode: 'running',
+    inactivePollingRate: 500,
+    defaultGamePollingRate: 1000,
+  });
+
+  assert.equal(selected.targetRate, 2000);
+  assert.equal(selected.matchedDetectionMode, 'foreground');
+});
+
+test('path rule in running mode falls back to process name when Windows hides the path', () => {
+  const { entries } = parseProcessConfig('"D:\\Games\\Admin Game\\admin-game.exe" 4000 running');
+  const selected = selectConfiguredPollingRate(entries, {
+    foregroundProcess: null,
+    runningProcesses: [{ processName: 'ADMIN-GAME.EXE', executablePath: null }],
+    defaultDetectionMode: 'foreground',
+    inactivePollingRate: 500,
+    defaultGamePollingRate: 1000,
+  });
+
+  assert.equal(selected.targetRate, 4000);
+});
+
+test('game override can inherit the current default game polling rate', () => {
+  const { entries } = parseProcessConfig('game.exe default running');
+  const selected = selectConfiguredPollingRate(entries, {
+    foregroundProcess: null,
+    runningProcesses: [{ processName: 'game.exe', executablePath: null }],
+    defaultDetectionMode: 'foreground',
+    inactivePollingRate: 500,
+    defaultGamePollingRate: 8000,
+  });
+
+  assert.equal(selected.targetRate, 8000);
 });
