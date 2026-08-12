@@ -9,7 +9,7 @@
     "start": "electron-forge start",
     "test": "node --test test/run-tests.js",
     "package": "electron-forge package",
-    "make": "electron-forge make"
+    "make": "node scripts/make.js"
   },
   "dependencies": {
     "auto-launch": "^5.0.6",
