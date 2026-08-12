@@ -25,6 +25,7 @@ const { retryImmediately } = require('./lib/retryImmediately');
 const {
   DEFAULT_SETTINGS,
   configExists,
+  normalizePollingCheckIntervalMs,
   readAppConfig,
   writeAppConfig,
 } = require('./lib/appConfig');
@@ -35,12 +36,22 @@ const {
   parseProcessConfig,
 } = require('./lib/config');
 const {
+  discoverGameLibraries,
+  gameForExecutable,
+  normalizeWindowsPath,
+  scanLibraryGames,
+} = require('./lib/gameLibraries');
+const {
   getForegroundProcess,
   getForegroundProcessSnapshot,
   getRunningProcesses,
   stopForegroundProcessWatcher,
 } = require('./lib/processDiscovery');
-const { selectForegroundPollingRate, selectTargetPollingRate } = require('./lib/processes');
+const {
+  ruleNeedsRunningProcesses,
+  selectConfiguredPollingRate,
+  selectTargetPollingRate,
+} = require('./lib/processes');
 const {
   getRateForReportByte,
   getReportByteForRate,
@@ -51,11 +62,8 @@ const { getRazerReport } = require('./lib/razerReports');
 
 const appPath = app.getAppPath();
 const legacyStore = new Store();
-
-function log(out, error = false) {
-  const date = new Date().toLocaleTimeString('en-US', { hour12: false, hour: 'numeric', minute: 'numeric' });
-  fs.appendFileSync(path.join(app.getPath('userData'), 'error.log'), `[ ${date} ] ${error ? 'ERROR: ' : 'LOG: '}${out}\n`);
-}
+const assetsFolder = 'src/assets/';
+const checkGuard = createCheckGuard();
 
 let tray;
 let autostartEnabled;
@@ -66,6 +74,7 @@ let setRate = [0, false];
 let lowerRate = 500;
 let defaultGamePollingRate = 1000;
 let detectionMode = 'foreground';
+let autoDetectGames = true;
 let diagnosticLoggingEnabled = false;
 let verboseDiagnosticLoggingEnabled = false;
 let pollingCheckIntervalMs = DEFAULT_SETTINGS.pollingCheckIntervalMs;
@@ -75,9 +84,30 @@ let hasStopped = false;
 let stop = false;
 let settingsWindow = null;
 let diagnosticLogger = null;
-const assetsFolder = 'src/assets/';
-const checkGuard = createCheckGuard();
 let lastPollingError = null;
+let gameLibraries = [];
+let scannedGames = [];
+let libraryConfigurationKey = '';
+let runtimeStatus = {
+  enabled: true,
+  processName: null,
+  executablePath: null,
+  matchedProcess: null,
+  source: 'inactive',
+  detectionMode: null,
+  requestedTarget: lowerRate,
+  targetRate: lowerRate,
+  currentRate: null,
+  gameId: null,
+  gameName: null,
+  provider: null,
+  error: null,
+};
+
+function log(out, error = false) {
+  const date = new Date().toLocaleTimeString('en-US', { hour12: false, hour: 'numeric', minute: 'numeric' });
+  fs.appendFileSync(path.join(app.getPath('userData'), 'error.log'), `[ ${date} ] ${error ? 'ERROR: ' : 'LOG: '}${out}\n`);
+}
 
 function getConfigDirectory() {
   return path.join(app.getPath('userData'), 'cfg');
@@ -119,7 +149,7 @@ function ensureConfigFile() {
     }).entries;
   }
 
-  writeAppConfig(getConfigPath(), settings, entries);
+  writeAppConfig(getConfigPath(), settings, entries, []);
 }
 
 function is8kCompatible() {
@@ -145,11 +175,11 @@ function getPollingRateIcon(pollingRate, isActive) {
 }
 
 function getDetectionMode() {
-  return detectionMode === 'foreground' ? 'foreground' : 'running';
+  return detectionMode === 'running' ? 'running' : 'foreground';
 }
 
-function getDetectionModeLabel() {
-  return getDetectionMode() === 'foreground' ? 'foreground window' : 'running processes';
+function getDetectionModeLabel(mode = getDetectionMode()) {
+  return mode === 'running' ? 'running processes' : 'foreground window';
 }
 
 function getCurrentSettings() {
@@ -157,6 +187,7 @@ function getCurrentSettings() {
     inactivePollingRate: lowerRate,
     defaultGamePollingRate,
     detectionMode: getDetectionMode(),
+    autoDetectGames: Boolean(autoDetectGames),
     autostart: Boolean(autostartEnabled),
     diagnosticLogging: Boolean(diagnosticLoggingEnabled),
     verboseDiagnosticLogging: Boolean(verboseDiagnosticLoggingEnabled),
@@ -168,6 +199,7 @@ function applySettings(settings) {
   lowerRate = settings.inactivePollingRate;
   defaultGamePollingRate = settings.defaultGamePollingRate;
   detectionMode = settings.detectionMode === 'running' ? 'running' : 'foreground';
+  autoDetectGames = settings.autoDetectGames !== false;
   autostartEnabled = Boolean(settings.autostart);
   diagnosticLoggingEnabled = Boolean(settings.diagnosticLogging);
   verboseDiagnosticLoggingEnabled = Boolean(settings.verboseDiagnosticLogging);
@@ -179,8 +211,48 @@ function loadConfig(warn = (message) => log(message, true)) {
   return readAppConfig(getConfigPath(), { warn });
 }
 
-function saveConfig(settings, entries) {
-  writeAppConfig(getConfigPath(), settings, entries);
+function saveConfig(settings, entries, gameFolders = []) {
+  writeAppConfig(getConfigPath(), settings, entries, gameFolders);
+}
+
+function buildLibraryConfigurationKey(settings, gameFolders) {
+  return JSON.stringify({
+    auto: settings.autoDetectGames !== false,
+    folders: (gameFolders || []).map(normalizeWindowsPath),
+  });
+}
+
+function syncGameLibraries(settings, gameFolders, force = false) {
+  const key = buildLibraryConfigurationKey(settings, gameFolders);
+  if (!force && key === libraryConfigurationKey) {
+    return;
+  }
+
+  gameLibraries = discoverGameLibraries({
+    customFolders: gameFolders,
+    includeKnown: settings.autoDetectGames !== false,
+  });
+  libraryConfigurationKey = key;
+}
+
+function rescanGames(settings, gameFolders) {
+  syncGameLibraries(settings, gameFolders, true);
+  scannedGames = scanLibraryGames(gameLibraries);
+  return scannedGames;
+}
+
+function rememberDetectedGame(game) {
+  if (!game || !game.executablePath) {
+    return;
+  }
+
+  const key = normalizeWindowsPath(game.executablePath);
+  const existingIndex = scannedGames.findIndex((item) => normalizeWindowsPath(item.executablePath) === key);
+  if (existingIndex >= 0) {
+    scannedGames[existingIndex] = { ...scannedGames[existingIndex], ...game };
+  } else {
+    scannedGames.push(game);
+  }
 }
 
 function updateTrayMenu() {
@@ -210,7 +282,8 @@ function updateTrayMenu() {
 function editorRulesFromEntries(entries) {
   return entries.map((entry) => ({
     target: entry.rawTarget || entry.executablePath || entry.rawProcessName || entry.processName,
-    pollingRate: entry.pollingRate,
+    pollingRate: entry.usesDefaultPollingRate ? null : entry.pollingRate,
+    detectionMode: entry.detectionMode || 'default',
     isPathRule: Boolean(entry.executablePath),
   }));
 }
@@ -222,36 +295,194 @@ function buildEditorConfigText(rules) {
 
   return rules.map((rule) => {
     const target = String(rule.target || '').trim();
-    const pollingRate = String(rule.pollingRate || '').trim();
+    const pollingRate = rule.pollingRate === null || rule.pollingRate === 'default'
+      ? 'default'
+      : String(rule.pollingRate || '').trim();
+    const mode = ['foreground', 'running'].includes(rule.detectionMode)
+      ? rule.detectionMode
+      : 'default';
     if (!target || !pollingRate) {
-      throw new Error('Each rule needs an executable and polling rate');
+      throw new Error('Each game override needs an executable and polling rate');
     }
 
-    return `${formatRuleTarget(target)} ${pollingRate}`;
+    return `${formatRuleTarget(target)} ${pollingRate}${mode === 'default' ? '' : ` ${mode}`}`;
   }).join('\n');
 }
 
+function isSameRuleTarget(left, right) {
+  if (left.executablePath && right.executablePath) {
+    return normalizeExecutablePath(left.executablePath) === normalizeExecutablePath(right.executablePath);
+  }
+
+  if (!left.executablePath && !right.executablePath) {
+    return normalizeProcessName(left.processName) === normalizeProcessName(right.processName);
+  }
+
+  return false;
+}
+
+function createRuleEntry(target, pollingRate, perGameDetectionMode = 'default') {
+  const suffix = perGameDetectionMode === 'foreground' || perGameDetectionMode === 'running'
+    ? ` ${perGameDetectionMode}`
+    : '';
+  const rateValue = pollingRate === null || pollingRate === 'default' ? 'default' : pollingRate;
+  const text = `${formatRuleTarget(target)} ${rateValue}${suffix}`;
+  const { entries, warnings } = parseProcessConfig(text);
+  if (warnings.length > 0 || entries.length !== 1) {
+    throw new Error(warnings[0] || `Could not add ${target}`);
+  }
+
+  return entries[0];
+}
+
+function upsertPickedRule(entries, newEntry) {
+  const existingIndex = entries.findIndex((entry) => isSameRuleTarget(entry, newEntry));
+  if (existingIndex === -1) {
+    return [...entries, newEntry];
+  }
+
+  const updated = entries.slice();
+  updated[existingIndex] = newEntry;
+  return updated;
+}
+
+function getFriendlyRuleName(rule) {
+  const target = String(rule.target || '').trim();
+  if (/^[a-z]:\\/i.test(target)) {
+    let directory = path.win32.dirname(target);
+    const generic = /^(?:win64|win32|x64|x86|binaries|bin)$/i;
+    while (generic.test(path.win32.basename(directory))) {
+      directory = path.win32.dirname(directory);
+    }
+    const folderName = path.win32.basename(directory);
+    if (folderName) {
+      return folderName;
+    }
+  }
+
+  return path.win32.basename(target, path.win32.extname(target)) || target || 'Game';
+}
+
+function ruleMatchesGame(rule, game) {
+  const target = String(rule.target || '').trim();
+  if (!target || !game) {
+    return false;
+  }
+
+  if (/^[a-z]:\\/i.test(target) && game.executablePath) {
+    return normalizeWindowsPath(target) === normalizeWindowsPath(game.executablePath);
+  }
+
+  const processName = path.win32.basename(target).toLowerCase();
+  return Boolean(game.processName) && processName === String(game.processName).toLowerCase();
+}
+
+async function getExecutableIconDataUrl(executablePath) {
+  if (!executablePath || !fs.existsSync(executablePath)) {
+    return null;
+  }
+
+  try {
+    const image = await app.getFileIcon(executablePath, { size: 'large' });
+    return image && !image.isEmpty() ? image.toDataURL() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function buildGameCards(entries) {
+  const rules = editorRulesFromEntries(entries);
+  const cards = [];
+  const usedRules = new Set();
+
+  for (const game of scannedGames) {
+    const overrideIndex = rules.findIndex((rule, index) => !usedRules.has(index) && ruleMatchesGame(rule, game));
+    const override = overrideIndex >= 0 ? rules[overrideIndex] : null;
+    if (overrideIndex >= 0) {
+      usedRules.add(overrideIndex);
+    }
+
+    cards.push({
+      ...game,
+      kind: 'auto',
+      customized: Boolean(override),
+      pollingRate: override ? override.pollingRate : null,
+      detectionMode: override ? override.detectionMode : 'default',
+      overrideTarget: override ? override.target : null,
+      iconDataUrl: await getExecutableIconDataUrl(game.executablePath),
+    });
+  }
+
+  for (let index = 0; index < rules.length; index += 1) {
+    if (usedRules.has(index)) {
+      continue;
+    }
+
+    const rule = rules[index];
+    const executablePath = /^[a-z]:\\/i.test(rule.target) ? rule.target : null;
+    cards.push({
+      id: `manual:${normalizeProcessName(rule.target)}`,
+      name: getFriendlyRuleName(rule),
+      source: 'Manual',
+      provider: 'manual',
+      gameRoot: executablePath ? path.win32.dirname(executablePath) : null,
+      executablePath,
+      processName: path.win32.basename(rule.target),
+      autoDetected: false,
+      kind: 'manual',
+      customized: true,
+      pollingRate: rule.pollingRate,
+      detectionMode: rule.detectionMode || 'default',
+      overrideTarget: rule.target,
+      iconDataUrl: await getExecutableIconDataUrl(executablePath),
+    });
+  }
+
+  cards.sort((left, right) => left.name.localeCompare(right.name));
+  return cards;
+}
+
+function getRuntimeStatus() {
+  return {
+    ...runtimeStatus,
+    enabled: detectionEnabled,
+  };
+}
+
 function setupSettingsIpc() {
-  ipcMain.handle('settings:load', () => {
-    const { settings, entries, warnings } = loadConfig((message) => log(message, true));
+  ipcMain.handle('settings:load', async () => {
+    const {
+      settings,
+      entries,
+      gameFolders,
+      warnings,
+    } = loadConfig((message) => log(message, true));
     applySettings(settings);
+    rescanGames(settings, gameFolders);
+
     return {
+      appVersion: app.getVersion(),
       settings: getCurrentSettings(),
       rules: editorRulesFromEntries(entries),
+      gameFolders,
+      libraries: gameLibraries,
+      games: await buildGameCards(entries),
+      runtime: getRuntimeStatus(),
       warnings,
     };
   });
 
-  ipcMain.handle('settings:save', (_event, payload) => {
+  ipcMain.handle('settings:save', async (_event, payload) => {
     try {
       const settings = {
         inactivePollingRate: parsePollingRate(payload.settings.inactivePollingRate) || DEFAULT_SETTINGS.inactivePollingRate,
         defaultGamePollingRate: parsePollingRate(payload.settings.defaultGamePollingRate) || DEFAULT_SETTINGS.defaultGamePollingRate,
         detectionMode: payload.settings.detectionMode === 'running' ? 'running' : 'foreground',
+        autoDetectGames: payload.settings.autoDetectGames !== false,
         autostart: Boolean(payload.settings.autostart),
         diagnosticLogging: Boolean(payload.settings.diagnosticLogging),
         verboseDiagnosticLogging: Boolean(payload.settings.verboseDiagnosticLogging),
-        pollingCheckIntervalMs,
+        pollingCheckIntervalMs: normalizePollingCheckIntervalMs(payload.settings.pollingCheckIntervalMs),
       };
       if (settings.inactivePollingRate > 1000) {
         return { ok: false, warnings: ['Inactive polling rate must be 125, 250, 500, or 1000 Hz.'] };
@@ -264,27 +495,75 @@ function setupSettingsIpc() {
         return { ok: false, warnings };
       }
 
+      const gameFolders = Array.isArray(payload.gameFolders)
+        ? payload.gameFolders.map((folder) => String(folder || '').trim()).filter(Boolean)
+        : [];
       const autostartChanged = settings.autostart !== autostartEnabled;
       applySettings(settings);
-      saveConfig(getCurrentSettings(), entries);
+      saveConfig(getCurrentSettings(), entries, gameFolders);
+      syncGameLibraries(settings, gameFolders, true);
+
       if (autostartChanged) {
         updateAutostart();
       }
+
       updateTrayMenu();
       guardedCheckPollingRate();
-      return { ok: true, settings: getCurrentSettings(), rules: editorRulesFromEntries(entries), warnings: [] };
+      return {
+        ok: true,
+        settings: getCurrentSettings(),
+        rules: editorRulesFromEntries(entries),
+        gameFolders,
+        warnings: [],
+      };
     } catch (error) {
       return { ok: false, warnings: [error.message] };
     }
   });
 
+  ipcMain.handle('settings:rescanLibraries', async () => {
+    const {
+      settings,
+      entries,
+      gameFolders,
+    } = loadConfig((message) => log(message, true));
+    applySettings(settings);
+    rescanGames(settings, gameFolders);
+    return {
+      libraries: gameLibraries,
+      games: await buildGameCards(entries),
+    };
+  });
+
+  ipcMain.handle('settings:getRuntimeStatus', () => getRuntimeStatus());
+
   ipcMain.handle('settings:browseExecutable', async () => {
     const options = {
-      title: 'Choose executable',
+      title: 'Choose game executable',
       properties: ['openFile'],
-      filters: [
-        { name: 'Executables', extensions: ['exe'] },
-      ],
+      filters: [{ name: 'Executables', extensions: ['exe'] }],
+    };
+    const result = settingsWindow
+      ? await dialog.showOpenDialog(settingsWindow, options)
+      : await dialog.showOpenDialog(options);
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    const executablePath = result.filePaths[0];
+    return {
+      path: executablePath,
+      processName: path.win32.basename(executablePath),
+      name: getFriendlyRuleName({ target: executablePath }),
+      iconDataUrl: await getExecutableIconDataUrl(executablePath),
+    };
+  });
+
+  ipcMain.handle('settings:browseFolder', async () => {
+    const options = {
+      title: 'Choose game library folder',
+      properties: ['openDirectory'],
     };
     const result = settingsWindow
       ? await dialog.showOpenDialog(settingsWindow, options)
@@ -317,25 +596,19 @@ function setupSettingsIpc() {
 }
 
 app.whenReady().then(() => {
-  autolaunch = new AutoLaunch({
-    name: 'Razer Auto Polling Rate',
-  });
+  autolaunch = new AutoLaunch({ name: 'Razer Auto Polling Rate' });
 
-  const { settings } = loadConfig((message) => log(message, true));
+  const { settings, gameFolders } = loadConfig((message) => log(message, true));
   applySettings(settings);
+  syncGameLibraries(settings, gameFolders, true);
   updateAutostart();
   diagnosticLogger = new DiagnosticLogger({ logDirectory: getDiagnosticLogDirectory() });
 
   tray = new Tray(nativeImage.createFromPath(path.join(appPath, assetsFolder + 'loading.png')));
-
-  tray.on('click', () => {
-    tray.popUpContextMenu();
-  });
-
+  tray.on('click', () => tray.popUpContextMenu());
   tray.setToolTip('Searching for Razer HyperPolling dongle');
   tray.setTitle('Razer auto polling rate');
   updateTrayMenu();
-
   runLoop();
 });
 
@@ -357,7 +630,7 @@ async function runLoop() {
   await guardedCheckPollingRate(true);
 
   while (true) {
-    await new Promise((res) => setTimeout(res, pollingCheckIntervalMs));
+    await new Promise((resolve) => setTimeout(resolve, pollingCheckIntervalMs));
     if (stop) {
       break;
     }
@@ -371,7 +644,7 @@ async function runLoop() {
 async function quit() {
   stop = true;
   while (!hasStopped) {
-    await new Promise((res) => setTimeout(res, 500));
+    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
   if (process.platform !== 'darwin') {
@@ -387,8 +660,10 @@ function openSettingsWindow() {
   }
 
   settingsWindow = new BrowserWindow({
-    width: 960,
-    height: 680,
+    width: 1120,
+    height: 760,
+    minWidth: 900,
+    minHeight: 620,
     title: 'Razer Auto Polling Rate Settings',
     show: false,
     webPreferences: {
@@ -400,10 +675,7 @@ function openSettingsWindow() {
   });
 
   settingsWindow.setMenu(null);
-
-  settingsWindow.once('ready-to-show', () => {
-    settingsWindow.show();
-  });
+  settingsWindow.once('ready-to-show', () => settingsWindow.show());
   settingsWindow.on('closed', () => {
     settingsWindow = null;
   });
@@ -426,11 +698,7 @@ function updateAutostart() {
 
     return Promise.resolve();
   }).then(() => {
-    if (autostartEnabled) {
-      log('enabled autostart');
-    } else {
-      log('disabled autostart');
-    }
+    log(autostartEnabled ? 'enabled autostart' : 'disabled autostart');
   }).catch((error) => {
     log(`autostart update failed: ${error.message}`, true);
   });
@@ -453,7 +721,6 @@ function setStartupApprovedEnabled(enabled) {
         reject(error);
         return;
       }
-
       resolve();
     });
   });
@@ -476,10 +743,7 @@ function startPickWindow() {
   const registered = globalShortcut.register('F3', handlePickWindowShortcut);
   if (!registered) {
     pickingWindow = false;
-    setTrayStatus({
-      icon: 'loading.png',
-      tooltip: 'Could not register F3 for window picking',
-    });
+    setTrayStatus({ icon: 'loading.png', tooltip: 'Could not register F3 for window picking' });
     log('failed to register F3 for window picking', true);
     updateTrayMenu();
     return;
@@ -490,39 +754,6 @@ function startPickWindow() {
     tooltip: `Focus the app or game, then press F3 to add it at ${defaultGamePollingRate} Hz`,
   });
   updateTrayMenu();
-}
-
-function isSameRuleTarget(left, right) {
-  if (left.executablePath && right.executablePath) {
-    return normalizeExecutablePath(left.executablePath) === normalizeExecutablePath(right.executablePath);
-  }
-
-  if (!left.executablePath && !right.executablePath) {
-    return normalizeProcessName(left.processName) === normalizeProcessName(right.processName);
-  }
-
-  return false;
-}
-
-function createRuleEntry(target, pollingRate) {
-  const text = `${formatRuleTarget(target)} ${pollingRate}`;
-  const { entries, warnings } = parseProcessConfig(text);
-  if (warnings.length > 0 || entries.length !== 1) {
-    throw new Error(warnings[0] || `Could not add ${target}`);
-  }
-
-  return entries[0];
-}
-
-function upsertPickedRule(entries, newEntry) {
-  const existingIndex = entries.findIndex((entry) => isSameRuleTarget(entry, newEntry));
-  if (existingIndex === -1) {
-    return [...entries, newEntry];
-  }
-
-  const updated = entries.slice();
-  updated[existingIndex] = newEntry;
-  return updated;
 }
 
 async function handlePickWindowShortcut() {
@@ -537,11 +768,15 @@ async function handlePickWindowShortcut() {
     }
 
     const target = foregroundProcess.executablePath || foregroundProcess.processName;
-    const { settings, entries } = loadConfig((message) => log(message, true));
+    const {
+      settings,
+      entries,
+      gameFolders,
+    } = loadConfig((message) => log(message, true));
     applySettings(settings);
     const newEntry = createRuleEntry(target, defaultGamePollingRate);
     const updatedEntries = upsertPickedRule(entries, newEntry);
-    saveConfig(getCurrentSettings(), updatedEntries);
+    saveConfig(getCurrentSettings(), updatedEntries, gameFolders);
     setTrayStatus({
       icon: 'loading.png',
       tooltip: `Added ${target} at ${defaultGamePollingRate} Hz`,
@@ -580,7 +815,6 @@ async function getDongle() {
     if (error.name === 'NotFoundError') {
       throw new Error('No compatible Razer HyperPolling dongle found');
     }
-
     throw error;
   }
 }
@@ -592,7 +826,8 @@ async function prepareDongle(dongle) {
   }
 
   const targetIndex = currentModel.interfaceIndex !== undefined ? currentModel.interfaceIndex : 0x00;
-  const targetInterface = dongle.configuration.interfaces.find(i => i.interfaceNumber === targetIndex) || dongle.configuration.interfaces[0];
+  const targetInterface = dongle.configuration.interfaces.find((item) => item.interfaceNumber === targetIndex)
+    || dongle.configuration.interfaces[0];
 
   await dongle.claimInterface(targetInterface.interfaceNumber);
   return targetInterface.interfaceNumber;
@@ -629,7 +864,7 @@ async function getPollingRateOnce(dongle) {
     index: targetIndex,
   }, getRazerReport(0x1F, 0x00, 0xC0, 0x01, 0x00, 0x00));
 
-  await new Promise((res) => setTimeout(res, 100));
+  await new Promise((resolve) => setTimeout(resolve, 100));
 
   const reply = await dongle.controlTransferIn({
     requestType: 'class',
@@ -689,8 +924,7 @@ async function setPollingRate(dongle, pollingRate) {
     index: targetIndex,
   }, getRazerReport(0x1F, 0x00, 0x40, 0x02, 0x00, rate));
 
-  await new Promise((res) => setTimeout(res, 100));
-
+  await new Promise((resolve) => setTimeout(resolve, 100));
   await dongle.controlTransferIn({
     requestType: 'class',
     recipient: 'interface',
@@ -699,8 +933,7 @@ async function setPollingRate(dongle, pollingRate) {
     index: targetIndex,
   }, 90);
 
-  await new Promise((res) => setTimeout(res, 100));
-
+  await new Promise((resolve) => setTimeout(resolve, 100));
   await dongle.controlTransferOut({
     requestType: 'class',
     recipient: 'interface',
@@ -709,8 +942,7 @@ async function setPollingRate(dongle, pollingRate) {
     index: targetIndex,
   }, getRazerReport(is8kCompatible() ? 0x1F : 0xFF, 0x00, 0x40, 0x02, 0x01, rate));
 
-  await new Promise((res) => setTimeout(res, 100));
-
+  await new Promise((resolve) => setTimeout(resolve, 100));
   await dongle.controlTransferIn({
     requestType: 'class',
     recipient: 'interface',
@@ -719,8 +951,7 @@ async function setPollingRate(dongle, pollingRate) {
     index: targetIndex,
   }, 90);
 
-  await new Promise((res) => setTimeout(res, 100));
-
+  await new Promise((resolve) => setTimeout(resolve, 100));
   return getPollingRate(dongle);
 }
 
@@ -749,15 +980,16 @@ function createInactiveSelection() {
     targetRate: lowerRate,
     matchedProcess: null,
     matchedRule: null,
+    matchedDetectionMode: null,
+    source: 'inactive',
+    game: null,
   };
 }
 
 function recordDiagnosticEvent(eventName, details = {}, options = {}) {
-  if (!diagnosticLogger) {
-    return;
+  if (diagnosticLogger) {
+    diagnosticLogger.record(eventName, details, options);
   }
-
-  diagnosticLogger.record(eventName, details, options);
 }
 
 function updateDiagnosticSession(entries, runningProcesses, lookupError) {
@@ -780,26 +1012,62 @@ function updateDiagnosticSession(entries, runningProcesses, lookupError) {
     return null;
   }
 
-  const runningSelection = selectTargetPollingRate(entries, runningProcesses, lowerRate);
+  const runningSelection = selectTargetPollingRate(entries, runningProcesses, lowerRate, defaultGamePollingRate);
   diagnosticLogger.updateSession({
     enabled: true,
     verbose: diagnosticLoggingEnabled && verboseDiagnosticLoggingEnabled,
     runningSelection,
   });
-  recordDiagnosticEvent('running_process_detection', {
-    matchedProcess: runningSelection.matchedProcess || 'none',
-    targetRate: runningSelection.targetRate,
-  }, {
-    key: `${runningSelection.matchedProcess || 'none'}:${runningSelection.targetRate}`,
-  });
-  recordDiagnosticEvent('running_process_scan', {
-    processCount: runningProcesses.length,
-  }, {
-    verbose: true,
-    key: String(runningProcesses.length),
+  return runningSelection;
+}
+
+function selectCurrentPollingRate(entries, foregroundProcess, runningProcesses) {
+  const configured = selectConfiguredPollingRate(entries, {
+    foregroundProcess,
+    runningProcesses,
+    defaultDetectionMode: getDetectionMode(),
+    inactivePollingRate: lowerRate,
+    defaultGamePollingRate,
   });
 
-  return runningSelection;
+  if (configured.matchedRule) {
+    return { ...configured, game: null };
+  }
+
+  if (foregroundProcess && foregroundProcess.executablePath && gameLibraries.length > 0) {
+    const game = gameForExecutable(foregroundProcess.executablePath, gameLibraries);
+    if (game) {
+      rememberDetectedGame(game);
+      return {
+        targetRate: defaultGamePollingRate,
+        matchedProcess: foregroundProcess.processName || foregroundProcess.executablePath,
+        matchedRule: null,
+        matchedDetectionMode: 'foreground',
+        source: 'library',
+        game,
+      };
+    }
+  }
+
+  return createInactiveSelection();
+}
+
+function updateRuntimeSelection(selected, foregroundProcess, requestedTarget) {
+  runtimeStatus = {
+    ...runtimeStatus,
+    enabled: detectionEnabled,
+    processName: foregroundProcess ? foregroundProcess.processName : null,
+    executablePath: foregroundProcess ? foregroundProcess.executablePath : null,
+    matchedProcess: selected.matchedProcess,
+    source: selected.source,
+    detectionMode: selected.matchedDetectionMode,
+    requestedTarget,
+    targetRate: requestedTarget,
+    gameId: selected.game ? selected.game.id : null,
+    gameName: selected.game ? selected.game.name : null,
+    provider: selected.game ? selected.game.provider : null,
+    error: null,
+  };
 }
 
 async function checkPollingRate(firstRun) {
@@ -807,15 +1075,28 @@ async function checkPollingRate(firstRun) {
   let claimedInterfaceNumber = null;
 
   try {
-    const { settings, entries } = loadConfig((message) => log(message, true));
+    const {
+      settings,
+      entries,
+      gameFolders,
+    } = loadConfig((message) => log(message, true));
     applySettings(settings);
-    const mode = getDetectionMode();
+    syncGameLibraries(settings, gameFolders);
+
     let runningProcesses = null;
     let runningProcessesError = null;
     let foregroundProcess = null;
-    let loggingSelection = null;
 
-    if (diagnosticLoggingEnabled || (detectionEnabled && mode === 'running')) {
+    if (!detectionEnabled) {
+      stopForegroundProcessWatcher();
+    } else {
+      foregroundProcess = getForegroundProcess();
+    }
+
+    const needsRunningProcesses = diagnosticLoggingEnabled
+      || (detectionEnabled && entries.some((entry) => ruleNeedsRunningProcesses(entry, getDetectionMode())));
+
+    if (needsRunningProcesses) {
       try {
         runningProcesses = getRunningProcesses();
       } catch (error) {
@@ -823,69 +1104,54 @@ async function checkPollingRate(firstRun) {
       }
     }
 
-    loggingSelection = updateDiagnosticSession(entries, runningProcesses, runningProcessesError);
-
+    const loggingSelection = updateDiagnosticSession(entries, runningProcesses, runningProcessesError);
     let selected;
+
     if (!detectionEnabled) {
-      stopForegroundProcessWatcher();
       selected = createInactiveSelection();
-    } else if (mode === 'foreground') {
-      foregroundProcess = getForegroundProcess();
-      selected = selectForegroundPollingRate(entries, foregroundProcess, lowerRate);
     } else {
-      stopForegroundProcessWatcher();
-      if (!runningProcesses) {
-        if (runningProcessesError) {
+      if (needsRunningProcesses && !runningProcesses && runningProcessesError) {
+        const requiredForMatching = entries.some((entry) => ruleNeedsRunningProcesses(entry, getDetectionMode()));
+        if (requiredForMatching) {
           throw runningProcessesError;
         }
-        runningProcesses = getRunningProcesses();
       }
-      selected = selectTargetPollingRate(entries, runningProcesses, lowerRate);
+
+      selected = selectCurrentPollingRate(entries, foregroundProcess, runningProcesses || []);
     }
+
     const requestedTarget = selected.targetRate;
+    updateRuntimeSelection(selected, foregroundProcess, requestedTarget);
 
     recordDiagnosticEvent('detection_selection', {
       detectionEnabled,
-      mode: detectionEnabled ? mode : 'disabled',
+      defaultMode: detectionEnabled ? getDetectionMode() : 'disabled',
+      matchedMode: selected.matchedDetectionMode,
+      source: selected.source,
       foregroundProcess: describeDiscoveredProcess(foregroundProcess),
       runningMatchedProcess: loggingSelection ? loggingSelection.matchedProcess : null,
       selectedProcess: selected.matchedProcess || 'inactive',
       requestedTarget,
+      game: selected.game ? selected.game.name : null,
     }, {
       key: [
-        detectionEnabled ? mode : 'disabled',
-        describeDiscoveredProcess(foregroundProcess) || 'none',
-        loggingSelection ? loggingSelection.matchedProcess : 'none',
+        detectionEnabled ? getDetectionMode() : 'disabled',
+        selected.matchedDetectionMode || 'none',
+        selected.source,
         selected.matchedProcess || 'inactive',
         requestedTarget,
       ].join('|'),
     });
 
     if (!detectionEnabled) {
+      runtimeStatus.currentRate = null;
       recordDiagnosticEvent('usb_access_decision', {
         access: false,
         reason: 'disabled',
         requestedTarget,
-      }, {
-        verbose: true,
-        key: `false:disabled:${requestedTarget}`,
-      });
+      }, { verbose: true });
       return;
     }
-
-    recordDiagnosticEvent('usb_access_decision', {
-      access: true,
-      reason: firstRun ? 'startup' : 'continuous_enforcement',
-      requestedTarget,
-    }, {
-      verbose: true,
-      key: `true:${firstRun ? 'startup' : 'continuous_enforcement'}:${requestedTarget}`,
-    });
-    recordDiagnosticEvent('polling_probe', {
-      checkIntervalMs: pollingCheckIntervalMs,
-      firstRun: Boolean(firstRun),
-      requestedTarget,
-    }, { verbose: true });
 
     dongle = await getDongle();
     claimedInterfaceNumber = await prepareDongle(dongle);
@@ -895,37 +1161,33 @@ async function checkPollingRate(firstRun) {
     if (!resolvedTarget.rate) {
       throw new Error(resolvedTarget.warning);
     }
-
     if (resolvedTarget.warning) {
       log(resolvedTarget.warning, true);
     }
 
     const targetRate = resolvedTarget.rate;
-    const matchedText = selected.matchedProcess ? `matched ${selected.matchedProcess}` : 'inactive';
-    const modeText = detectionEnabled ? getDetectionModeLabel() : 'detection disabled';
+    runtimeStatus.targetRate = targetRate;
+    runtimeStatus.currentRate = pollingRate;
+
+    const matchedText = selected.matchedProcess
+      ? (selected.game ? `game ${selected.game.name}` : `matched ${selected.matchedProcess}`)
+      : 'inactive';
+    const modeText = selected.matchedDetectionMode
+      ? getDetectionModeLabel(selected.matchedDetectionMode)
+      : (detectionEnabled ? getDetectionModeLabel() : 'detection disabled');
 
     recordDiagnosticEvent('polling_check', {
       firstRun: Boolean(firstRun),
       detectionEnabled,
-      mode: detectionEnabled ? mode : 'disabled',
-      foregroundProcess: describeDiscoveredProcess(foregroundProcess),
-      runningMatchedProcess: loggingSelection ? loggingSelection.matchedProcess : null,
-      selectedProcess: selected.matchedProcess || 'inactive',
+      defaultMode: getDetectionMode(),
+      matchedMode: selected.matchedDetectionMode,
+      source: selected.source,
       currentRate: pollingRate,
       targetRate,
       requestedTarget,
-      checkIntervalMs: pollingCheckIntervalMs,
       rules: entries.length,
+      libraries: gameLibraries.length,
     }, { verbose: true });
-
-    recordDiagnosticEvent('polling_status', {
-      currentRate: pollingRate,
-      targetRate,
-      requestedTarget,
-      matchedProcess: selected.matchedProcess || 'inactive',
-    }, {
-      key: `${pollingRate}:${targetRate}:${selected.matchedProcess || 'inactive'}`,
-    });
 
     if (firstRun) {
       const active = Boolean(selected.matchedProcess && pollingRate === targetRate);
@@ -942,6 +1204,7 @@ async function checkPollingRate(firstRun) {
         matchedProcess: selected.matchedProcess || 'inactive',
       });
       pollingRate = await setPollingRate(dongle, targetRate);
+      runtimeStatus.currentRate = pollingRate;
       recordDiagnosticEvent('polling_rate_change_result', {
         currentRate: pollingRate,
         targetRate,
@@ -966,14 +1229,14 @@ async function checkPollingRate(firstRun) {
     }
 
     lastPollingError = null;
+    runtimeStatus.error = null;
   } catch (error) {
     const errorMessage = error && error.message ? error.message : String(error);
     setRate = [0, false];
+    runtimeStatus.error = errorMessage;
 
     if (lastPollingError !== errorMessage) {
-      recordDiagnosticEvent('polling_check_error', {
-        error: errorMessage,
-      });
+      recordDiagnosticEvent('polling_check_error', { error: errorMessage });
       setTrayStatus({
         icon: 'loading.png',
         tooltip: `Razer Auto Polling Rate error: ${errorMessage}`,

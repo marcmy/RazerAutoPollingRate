@@ -6,489 +6,1571 @@
   <title>Razer Auto Polling Rate Settings</title>
   <style>
     :root {
-      color-scheme: light dark;
-      font-family: "Segoe UI", system-ui, sans-serif;
+      color-scheme: dark light;
+      font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+      --accent: #44d62c;
+      --accent-soft: color-mix(in srgb, var(--accent) 16%, Canvas);
+      --border: color-mix(in srgb, CanvasText 14%, Canvas);
+      --border-strong: color-mix(in srgb, CanvasText 24%, Canvas);
+      --muted: color-mix(in srgb, CanvasText 62%, Canvas);
+      --surface: color-mix(in srgb, CanvasText 4%, Canvas);
+      --surface-hover: color-mix(in srgb, CanvasText 8%, Canvas);
+      --danger: #f97066;
       background: Canvas;
       color: CanvasText;
     }
 
+    * {
+      box-sizing: border-box;
+    }
+
     html,
     body {
+      height: 100%;
       margin: 0;
-      overflow-x: hidden;
+      overflow: hidden;
     }
 
-    header,
-    footer {
-      align-items: center;
-      display: flex;
-      gap: 12px;
-      justify-content: space-between;
-      padding: 14px 18px;
-    }
-
-    header {
-      border-bottom: 1px solid color-mix(in srgb, CanvasText 18%, Canvas);
-      min-width: 0;
-    }
-
-    footer {
-      border-top: 1px solid color-mix(in srgb, CanvasText 18%, Canvas);
-    }
-
-    h1,
-    h2 {
-      margin: 0;
-    }
-
-    h1 {
-      font-size: 18px;
-      font-weight: 600;
-    }
-
-    h2 {
-      font-size: 15px;
-      font-weight: 600;
-    }
-
-    main {
-      display: grid;
-      gap: 18px;
-      padding: 16px 18px;
-      overflow-x: hidden;
-    }
-
-    section {
-      display: grid;
-      gap: 12px;
-    }
-
-    .settings-grid {
-      display: grid;
-      column-gap: 28px;
-      grid-template-columns: max-content max-content;
-      row-gap: 12px;
-    }
-
-    label {
-      display: grid;
-      gap: 5px;
-      font-size: 13px;
-      font-weight: 600;
-    }
-
-    .checkbox-label {
-      align-items: center;
-      display: flex;
-      gap: 8px;
-      min-height: 34px;
-      width: fit-content;
-    }
-
-    .checkbox-label.indented {
-      margin-left: 24px;
-    }
-
-    .logging-options {
-      display: grid;
-      gap: 6px;
-      grid-column: 1 / -1;
-      width: fit-content;
-    }
-
-    .logs-link-row {
-      margin-left: 24px;
-    }
-
-    .is-hidden {
-      display: none !important;
-    }
-
+    button,
     input,
-    select,
-    button {
+    select {
       font: inherit;
     }
 
-    input,
-    select {
-      box-sizing: border-box;
-      padding: 7px 8px;
-      width: 100%;
-    }
-
-    input[type="checkbox"] {
-      height: 16px;
-      margin: 0;
-      padding: 0;
-      width: 16px;
-    }
-
-    .settings-select {
-      width: 190px;
-    }
-
     button {
-      min-height: 32px;
-      padding: 5px 10px;
-    }
-
-    table {
-      border-collapse: collapse;
-      table-layout: fixed;
-      width: 100%;
-    }
-
-    th,
-    td {
-      border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, Canvas);
-      padding: 8px 4px;
-      text-align: left;
-      vertical-align: middle;
-    }
-
-    th {
-      font-size: 12px;
-      font-weight: 600;
-      text-transform: uppercase;
-    }
-
-    .target-column {
-      width: auto;
-    }
-
-    .rate-column {
-      width: 112px;
-    }
-
-    .actions-column {
-      width: 260px;
-    }
-
-    .actions {
-      display: flex;
-      gap: 5px;
-    }
-
-    .actions button {
-      padding-left: 8px;
-      padding-right: 8px;
-      white-space: nowrap;
-    }
-
-    .section-heading {
-      align-items: center;
-      display: flex;
-      justify-content: space-between;
-    }
-
-    .title-actions {
-      align-items: center;
-      display: flex;
-      gap: 12px;
-      min-width: 0;
-    }
-
-    .footer-left {
-      align-items: center;
-      display: flex;
-      gap: 12px;
-      min-width: 0;
-    }
-
-    .link-button {
-      background: none;
-      border: 0;
-      color: LinkText;
       cursor: pointer;
-      padding: 0;
-      text-decoration: underline;
     }
 
-    .status {
-      min-height: 20px;
-      min-width: 130px;
+    .app-shell {
+      display: grid;
+      grid-template-columns: 210px minmax(0, 1fr);
+      height: 100%;
+    }
+
+    .sidebar {
+      background: color-mix(in srgb, CanvasText 3%, Canvas);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      min-width: 0;
+      padding: 20px 14px;
+    }
+
+    .brand {
+      align-items: center;
+      display: flex;
+      gap: 10px;
+      padding: 0 8px 4px;
+    }
+
+    .brand-mark {
+      align-items: center;
+      background: var(--accent);
+      border-radius: 9px;
+      color: #061006;
+      display: flex;
+      font-size: 13px;
+      font-weight: 800;
+      height: 32px;
+      justify-content: center;
+      width: 32px;
+    }
+
+    .brand-copy {
+      min-width: 0;
+    }
+
+    .brand-title {
+      font-size: 14px;
+      font-weight: 650;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
-    .status.error {
-      color: #b42318;
+    .brand-version {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 1px;
+    }
+
+    .nav {
+      display: grid;
+      gap: 5px;
+    }
+
+    .nav-button {
+      align-items: center;
+      background: transparent;
+      border: 0;
+      border-radius: 8px;
+      color: CanvasText;
+      display: flex;
+      font-weight: 600;
+      gap: 10px;
+      padding: 10px 11px;
+      text-align: left;
+      width: 100%;
+    }
+
+    .nav-button:hover {
+      background: var(--surface-hover);
+    }
+
+    .nav-button.active {
+      background: var(--accent-soft);
+      color: color-mix(in srgb, var(--accent) 75%, CanvasText);
+    }
+
+    .nav-icon {
+      font-size: 16px;
+      line-height: 1;
+      text-align: center;
+      width: 20px;
+    }
+
+    .sidebar-footer {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+      margin-top: auto;
+      padding: 0 10px;
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      min-width: 0;
+      overflow: hidden;
+    }
+
+    .topbar {
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      min-height: 74px;
+      padding: 14px 24px;
+    }
+
+    .page-heading h1 {
+      font-size: 20px;
+      font-weight: 650;
+      margin: 0;
+    }
+
+    .page-heading p {
+      color: var(--muted);
+      font-size: 12px;
+      margin: 4px 0 0;
+    }
+
+    .save-status {
+      color: var(--muted);
+      font-size: 12px;
+      min-width: 100px;
+      text-align: right;
+    }
+
+    .save-status.error {
+      color: var(--danger);
+    }
+
+    .content-scroll {
+      overflow: auto;
+      padding: 22px 24px 30px;
+    }
+
+    .page {
+      display: none;
+      margin: 0 auto;
+      max-width: 1180px;
+    }
+
+    .page.active {
+      display: block;
+    }
+
+    .section {
+      margin-bottom: 26px;
+    }
+
+    .section-title {
+      align-items: end;
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .section-title h2 {
+      font-size: 15px;
+      font-weight: 650;
+      margin: 0;
+    }
+
+    .section-title p {
+      color: var(--muted);
+      font-size: 12px;
+      margin: 4px 0 0;
+    }
+
+    .settings-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(2, minmax(220px, 1fr));
+    }
+
+    .setting-card,
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 11px;
+    }
+
+    .setting-card {
+      display: grid;
+      gap: 9px;
+      padding: 15px;
+    }
+
+    .setting-card.wide {
+      grid-column: 1 / -1;
+    }
+
+    .setting-title {
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .setting-description {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    select,
+    input[type="text"],
+    input[type="search"],
+    input[type="number"] {
+      background: color-mix(in srgb, CanvasText 6%, Canvas);
+      border: 1px solid var(--border-strong);
+      border-radius: 7px;
+      color: CanvasText;
+      min-height: 36px;
+      outline: none;
+      padding: 7px 9px;
+      width: 100%;
+    }
+
+    select:focus,
+    input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-soft);
+    }
+
+    .toggle-row {
+      align-items: center;
+      display: flex;
+      gap: 10px;
+    }
+
+    input[type="checkbox"] {
+      accent-color: var(--accent);
+      height: 17px;
+      margin: 0;
+      width: 17px;
+    }
+
+    .button {
+      align-items: center;
+      background: color-mix(in srgb, CanvasText 8%, Canvas);
+      border: 1px solid var(--border-strong);
+      border-radius: 7px;
+      color: CanvasText;
+      display: inline-flex;
+      gap: 6px;
+      justify-content: center;
+      min-height: 34px;
+      padding: 6px 11px;
+    }
+
+    .button:hover {
+      background: color-mix(in srgb, CanvasText 12%, Canvas);
+    }
+
+    .button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #061006;
+      font-weight: 700;
+    }
+
+    .button.danger {
+      color: var(--danger);
+    }
+
+    .button.ghost {
+      background: transparent;
+      border-color: transparent;
+    }
+
+    .toolbar {
+      align-items: center;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px;
+      margin-bottom: 14px;
+    }
+
+    .search-wrap {
+      flex: 1 1 260px;
+      max-width: 440px;
+    }
+
+    .segments {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: flex;
+      gap: 2px;
+      padding: 3px;
+    }
+
+    .segment {
+      background: transparent;
+      border: 0;
+      border-radius: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      padding: 6px 9px;
+    }
+
+    .segment.active {
+      background: var(--surface-hover);
+      color: CanvasText;
+      font-weight: 650;
+    }
+
+    .games-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fill, minmax(205px, 1fr));
+    }
+
+    .game-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      color: CanvasText;
+      display: grid;
+      gap: 12px;
+      min-height: 176px;
+      padding: 14px;
+      position: relative;
+      text-align: left;
+      transition: border-color 120ms ease, transform 120ms ease, background 120ms ease;
+    }
+
+    .game-card:hover {
+      background: var(--surface-hover);
+      border-color: var(--border-strong);
+      transform: translateY(-1px);
+    }
+
+    .game-card.running {
+      border-color: color-mix(in srgb, var(--accent) 65%, var(--border));
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent);
+    }
+
+    .game-card-top {
+      align-items: flex-start;
+      display: flex;
+      gap: 11px;
+      min-width: 0;
+    }
+
+    .game-icon,
+    .modal-icon {
+      align-items: center;
+      background: color-mix(in srgb, CanvasText 8%, Canvas);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      display: flex;
+      flex: 0 0 auto;
+      font-size: 20px;
+      font-weight: 700;
+      height: 48px;
+      justify-content: center;
+      overflow: hidden;
+      width: 48px;
+    }
+
+    .game-icon img,
+    .modal-icon img {
+      height: 100%;
+      object-fit: contain;
+      width: 100%;
+    }
+
+    .game-title-wrap {
+      min-width: 0;
+    }
+
+    .game-title {
+      font-size: 14px;
+      font-weight: 650;
+      line-height: 1.25;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .game-exe {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 3px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 7px;
+    }
+
+    .badge {
+      background: color-mix(in srgb, CanvasText 7%, Canvas);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 750;
+      letter-spacing: .04em;
+      padding: 3px 6px;
+      text-transform: uppercase;
+    }
+
+    .badge.customized {
+      background: var(--accent-soft);
+      border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+      color: color-mix(in srgb, var(--accent) 75%, CanvasText);
+    }
+
+    .game-settings-summary {
+      color: var(--muted);
+      display: grid;
+      font-size: 11px;
+      gap: 4px;
+      margin-top: auto;
+    }
+
+    .game-live {
+      align-items: center;
+      display: flex;
+      font-size: 11px;
+      gap: 6px;
+    }
+
+    .status-dot {
+      background: color-mix(in srgb, CanvasText 28%, Canvas);
+      border-radius: 50%;
+      height: 7px;
+      width: 7px;
+    }
+
+    .game-card.running .status-dot {
+      background: var(--accent);
+      box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 60%, transparent);
+    }
+
+    .empty-state {
+      border: 1px dashed var(--border-strong);
+      border-radius: 12px;
+      color: var(--muted);
+      grid-column: 1 / -1;
+      padding: 32px 20px;
+      text-align: center;
+    }
+
+    .library-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .library-row {
+      align-items: center;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      display: grid;
+      gap: 10px;
+      grid-template-columns: 110px minmax(0, 1fr) auto;
+      min-height: 48px;
+      padding: 9px 11px;
+    }
+
+    .library-provider {
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .library-path {
+      color: var(--muted);
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .custom-folders {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .custom-folder {
+      align-items: center;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: flex;
+      gap: 10px;
+      justify-content: space-between;
+      padding: 8px 10px;
+    }
+
+    .custom-folder-path {
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .diagnostics-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+
+    .panel {
+      padding: 16px;
+    }
+
+    .panel h3 {
+      font-size: 13px;
+      margin: 0 0 8px;
+    }
+
+    .panel p {
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+      margin: 0 0 12px;
+    }
+
+    .actions-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    dialog {
+      background: Canvas;
+      border: 1px solid var(--border-strong);
+      border-radius: 13px;
+      color: CanvasText;
+      max-width: calc(100vw - 40px);
+      padding: 0;
+      width: 560px;
+    }
+
+    dialog::backdrop {
+      background: rgba(0, 0, 0, .55);
+      backdrop-filter: blur(2px);
+    }
+
+    .modal-header {
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 12px;
+      padding: 16px 18px;
+    }
+
+    .modal-title-wrap {
+      min-width: 0;
+    }
+
+    .modal-title {
+      font-size: 16px;
+      font-weight: 650;
+      margin: 0;
+    }
+
+    .modal-subtitle {
+      color: var(--muted);
+      font-size: 11px;
+      margin-top: 3px;
+    }
+
+    .modal-close {
+      margin-left: auto;
+    }
+
+    .modal-body {
+      display: grid;
+      gap: 14px;
+      padding: 17px 18px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .field label {
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .field-help {
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .path-field {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .modal-grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .modal-footer {
+      align-items: center;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      padding: 13px 18px;
+    }
+
+    .modal-footer .left-action {
+      margin-right: auto;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    @media (max-width: 850px) {
+      .app-shell {
+        grid-template-columns: 168px minmax(0, 1fr);
+      }
+
+      .settings-grid,
+      .diagnostics-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .setting-card.wide {
+        grid-column: auto;
+      }
+
+      .library-row {
+        grid-template-columns: 90px minmax(0, 1fr);
+      }
     }
   </style>
 </head>
 <body>
-  <header>
-    <h1>Settings</h1>
-    <div class="title-actions">
-      <div id="status" class="status"></div>
-    </div>
-  </header>
-  <main>
-    <section>
-      <h2>Behavior</h2>
-      <div class="settings-grid">
-        <label>
-          Inactive polling rate
-          <select id="inactive-rate" class="settings-select"></select>
-        </label>
-        <label>
-          Default game polling rate
-          <select id="default-game-rate" class="settings-select"></select>
-        </label>
-        <label>
-          Detection mode
-          <select id="detection-mode" class="settings-select">
-            <option value="foreground">Foreground window</option>
-            <option value="running">Running processes</option>
-          </select>
-        </label>
-        <label class="checkbox-label">
-          <input id="autostart" type="checkbox">
-          <span>Autostart</span>
-        </label>
-        <div class="logging-options">
-          <label class="checkbox-label">
-            <input id="diagnostic-logging" type="checkbox">
-            <span>Diagnostic logging</span>
-          </label>
-          <div id="diagnostic-logs-link-row" class="logs-link-row">
-            <button id="open-logs" class="link-button" type="button">Open diagnostic logs folder</button>
-          </div>
-          <label id="verbose-logging-label" class="checkbox-label indented">
-            <input id="verbose-diagnostic-logging" type="checkbox">
-            <span>Verbose diagnostic logging</span>
-          </label>
-          <div id="verbose-logs-link-row" class="logs-link-row">
-            <button id="open-logs-verbose" class="link-button" type="button">Open diagnostic logs folder</button>
-          </div>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">4K</div>
+        <div class="brand-copy">
+          <div class="brand-title">Auto Polling Rate</div>
+          <div id="app-version" class="brand-version"></div>
         </div>
       </div>
-    </section>
-    <section>
-      <div class="section-heading">
-        <h2>Polling Rules</h2>
-        <button id="add-rule" type="button">Add rule</button>
+
+      <nav class="nav">
+        <button class="nav-button active" data-page="general" type="button">
+          <span class="nav-icon">⚙</span><span>General</span>
+        </button>
+        <button class="nav-button" data-page="games" type="button">
+          <span class="nav-icon">▦</span><span>Games</span>
+        </button>
+        <button class="nav-button" data-page="libraries" type="button">
+          <span class="nav-icon">⌂</span><span>Game Libraries</span>
+        </button>
+        <button class="nav-button" data-page="diagnostics" type="button">
+          <span class="nav-icon">◉</span><span>Diagnostics</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        Changes save automatically.<br>
+        Explicit game overrides always win over automatic library detection.
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th class="target-column">Executable</th>
-            <th class="rate-column">Rate</th>
-            <th class="actions-column">Actions</th>
-          </tr>
-        </thead>
-        <tbody id="rules"></tbody>
-      </table>
-    </section>
-  </main>
-  <footer>
-    <div class="footer-left">
-      <button id="open-config" class="link-button" type="button">Open config.ini in Notepad</button>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div class="page-heading">
+          <h1 id="page-title">General</h1>
+          <p id="page-subtitle">Default polling and detection behavior.</p>
+        </div>
+        <div id="save-status" class="save-status"></div>
+      </header>
+
+      <div class="content-scroll">
+        <section id="page-general" class="page active">
+          <div class="section">
+            <div class="section-title">
+              <div>
+                <h2>Behavior</h2>
+                <p>Defaults used when a game does not have its own override.</p>
+              </div>
+            </div>
+            <div class="settings-grid">
+              <div class="setting-card">
+                <div class="setting-title">Inactive polling rate</div>
+                <div class="setting-description">Used when no configured or automatically detected game is active.</div>
+                <select id="inactive-rate"></select>
+              </div>
+
+              <div class="setting-card">
+                <div class="setting-title">Default game polling rate</div>
+                <div class="setting-description">Automatically detected games inherit this unless customized.</div>
+                <select id="default-game-rate"></select>
+              </div>
+
+              <div class="setting-card">
+                <div class="setting-title">Default detection mode</div>
+                <div class="setting-description">Individual games can override this when foreground detection is blocked by elevation.</div>
+                <select id="detection-mode">
+                  <option value="foreground">Foreground window</option>
+                  <option value="running">Running process</option>
+                </select>
+              </div>
+
+              <div class="setting-card">
+                <div class="setting-title">Startup</div>
+                <div class="setting-description">Launch the polling-rate switcher automatically with Windows.</div>
+                <label class="toggle-row">
+                  <input id="autostart" type="checkbox">
+                  <span>Start with Windows</span>
+                </label>
+              </div>
+
+              <div class="setting-card wide">
+                <div class="setting-title">Automatic game detection</div>
+                <div class="setting-description">Discover common Steam, Xbox, Epic, EA, GOG, Ubisoft, Riot, Rockstar, Amazon Games, itch.io and HoYoPlay library locations. Custom folders are always honored.</div>
+                <label class="toggle-row">
+                  <input id="auto-detect-games" type="checkbox">
+                  <span>Automatically detect game libraries</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="page-games" class="page">
+          <div class="section">
+            <div class="section-title">
+              <div>
+                <h2>Games</h2>
+                <p>Click a game to customize its polling rate or detection mode.</p>
+              </div>
+            </div>
+
+            <div class="toolbar">
+              <div class="search-wrap">
+                <input id="game-search" type="search" placeholder="Search games or executables">
+              </div>
+              <div class="segments">
+                <button class="segment active" data-filter="all" type="button">All</button>
+                <button class="segment" data-filter="customized" type="button">Customized</button>
+                <button class="segment" data-filter="auto" type="button">Auto-detected</button>
+              </div>
+              <button id="add-game" class="button primary" type="button">+ Add Game</button>
+            </div>
+
+            <div id="games-grid" class="games-grid"></div>
+          </div>
+        </section>
+
+        <section id="page-libraries" class="page">
+          <div class="section">
+            <div class="section-title">
+              <div>
+                <h2>Detected libraries</h2>
+                <p>Any foreground executable below these roots is treated as a game unless an explicit override wins first.</p>
+              </div>
+              <button id="rescan-libraries" class="button" type="button">Rescan</button>
+            </div>
+            <div id="library-list" class="library-list"></div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">
+              <div>
+                <h2>Custom game folders</h2>
+                <p>Add portable, standalone or launcher-specific libraries that automatic discovery misses.</p>
+              </div>
+              <button id="add-folder" class="button primary" type="button">+ Add Folder</button>
+            </div>
+            <div id="custom-folders" class="custom-folders"></div>
+          </div>
+        </section>
+
+        <section id="page-diagnostics" class="page">
+          <div class="diagnostics-grid">
+            <div class="panel">
+              <h3>Diagnostic logging</h3>
+              <p>Record process selection, polling state and USB activity while configured games are active.</p>
+              <label class="toggle-row">
+                <input id="diagnostic-logging" type="checkbox">
+                <span>Enable diagnostic logging</span>
+              </label>
+              <label id="verbose-row" class="toggle-row" style="margin-top:10px">
+                <input id="verbose-diagnostic-logging" type="checkbox">
+                <span>Verbose diagnostics</span>
+              </label>
+              <div class="actions-row" style="margin-top:14px">
+                <button id="open-logs" class="button" type="button">Open logs folder</button>
+              </div>
+            </div>
+
+            <div class="panel">
+              <h3>Advanced</h3>
+              <p>Polling-check interval is primarily for troubleshooting. The default is 1500 ms.</p>
+              <div class="field">
+                <label for="polling-interval">Polling check interval (ms)</label>
+                <input id="polling-interval" type="number" min="200" max="60000" step="100">
+              </div>
+              <div class="actions-row" style="margin-top:14px">
+                <button id="open-config" class="button" type="button">Open config.ini</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
     </div>
-  </footer>
+  </div>
+
+  <dialog id="game-dialog">
+    <div class="modal-header">
+      <div id="modal-icon" class="modal-icon">G</div>
+      <div class="modal-title-wrap">
+        <div id="modal-title" class="modal-title">Game</div>
+        <div id="modal-subtitle" class="modal-subtitle"></div>
+      </div>
+      <button id="modal-close" class="button ghost modal-close" type="button">✕</button>
+    </div>
+
+    <div class="modal-body">
+      <div class="field">
+        <label for="modal-executable">Executable</label>
+        <div class="path-field">
+          <input id="modal-executable" type="text" spellcheck="false">
+          <button id="modal-browse" class="button" type="button">Browse</button>
+        </div>
+        <div class="field-help">Full paths are preferred. Running-process mode can fall back to the executable name when Windows hides the path.</div>
+      </div>
+
+      <div class="modal-grid">
+        <div class="field">
+          <label for="modal-rate">Polling rate</label>
+          <select id="modal-rate"></select>
+        </div>
+        <div class="field">
+          <label for="modal-detection">Detection</label>
+          <select id="modal-detection">
+            <option value="default">Use default</option>
+            <option value="foreground">Foreground window</option>
+            <option value="running">Running process</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button id="modal-remove" class="button danger left-action hidden" type="button">Remove override</button>
+      <button id="modal-delete" class="button danger left-action hidden" type="button">Delete game</button>
+      <button id="modal-cancel" class="button" type="button">Cancel</button>
+      <button id="modal-apply" class="button primary" type="button">Apply</button>
+    </div>
+  </dialog>
 
   <script>
     const validRates = [125, 250, 500, 1000, 2000, 4000, 8000];
     const inactiveRates = [125, 250, 500, 1000];
-    const rulesBody = document.getElementById('rules');
-    const statusElement = document.getElementById('status');
-    const inactiveRateSelect = document.getElementById('inactive-rate');
-    const defaultGameRateSelect = document.getElementById('default-game-rate');
-    const detectionModeSelect = document.getElementById('detection-mode');
-    const autostartCheckbox = document.getElementById('autostart');
-    const diagnosticLoggingCheckbox = document.getElementById('diagnostic-logging');
-    const verboseDiagnosticLoggingCheckbox = document.getElementById('verbose-diagnostic-logging');
-    const verboseLoggingLabel = document.getElementById('verbose-logging-label');
-    const diagnosticLogsLinkRow = document.getElementById('diagnostic-logs-link-row');
-    const verboseLogsLinkRow = document.getElementById('verbose-logs-link-row');
-    let saveTimer = null;
-    let saveInProgress = false;
-    let saveQueued = false;
+    const pageInfo = {
+      general: ['General', 'Default polling and detection behavior.'],
+      games: ['Games', 'Automatic discoveries and per-game overrides.'],
+      libraries: ['Game Libraries', 'Detected launcher libraries and custom roots.'],
+      diagnostics: ['Diagnostics', 'Logging, troubleshooting and advanced settings.'],
+    };
+
+    const state = {
+      settings: null,
+      rules: [],
+      gameFolders: [],
+      libraries: [],
+      games: [],
+      runtime: null,
+      filter: 'all',
+      modalCard: null,
+      saveTimer: null,
+      saveInProgress: false,
+      saveQueued: false,
+    };
+
+    const byId = (id) => document.getElementById(id);
+    const statusElement = byId('save-status');
+    const gamesGrid = byId('games-grid');
+    const libraryList = byId('library-list');
+    const customFolders = byId('custom-folders');
+    const gameDialog = byId('game-dialog');
 
     function setStatus(message, isError = false) {
       statusElement.textContent = message;
       statusElement.classList.toggle('error', isError);
     }
 
-    function fillRateSelect(select, rates, value) {
+    function fillRateSelect(select, rates, value, includeDefault = false) {
       select.textContent = '';
+      if (includeDefault) {
+        const option = document.createElement('option');
+        option.value = 'default';
+        option.textContent = `Use default (${state.settings ? state.settings.defaultGamePollingRate : 1000} Hz)`;
+        select.appendChild(option);
+      }
+
       rates.forEach((rate) => {
         const option = document.createElement('option');
         option.value = String(rate);
         option.textContent = `${rate} Hz`;
-        option.selected = Number(value) === rate;
         select.appendChild(option);
       });
-    }
 
-    function createRateSelect(value) {
-      const select = document.createElement('select');
-      fillRateSelect(select, validRates, value);
-      return select;
-    }
-
-    function readRulesFromForm() {
-      return Array.from(rulesBody.querySelectorAll('tr')).map((row) => ({
-        target: row.querySelector('[data-field="target"]').value,
-        pollingRate: Number(row.querySelector('[data-field="rate"]').value),
-      }));
+      select.value = value === null || value === 'default' ? 'default' : String(value);
     }
 
     function readSettingsFromForm() {
       return {
-        inactivePollingRate: Number(inactiveRateSelect.value),
-        defaultGamePollingRate: Number(defaultGameRateSelect.value),
-        detectionMode: detectionModeSelect.value,
-        autostart: autostartCheckbox.checked,
-        diagnosticLogging: diagnosticLoggingCheckbox.checked,
-        verboseDiagnosticLogging: verboseDiagnosticLoggingCheckbox.checked,
+        inactivePollingRate: Number(byId('inactive-rate').value),
+        defaultGamePollingRate: Number(byId('default-game-rate').value),
+        detectionMode: byId('detection-mode').value,
+        autoDetectGames: byId('auto-detect-games').checked,
+        autostart: byId('autostart').checked,
+        diagnosticLogging: byId('diagnostic-logging').checked,
+        verboseDiagnosticLogging: byId('verbose-diagnostic-logging').checked,
+        pollingCheckIntervalMs: Number(byId('polling-interval').value) || 1500,
       };
     }
 
-    function updateVerboseLoggingState() {
-      const diagnosticEnabled = diagnosticLoggingCheckbox.checked;
-      verboseLoggingLabel.classList.toggle('is-hidden', !diagnosticEnabled);
-      diagnosticLogsLinkRow.classList.toggle('is-hidden', diagnosticEnabled);
-      verboseLogsLinkRow.classList.toggle('is-hidden', !diagnosticEnabled);
+    function applySettingsToForm() {
+      fillRateSelect(byId('inactive-rate'), inactiveRates, state.settings.inactivePollingRate);
+      fillRateSelect(byId('default-game-rate'), validRates, state.settings.defaultGamePollingRate);
+      byId('detection-mode').value = state.settings.detectionMode;
+      byId('auto-detect-games').checked = Boolean(state.settings.autoDetectGames);
+      byId('autostart').checked = Boolean(state.settings.autostart);
+      byId('diagnostic-logging').checked = Boolean(state.settings.diagnosticLogging);
+      byId('verbose-diagnostic-logging').checked = Boolean(state.settings.verboseDiagnosticLogging);
+      byId('polling-interval').value = state.settings.pollingCheckIntervalMs || 1500;
+      updateVerboseState();
     }
 
-    function scheduleSave(delay = 250) {
-      clearTimeout(saveTimer);
-      setStatus('Saving...');
-      saveTimer = setTimeout(() => {
-        saveTimer = null;
+    function updateVerboseState() {
+      byId('verbose-row').classList.toggle('hidden', !byId('diagnostic-logging').checked);
+    }
+
+    function scheduleSave(delay = 180) {
+      clearTimeout(state.saveTimer);
+      setStatus('Saving…');
+      state.saveTimer = setTimeout(() => {
+        state.saveTimer = null;
         saveSettings();
       }, delay);
     }
 
-    function moveRow(row, direction) {
-      if (direction < 0 && row.previousElementSibling) {
-        rulesBody.insertBefore(row, row.previousElementSibling);
-      } else if (direction > 0 && row.nextElementSibling) {
-        rulesBody.insertBefore(row.nextElementSibling, row);
+    async function saveSettings() {
+      if (state.saveInProgress) {
+        state.saveQueued = true;
+        return;
+      }
+
+      state.saveInProgress = true;
+      setStatus('Saving…');
+      try {
+        state.settings = readSettingsFromForm();
+        const result = await window.settingsApi.save({
+          settings: state.settings,
+          rules: state.rules,
+          gameFolders: state.gameFolders,
+        });
+
+        if (!result.ok) {
+          setStatus((result.warnings || ['Save failed']).join(' '), true);
+          return;
+        }
+
+        state.settings = result.settings;
+        state.rules = result.rules;
+        state.gameFolders = result.gameFolders;
+        setStatus('Saved');
+        renderGames();
+      } catch (error) {
+        setStatus(error.message, true);
+      } finally {
+        state.saveInProgress = false;
+        if (state.saveQueued) {
+          state.saveQueued = false;
+          scheduleSave(0);
+        }
       }
     }
 
-    function addRule(rule = {}) {
-      const row = document.createElement('tr');
-      const targetCell = document.createElement('td');
-      const rateCell = document.createElement('td');
-      const actionsCell = document.createElement('td');
-      const targetInput = document.createElement('input');
-      const rateSelect = createRateSelect(rule.pollingRate || Number(defaultGameRateSelect.value) || 1000);
-      const actions = document.createElement('div');
+    function switchPage(name) {
+      document.querySelectorAll('.nav-button').forEach((button) => {
+        button.classList.toggle('active', button.dataset.page === name);
+      });
+      document.querySelectorAll('.page').forEach((page) => {
+        page.classList.toggle('active', page.id === `page-${name}`);
+      });
+      const [title, subtitle] = pageInfo[name];
+      byId('page-title').textContent = title;
+      byId('page-subtitle').textContent = subtitle;
+    }
 
-      targetInput.dataset.field = 'target';
-      targetInput.placeholder = 'process.exe or C:\\path\\process.exe';
-      targetInput.value = rule.target || '';
-      rateSelect.dataset.field = 'rate';
-      actions.className = 'actions';
+    function normalizedPath(value) {
+      return String(value || '').replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase();
+    }
 
-      [
-        ['Browse', async () => {
-          const selectedPath = await window.settingsApi.browseExecutable();
-          if (selectedPath) {
-            targetInput.value = selectedPath;
-            scheduleSave(0);
-          }
-        }],
-        ['Up', () => {
-          moveRow(row, -1);
-          scheduleSave(0);
-        }],
-        ['Down', () => {
-          moveRow(row, 1);
-          scheduleSave(0);
-        }],
-        ['Delete', () => {
-          row.remove();
-          scheduleSave(0);
-        }],
-      ].forEach(([label, handler]) => {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.textContent = label;
-        button.addEventListener('click', handler);
-        actions.appendChild(button);
+    function cardMatchesRuntime(card) {
+      const runtime = state.runtime;
+      if (!runtime || !runtime.enabled || !runtime.matchedProcess) {
+        return false;
+      }
+
+      if (card.id && runtime.gameId && card.id === runtime.gameId) {
+        return true;
+      }
+
+      if (card.executablePath && runtime.executablePath
+        && normalizedPath(card.executablePath) === normalizedPath(runtime.executablePath)) {
+        return true;
+      }
+
+      const cardProcess = String(card.processName || '').toLowerCase();
+      const runtimeProcess = String(runtime.processName || runtime.matchedProcess || '').toLowerCase();
+      return Boolean(cardProcess && runtimeProcess && cardProcess === runtimeProcess);
+    }
+
+    function createGameIcon(card, large = false) {
+      const icon = document.createElement('div');
+      icon.className = large ? 'modal-icon' : 'game-icon';
+      if (card.iconDataUrl) {
+        const image = document.createElement('img');
+        image.src = card.iconDataUrl;
+        image.alt = '';
+        icon.appendChild(image);
+      } else {
+        icon.textContent = (card.name || 'G').trim().charAt(0).toUpperCase() || 'G';
+      }
+      return icon;
+    }
+
+    function getRateLabel(card) {
+      return card.pollingRate === null || card.pollingRate === undefined
+        ? `Default · ${state.settings.defaultGamePollingRate} Hz`
+        : `${card.pollingRate} Hz`;
+    }
+
+    function getDetectionLabel(card) {
+      if (!card.detectionMode || card.detectionMode === 'default') {
+        return `Default · ${state.settings.detectionMode === 'running' ? 'Running process' : 'Foreground'}`;
+      }
+      return card.detectionMode === 'running' ? 'Running process' : 'Foreground';
+    }
+
+    function renderGames() {
+      gamesGrid.textContent = '';
+      const query = byId('game-search').value.trim().toLowerCase();
+
+      const visible = state.games.filter((card) => {
+        if (state.filter === 'customized' && !card.customized) {
+          return false;
+        }
+        if (state.filter === 'auto' && card.kind !== 'auto') {
+          return false;
+        }
+
+        if (!query) {
+          return true;
+        }
+
+        return [card.name, card.processName, card.executablePath, card.source]
+          .some((value) => String(value || '').toLowerCase().includes(query));
       });
 
-      targetCell.appendChild(targetInput);
-      rateCell.appendChild(rateSelect);
-      actionsCell.appendChild(actions);
-      row.append(targetCell, rateCell, actionsCell);
-      rulesBody.appendChild(row);
+      if (visible.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'empty-state';
+        empty.textContent = state.games.length === 0
+          ? 'No games discovered yet. Add a game manually or rescan your game libraries.'
+          : 'No games match this filter.';
+        gamesGrid.appendChild(empty);
+        return;
+      }
+
+      visible.forEach((card) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'game-card';
+        const running = cardMatchesRuntime(card);
+        button.classList.toggle('running', running);
+
+        const top = document.createElement('div');
+        top.className = 'game-card-top';
+        top.appendChild(createGameIcon(card));
+
+        const titleWrap = document.createElement('div');
+        titleWrap.className = 'game-title-wrap';
+
+        const title = document.createElement('div');
+        title.className = 'game-title';
+        title.textContent = card.name || card.processName || 'Game';
+
+        const exe = document.createElement('div');
+        exe.className = 'game-exe';
+        exe.textContent = card.processName || card.executablePath || 'Executable not resolved';
+
+        const badges = document.createElement('div');
+        badges.className = 'badges';
+
+        const source = document.createElement('span');
+        source.className = 'badge';
+        source.textContent = card.source || 'Manual';
+        badges.appendChild(source);
+
+        if (card.customized) {
+          const customized = document.createElement('span');
+          customized.className = 'badge customized';
+          customized.textContent = 'Customized';
+          badges.appendChild(customized);
+        }
+
+        titleWrap.append(title, exe, badges);
+        top.appendChild(titleWrap);
+
+        const summary = document.createElement('div');
+        summary.className = 'game-settings-summary';
+
+        const rate = document.createElement('div');
+        rate.textContent = getRateLabel(card);
+
+        const detection = document.createElement('div');
+        detection.textContent = getDetectionLabel(card);
+
+        const live = document.createElement('div');
+        live.className = 'game-live';
+        const dot = document.createElement('span');
+        dot.className = 'status-dot';
+        const liveText = document.createElement('span');
+        liveText.textContent = running
+          ? `Running · ${state.runtime.targetRate || state.runtime.requestedTarget || getRateLabel(card)} Hz active`
+          : 'Not running';
+        live.append(dot, liveText);
+
+        summary.append(rate, detection, live);
+        button.append(top, summary);
+        button.addEventListener('click', () => openGameDialog(card));
+        gamesGrid.appendChild(button);
+      });
+    }
+
+    async function flushSave() {
+      clearTimeout(state.saveTimer);
+      state.saveTimer = null;
+
+      // If a debounced/background save is still in flight, queue the newest form
+      // state and wait for the serialized save chain to drain before rescanning.
+      if (state.saveInProgress) {
+        state.saveQueued = true;
+        while (state.saveInProgress || state.saveQueued) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        return;
+      }
+
+      await saveSettings();
+      while (state.saveInProgress || state.saveQueued) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    }
+
+    function renderLibraries() {
+      libraryList.textContent = '';
+      if (state.libraries.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'empty-state';
+        empty.textContent = 'No game-library roots detected. Add a custom folder below.';
+        libraryList.appendChild(empty);
+      } else {
+        state.libraries.forEach((library) => {
+          const row = document.createElement('div');
+          row.className = 'library-row';
+
+          const provider = document.createElement('div');
+          provider.className = 'library-provider';
+          provider.textContent = library.name;
+
+          const libraryPath = document.createElement('div');
+          libraryPath.className = 'library-path';
+          libraryPath.title = library.root;
+          libraryPath.textContent = library.root;
+
+          const badge = document.createElement('span');
+          badge.className = 'badge';
+          badge.textContent = library.custom ? 'Custom' : 'Detected';
+
+          row.append(provider, libraryPath, badge);
+          libraryList.appendChild(row);
+        });
+      }
+
+      customFolders.textContent = '';
+      if (state.gameFolders.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'empty-state';
+        empty.textContent = 'No custom folders.';
+        customFolders.appendChild(empty);
+      } else {
+        state.gameFolders.forEach((folder, index) => {
+          const row = document.createElement('div');
+          row.className = 'custom-folder';
+
+          const text = document.createElement('div');
+          text.className = 'custom-folder-path';
+          text.title = folder;
+          text.textContent = folder;
+
+          const remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'button danger';
+          remove.textContent = 'Remove';
+          remove.addEventListener('click', async () => {
+            state.gameFolders.splice(index, 1);
+            renderLibraries();
+            await flushSave();
+            await rescanLibraries();
+          });
+
+          row.append(text, remove);
+          customFolders.appendChild(row);
+        });
+      }
+    }
+
+    function findRuleIndexForCard(card) {
+      const preferredTarget = String(card.overrideTarget || '').toLowerCase();
+      if (preferredTarget) {
+        const index = state.rules.findIndex((rule) => String(rule.target || '').toLowerCase() === preferredTarget);
+        if (index >= 0) {
+          return index;
+        }
+      }
+
+      const exe = normalizedPath(card.executablePath);
+      const processName = String(card.processName || '').toLowerCase();
+      return state.rules.findIndex((rule) => {
+        const target = String(rule.target || '');
+        if (exe && normalizedPath(target) === exe) {
+          return true;
+        }
+        return processName && target.toLowerCase() === processName;
+      });
+    }
+
+    function setModalIcon(card) {
+      const slot = byId('modal-icon');
+      slot.textContent = '';
+      if (card.iconDataUrl) {
+        const image = document.createElement('img');
+        image.src = card.iconDataUrl;
+        image.alt = '';
+        slot.appendChild(image);
+      } else {
+        slot.textContent = (card.name || 'G').charAt(0).toUpperCase();
+      }
+    }
+
+    function openGameDialog(card) {
+      state.modalCard = card;
+      setModalIcon(card);
+      byId('modal-title').textContent = card.name || card.processName || 'Game';
+      byId('modal-subtitle').textContent = `${card.source || 'Manual'} · ${card.kind === 'auto' ? 'Automatically detected' : 'Manual game'}`;
+      byId('modal-executable').value = card.overrideTarget || card.executablePath || card.processName || '';
+      fillRateSelect(byId('modal-rate'), validRates, card.pollingRate, true);
+      byId('modal-detection').value = card.detectionMode || 'default';
+      byId('modal-remove').classList.toggle('hidden', card.kind !== 'auto' || !card.customized);
+      byId('modal-delete').classList.toggle('hidden', card.kind !== 'manual');
+      gameDialog.showModal();
+    }
+
+    function closeGameDialog() {
+      state.modalCard = null;
+      gameDialog.close();
+    }
+
+    function upsertRule(target, pollingRate, detectionMode) {
+      const card = state.modalCard;
+      const index = card ? findRuleIndexForCard(card) : -1;
+      const rule = { target, pollingRate, detectionMode };
+      if (index >= 0) {
+        state.rules[index] = rule;
+      } else {
+        state.rules.push(rule);
+      }
+    }
+
+    function removeRuleForCard(card) {
+      const index = findRuleIndexForCard(card);
+      if (index >= 0) {
+        state.rules.splice(index, 1);
+      }
+    }
+
+    function applyModalChanges() {
+      const card = state.modalCard;
+      if (!card) {
+        return;
+      }
+
+      const target = byId('modal-executable').value.trim();
+      if (!target) {
+        setStatus('Choose an executable first.', true);
+        return;
+      }
+
+      const rateValue = byId('modal-rate').value;
+      const pollingRate = rateValue === 'default' ? null : Number(rateValue);
+      const detectionMode = byId('modal-detection').value;
+
+      if (card.kind === 'auto' && pollingRate === null && detectionMode === 'default'
+        && normalizedPath(target) === normalizedPath(card.executablePath)) {
+        removeRuleForCard(card);
+        card.customized = false;
+        card.pollingRate = null;
+        card.detectionMode = 'default';
+        card.overrideTarget = null;
+      } else {
+        upsertRule(target, pollingRate, detectionMode);
+        card.customized = true;
+        card.pollingRate = pollingRate;
+        card.detectionMode = detectionMode;
+        card.overrideTarget = target;
+        card.executablePath = /^[a-z]:\\/i.test(target) ? target : card.executablePath;
+        card.processName = target.split(/[\\/]/).pop();
+      }
+
+      closeGameDialog();
+      renderGames();
+      scheduleSave(0);
+    }
+
+    async function browseModalExecutable() {
+      const selected = await window.settingsApi.browseExecutable();
+      if (!selected) {
+        return;
+      }
+
+      byId('modal-executable').value = selected.path;
+      if (selected.iconDataUrl) {
+        state.modalCard.iconDataUrl = selected.iconDataUrl;
+        setModalIcon(state.modalCard);
+      }
+    }
+
+    async function addGame() {
+      const selected = await window.settingsApi.browseExecutable();
+      if (!selected) {
+        return;
+      }
+
+      const existing = state.games.find((game) => normalizedPath(game.executablePath) === normalizedPath(selected.path));
+      if (existing) {
+        openGameDialog(existing);
+        return;
+      }
+
+      const card = {
+        id: `manual:${normalizedPath(selected.path)}`,
+        name: selected.name || selected.processName,
+        source: 'Manual',
+        provider: 'manual',
+        executablePath: selected.path,
+        processName: selected.processName,
+        autoDetected: false,
+        kind: 'manual',
+        customized: true,
+        pollingRate: null,
+        detectionMode: 'default',
+        overrideTarget: selected.path,
+        iconDataUrl: selected.iconDataUrl,
+      };
+
+      state.games.push(card);
+      state.rules.push({
+        target: selected.path,
+        pollingRate: null,
+        detectionMode: 'default',
+      });
+      renderGames();
+      scheduleSave(0);
+      openGameDialog(card);
+    }
+
+    async function addCustomFolder() {
+      const folder = await window.settingsApi.browseFolder();
+      if (!folder) {
+        return;
+      }
+
+      if (!state.gameFolders.some((item) => normalizedPath(item) === normalizedPath(folder))) {
+        state.gameFolders.push(folder);
+        renderLibraries();
+        await flushSave();
+      }
+      await rescanLibraries();
+    }
+
+    async function rescanLibraries() {
+      setStatus('Scanning libraries…');
+      try {
+        const result = await window.settingsApi.rescanLibraries();
+        state.libraries = result.libraries || [];
+        state.games = result.games || [];
+        renderLibraries();
+        renderGames();
+        setStatus('Scan complete');
+      } catch (error) {
+        setStatus(error.message, true);
+      }
+    }
+
+    async function refreshRuntime() {
+      try {
+        state.runtime = await window.settingsApi.getRuntimeStatus();
+        renderGames();
+      } catch {
+        // Settings may be closing; no action required.
+      }
     }
 
     async function loadSettings() {
       const result = await window.settingsApi.load();
-      fillRateSelect(inactiveRateSelect, inactiveRates, result.settings.inactivePollingRate);
-      fillRateSelect(defaultGameRateSelect, validRates, result.settings.defaultGamePollingRate);
-      detectionModeSelect.value = result.settings.detectionMode;
-      autostartCheckbox.checked = Boolean(result.settings.autostart);
-      diagnosticLoggingCheckbox.checked = Boolean(result.settings.diagnosticLogging);
-      verboseDiagnosticLoggingCheckbox.checked = Boolean(result.settings.verboseDiagnosticLogging);
-      updateVerboseLoggingState();
-      rulesBody.textContent = '';
-      result.rules.forEach(addRule);
+      state.settings = result.settings;
+      state.rules = result.rules || [];
+      state.gameFolders = result.gameFolders || [];
+      state.libraries = result.libraries || [];
+      state.games = result.games || [];
+      state.runtime = result.runtime || null;
+      byId('app-version').textContent = result.appVersion ? `v${result.appVersion}` : '';
+
+      applySettingsToForm();
+      renderLibraries();
+      renderGames();
       setStatus(result.warnings && result.warnings.length ? result.warnings.join(' ') : '');
     }
 
-    async function saveSettings() {
-      if (saveInProgress) {
-        saveQueued = true;
-        return;
-      }
+    document.querySelectorAll('.nav-button').forEach((button) => {
+      button.addEventListener('click', () => switchPage(button.dataset.page));
+    });
 
-      saveInProgress = true;
-      setStatus('Saving...');
-      try {
-        const result = await window.settingsApi.save({
-          settings: readSettingsFromForm(),
-          rules: readRulesFromForm(),
+    document.querySelectorAll('.segment').forEach((button) => {
+      button.addEventListener('click', () => {
+        state.filter = button.dataset.filter;
+        document.querySelectorAll('.segment').forEach((item) => {
+          item.classList.toggle('active', item === button);
         });
-        if (!result.ok) {
-          setStatus(result.warnings.join(' '), true);
-          return;
-        }
+        renderGames();
+      });
+    });
 
-        setStatus('Saved');
-      } catch (error) {
-        setStatus(error.message, true);
-      } finally {
-        saveInProgress = false;
-        if (saveQueued) {
-          saveQueued = false;
+    ['inactive-rate', 'default-game-rate', 'detection-mode', 'autostart',
+      'auto-detect-games', 'diagnostic-logging', 'verbose-diagnostic-logging', 'polling-interval']
+      .forEach((id) => byId(id).addEventListener('change', async () => {
+        if (id === 'diagnostic-logging') {
+          updateVerboseState();
+        }
+        if (id === 'auto-detect-games') {
+          await flushSave();
+          await rescanLibraries();
+        } else {
           scheduleSave(0);
         }
-      }
-    }
+        if (id === 'default-game-rate') {
+          renderGames();
+        }
+      }));
 
-    document.getElementById('add-rule').addEventListener('click', () => addRule());
-    document.getElementById('open-config').addEventListener('click', () => window.settingsApi.openConfig());
-    document.getElementById('open-logs').addEventListener('click', () => window.settingsApi.openLogs());
-    document.getElementById('open-logs-verbose').addEventListener('click', () => window.settingsApi.openLogs());
+    byId('game-search').addEventListener('input', renderGames);
+    byId('add-game').addEventListener('click', addGame);
+    byId('add-folder').addEventListener('click', addCustomFolder);
+    byId('rescan-libraries').addEventListener('click', rescanLibraries);
+    byId('open-config').addEventListener('click', () => window.settingsApi.openConfig());
+    byId('open-logs').addEventListener('click', () => window.settingsApi.openLogs());
 
-    [inactiveRateSelect, defaultGameRateSelect, detectionModeSelect, autostartCheckbox,
-      diagnosticLoggingCheckbox, verboseDiagnosticLoggingCheckbox].forEach((control) => {
-      control.addEventListener('change', () => scheduleSave(0));
+    byId('modal-close').addEventListener('click', closeGameDialog);
+    byId('modal-cancel').addEventListener('click', closeGameDialog);
+    byId('modal-browse').addEventListener('click', browseModalExecutable);
+    byId('modal-apply').addEventListener('click', applyModalChanges);
+    byId('modal-remove').addEventListener('click', () => {
+      const card = state.modalCard;
+      if (!card) return;
+      removeRuleForCard(card);
+      card.customized = false;
+      card.pollingRate = null;
+      card.detectionMode = 'default';
+      card.overrideTarget = null;
+      closeGameDialog();
+      renderGames();
+      scheduleSave(0);
+    });
+    byId('modal-delete').addEventListener('click', () => {
+      const card = state.modalCard;
+      if (!card) return;
+      removeRuleForCard(card);
+      state.games = state.games.filter((item) => item !== card);
+      closeGameDialog();
+      renderGames();
+      scheduleSave(0);
     });
 
-    rulesBody.addEventListener('change', (event) => {
-      if (event.target.matches('[data-field="rate"]')) {
-        scheduleSave(0);
+    gameDialog.addEventListener('click', (event) => {
+      if (event.target === gameDialog) {
+        closeGameDialog();
       }
     });
 
-    rulesBody.addEventListener('input', (event) => {
-      if (event.target.matches('[data-field="target"]')) {
-        scheduleSave(250);
-      }
-    });
-
-    diagnosticLoggingCheckbox.addEventListener('change', updateVerboseLoggingState);
-    loadSettings().catch((error) => setStatus(error.message, true));
+    loadSettings()
+      .then(() => setInterval(refreshRuntime, 1200))
+      .catch((error) => setStatus(error.message, true));
   </script>
 </body>
 </html>
