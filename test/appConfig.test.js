@@ -13,35 +13,40 @@ const {
 } = require('../src/lib/appConfig');
 const { parseProcessConfig } = require('../src/lib/config');
 
-test('config.ini serializes settings and ordered rules', () => {
+test('config.ini serializes settings, game folders and ordered rules', () => {
   const { entries } = parseProcessConfig([
-    'r5apex.exe 4000',
-    '"C:\\Games\\Quake Live\\quake_live_x64.exe" 1000',
+    'r5apex.exe 4000 running',
+    '"C:\\Games\\Quake Live\\quake_live_x64.exe" default',
   ].join('\n'));
   const contents = serializeAppConfig({
     inactivePollingRate: 500,
     defaultGamePollingRate: 2000,
     detectionMode: 'running',
+    autoDetectGames: false,
     autostart: false,
     diagnosticLogging: true,
     verboseDiagnosticLogging: true,
     pollingCheckIntervalMs: 500,
-  }, entries);
+  }, entries, ['D:\\Games', 'E:\\Portable Games']);
 
   assert.match(contents, /\[settings\]/);
   assert.match(contents, /inactive_polling_rate=500/);
   assert.match(contents, /default_game_polling_rate=2000/);
   assert.match(contents, /detection_mode=running/);
+  assert.match(contents, /auto_detect_games=false/);
   assert.match(contents, /autostart=false/);
   assert.match(contents, /diagnostic_logging=true/);
   assert.match(contents, /verbose_diagnostic_logging=true/);
   assert.match(contents, /polling_check_interval_ms=500/);
+  assert.match(contents, /\[game_folders\]/);
+  assert.match(contents, /1=D:\\Games/);
+  assert.match(contents, /2=E:\\Portable Games/);
   assert.match(contents, /\[rules\]/);
-  assert.match(contents, /1=r5apex.exe 4000/);
-  assert.match(contents, /2="C:\\Games\\Quake Live\\quake_live_x64.exe" 1000/);
+  assert.match(contents, /1=r5apex.exe 4000 running/);
+  assert.match(contents, /2="C:\\Games\\Quake Live\\quake_live_x64.exe" default/);
 });
 
-test('config.ini reads settings and rules back', () => {
+test('config.ini reads settings, folders and rules back', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'rapr-config-'));
   const configPath = path.join(directory, 'config.ini');
 
@@ -50,39 +55,53 @@ test('config.ini reads settings and rules back', () => {
     'inactive_polling_rate=250',
     'default_game_polling_rate=8000',
     'detection_mode=foreground',
+    'auto_detect_games=true',
     'autostart=true',
     'diagnostic_logging=true',
     'verbose_diagnostic_logging=false',
     'polling_check_interval_ms=200',
     '',
+    '[game_folders]',
+    '2=E:\\Portable Games',
+    '1=D:\\Games',
+    '',
     '[rules]',
-    '2=quake_live_x64.exe 1000',
+    '2=quake_live_x64.exe default running',
     '1=r5apex.exe 4000',
     '',
   ].join('\n'));
 
-  const { settings, entries, warnings } = readAppConfig(configPath);
+  const {
+    settings,
+    entries,
+    gameFolders,
+    warnings,
+  } = readAppConfig(configPath);
 
   assert.deepEqual(settings, {
     inactivePollingRate: 250,
     defaultGamePollingRate: 8000,
     detectionMode: 'foreground',
+    autoDetectGames: true,
     autostart: true,
     diagnosticLogging: true,
     verboseDiagnosticLogging: false,
     pollingCheckIntervalMs: 200,
   });
+  assert.deepEqual(gameFolders, ['D:\\Games', 'E:\\Portable Games']);
   assert.deepEqual(entries.map((entry) => entry.rawTarget), ['r5apex.exe', 'quake_live_x64.exe']);
-  assert.deepEqual(entries.map((entry) => entry.pollingRate), [4000, 1000]);
+  assert.equal(entries[1].usesDefaultPollingRate, true);
+  assert.equal(entries[1].detectionMode, 'running');
   assert.deepEqual(warnings, []);
 });
 
-test('missing config.ini uses default settings', () => {
+test('missing config.ini uses default settings and no folders', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'rapr-config-'));
-  const { settings, entries } = readAppConfig(path.join(directory, 'config.ini'));
+  const { settings, entries, gameFolders } = readAppConfig(path.join(directory, 'config.ini'));
 
   assert.deepEqual(settings, DEFAULT_SETTINGS);
   assert.deepEqual(entries, []);
+  assert.deepEqual(gameFolders, []);
 });
 
 test('verbose diagnostic logging can stay selected while diagnostic logging is off', () => {
@@ -97,7 +116,6 @@ test('verbose diagnostic logging can stay selected while diagnostic logging is o
   ].join('\n'));
 
   const { settings } = readAppConfig(configPath);
-
   assert.equal(settings.diagnosticLogging, false);
   assert.equal(settings.verboseDiagnosticLogging, true);
 });
@@ -118,13 +136,14 @@ test('writeAppConfig writes a readable config.ini', () => {
     inactivePollingRate: 1000,
     defaultGamePollingRate: 1000,
     detectionMode: 'foreground',
+    autoDetectGames: true,
     autostart: true,
     diagnosticLogging: false,
     verboseDiagnosticLogging: false,
-  }, entries);
+  }, entries, ['D:\\Games']);
 
   const readBack = readAppConfig(configPath);
-
   assert.equal(readBack.settings.inactivePollingRate, 1000);
   assert.equal(readBack.entries[0].processName, 'r5apex.exe');
+  assert.deepEqual(readBack.gameFolders, ['D:\\Games']);
 });
