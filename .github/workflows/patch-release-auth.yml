@@ -192,8 +192,7 @@ jobs:
           $allowed = @(
             '.github/workflows/release.yml',
             '.github/workflows/scoop-excavator.yml',
-            'RELEASING.md',
-            '.github/workflows/patch-release-auth.yml'
+            'RELEASING.md'
           )
           $unexpected = @($changed | Where-Object { $_ -notin $allowed })
           if ($unexpected.Count -gt 0) {
@@ -205,20 +204,25 @@ jobs:
             throw 'git diff --check failed'
           }
 
-      - name: Commit authentication fix
+      - name: Stage patched blobs for connector commit
         shell: pwsh
         run: |
-          Remove-Item -LiteralPath '.github/workflows/patch-release-auth.yml'
+          New-Item -ItemType Directory -Force -Path '.release-auth-patch' | Out-Null
+          Copy-Item '.github/workflows/release.yml' '.release-auth-patch/release.yml'
+          Copy-Item '.github/workflows/scoop-excavator.yml' '.release-auth-patch/scoop-excavator.yml'
+          Copy-Item 'RELEASING.md' '.release-auth-patch/RELEASING.md'
+
+          git restore .github/workflows/release.yml .github/workflows/scoop-excavator.yml RELEASING.md
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/workflows/release.yml .github/workflows/scoop-excavator.yml RELEASING.md .github/workflows/patch-release-auth.yml
-          git commit -m "Fix release authentication fallback"
+          git add .release-auth-patch
+          git commit -m "Stage validated release authentication patch"
           if ($LASTEXITCODE -ne 0) {
-            throw 'Unable to commit release authentication fix'
+            throw 'Unable to commit staged patch blobs'
           }
 
           git push origin HEAD:marc/fix-release-auth
           if ($LASTEXITCODE -ne 0) {
-            throw 'Unable to push release authentication fix'
+            throw 'Unable to push staged patch blobs'
           }
