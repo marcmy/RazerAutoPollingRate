@@ -30,6 +30,6 @@ If a run fails after creating the release branch or pull request, rerun the work
 
 ## Authentication
 
-The release workflow uses GitHub Actions' repository-scoped GITHUB_TOKEN for all operations inside RazerAutoPollingRate, including release branches, pull requests, CI dispatch, merging, tags, and release publication. A personal access token is not required for those operations.
+The release workflow uses GitHub Actions' repository-scoped `GITHUB_TOKEN` for all operations inside `RazerAutoPollingRate`, including release branches, pull requests, CI dispatch, merging, tags, and release publication. A personal access token is not required for those operations.
 
 `SCOOP_BUCKET_TOKEN`, `GH_PAT`, or `PAT` is only an optional fast-path for immediately dispatching the Excavator in `marcmy/scoop-bucket`. If that token is missing, expired, or lacks Actions access, the release still succeeds and the bucket's scheduled Excavator picks up the new release automatically.
