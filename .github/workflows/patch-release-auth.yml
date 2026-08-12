@@ -1,0 +1,234 @@
+name: Patch release authentication
+
+on:
+  push:
+    branches:
+      - marc/fix-release-auth
+    paths:
+      - .github/workflows/patch-release-auth.yml
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: read
+
+jobs:
+  patch:
+    runs-on: windows-2022
+    steps:
+      - name: Check out patch branch
+        uses: actions/checkout@v7
+        with:
+          ref: marc/fix-release-auth
+          fetch-depth: 0
+
+      - name: Verify built-in repository token
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$env:GITHUB_REPOSITORY" --jq .full_name
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Built-in GITHUB_TOKEN cannot read this repository'
+          }
+
+          gh workflow list --repo $env:GITHUB_REPOSITORY --limit 10 *> $null
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Built-in GITHUB_TOKEN cannot read repository workflows'
+          }
+
+          gh pr list --repo $env:GITHUB_REPOSITORY --limit 1 *> $null
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Built-in GITHUB_TOKEN cannot read pull requests'
+          }
+
+      - name: Patch release authentication
+        shell: pwsh
+        run: |
+          $path = '.github/workflows/release.yml'
+          $content = (Get-Content -LiteralPath $path -Raw).Replace("`r`n", "`n")
+
+          $prepareOld = @'
+  prepare-release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-2022
+    outputs:
+'@.Replace("`r`n", "`n")
+
+          $prepareNew = @'
+  prepare-release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-2022
+    env:
+      GH_TOKEN: ${{ github.token }}
+    outputs:
+'@.Replace("`r`n", "`n")
+
+          if (-not $content.Contains($prepareOld)) {
+            throw 'Unable to locate prepare-release header'
+          }
+          $content = $content.Replace($prepareOld, $prepareNew)
+
+          $credentialsBlock = @'
+      - name: Configure release automation credentials
+        shell: pwsh
+        env:
+          RELEASE_AUTOMATION_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.SCOOP_BUCKET_TOKEN || secrets.GH_PAT || secrets.PAT }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:RELEASE_AUTOMATION_TOKEN)) {
+            throw 'No release automation token configured. Add RELEASE_TOKEN, SCOOP_BUCKET_TOKEN, GH_PAT, or PAT.'
+          }
+
+          "GH_TOKEN=$env:RELEASE_AUTOMATION_TOKEN" >> $env:GITHUB_ENV
+
+'@.Replace("`r`n", "`n")
+
+          if (-not $content.Contains($credentialsBlock)) {
+            throw 'Unable to locate obsolete release credential block'
+          }
+          $content = $content.Replace($credentialsBlock, '')
+
+          if ($content.Contains('RELEASE_AUTOMATION_TOKEN')) {
+            throw 'Obsolete release automation token reference still exists'
+          }
+          if (-not $content.Contains('GH_TOKEN: ${{ github.token }}')) {
+            throw 'Built-in GITHUB_TOKEN was not added to prepare-release'
+          }
+
+          [IO.File]::WriteAllText(
+            (Resolve-Path $path).Path,
+            $content,
+            [Text.UTF8Encoding]::new($false)
+          )
+
+      - name: Make Scoop fast-path non-fatal
+        shell: pwsh
+        run: |
+          $path = '.github/workflows/scoop-excavator.yml'
+          $content = (Get-Content -LiteralPath $path -Raw).Replace("`r`n", "`n")
+
+          $old = @'
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+            Write-Host "No cross-repo token secret configured; skipping scoop-bucket Excavator trigger. Add SCOOP_BUCKET_TOKEN, GH_PAT, or PAT with repo/workflow access to enable this."
+            exit 0
+          }
+
+          gh workflow run excavator.yml --repo marcmy/scoop-bucket --ref master
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to trigger scoop-bucket Excavator"
+          }
+'@.Replace("`r`n", "`n")
+
+          $new = @'
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+            Write-Warning "No cross-repo token is configured. Skipping the immediate Scoop trigger; the scheduled Excavator in marcmy/scoop-bucket will pick up the release automatically."
+            exit 0
+          }
+
+          gh workflow run excavator.yml --repo marcmy/scoop-bucket --ref master
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Immediate Scoop trigger failed. The cross-repo token may be expired or lack Actions access; the scheduled Excavator in marcmy/scoop-bucket will pick up the release automatically."
+            exit 0
+          }
+'@.Replace("`r`n", "`n")
+
+          if (-not $content.Contains($old)) {
+            throw 'Unable to locate Scoop trigger block'
+          }
+          $content = $content.Replace($old, $new)
+
+          [IO.File]::WriteAllText(
+            (Resolve-Path $path).Path,
+            $content,
+            [Text.UTF8Encoding]::new($false)
+          )
+
+      - name: Document authentication behavior
+        shell: pwsh
+        run: |
+          $path = 'RELEASING.md'
+          $content = (Get-Content -LiteralPath $path -Raw).Replace("`r`n", "`n")
+
+          $oldBullet = '- dispatches the Scoop bucket update workflow.'
+          $newBullet = '- dispatches the Scoop bucket update workflow; if the optional cross-repo token is unavailable or invalid, the scheduled Excavator in `marcmy/scoop-bucket` picks up the release automatically.'
+          if (-not $content.Contains($oldBullet)) {
+            throw 'Unable to locate Scoop release documentation bullet'
+          }
+          $content = $content.Replace($oldBullet, $newBullet)
+
+          if (-not $content.Contains('## Authentication')) {
+            $content = $content.TrimEnd() + @'
+
+
+## Authentication
+
+The release workflow uses GitHub Actions' repository-scoped `GITHUB_TOKEN` for all operations inside `RazerAutoPollingRate`, including release branches, pull requests, CI dispatch, merging, tags, and release publication. A personal access token is not required for those operations.
+
+`SCOOP_BUCKET_TOKEN`, `GH_PAT`, or `PAT` is only an optional fast-path for immediately dispatching the Excavator in `marcmy/scoop-bucket`. If that token is missing, expired, or lacks Actions access, the release still succeeds and the bucket's scheduled Excavator picks up the new release automatically.
+'@.Replace("`r`n", "`n")
+          }
+
+          [IO.File]::WriteAllText(
+            (Resolve-Path $path).Path,
+            $content + "`n",
+            [Text.UTF8Encoding]::new($false)
+          )
+
+      - name: Validate patch scope
+        shell: pwsh
+        run: |
+          $release = Get-Content -LiteralPath '.github/workflows/release.yml' -Raw
+          if ($release -match 'RELEASE_AUTOMATION_TOKEN') {
+            throw 'release.yml still depends on RELEASE_AUTOMATION_TOKEN'
+          }
+          if ($release -notmatch 'prepare-release:[\s\S]*?GH_TOKEN: \$\{\{ github\.token \}\}') {
+            throw 'prepare-release does not use github.token'
+          }
+
+          $scoop = Get-Content -LiteralPath '.github/workflows/scoop-excavator.yml' -Raw
+          if ($scoop -match 'throw "Unable to trigger scoop-bucket Excavator"') {
+            throw 'Scoop trigger is still fatal'
+          }
+          if ($scoop -notmatch 'scheduled Excavator') {
+            throw 'Scoop scheduled fallback is missing'
+          }
+
+          $packageVersion = node -p "require('./package.json').version"
+          if ($packageVersion -ne '1.3.4') {
+            throw "Unexpected package version change: $packageVersion"
+          }
+
+          $changed = @(git diff --name-only)
+          $allowed = @(
+            '.github/workflows/release.yml',
+            '.github/workflows/scoop-excavator.yml',
+            'RELEASING.md',
+            '.github/workflows/patch-release-auth.yml'
+          )
+          $unexpected = @($changed | Where-Object { $_ -notin $allowed })
+          if ($unexpected.Count -gt 0) {
+            throw "Unexpected files changed: $($unexpected -join ', ')"
+          }
+
+          git diff --check
+          if ($LASTEXITCODE -ne 0) {
+            throw 'git diff --check failed'
+          }
+
+      - name: Commit authentication fix
+        shell: pwsh
+        run: |
+          Remove-Item -LiteralPath '.github/workflows/patch-release-auth.yml'
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/workflows/release.yml .github/workflows/scoop-excavator.yml RELEASING.md .github/workflows/patch-release-auth.yml
+          git commit -m "Fix release authentication fallback"
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to commit release authentication fix'
+          }
+
+          git push origin HEAD:marc/fix-release-auth
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to push release authentication fix'
+          }
