@@ -33,23 +33,8 @@ jobs:
               raise SystemExit('Missing NON_GAME_FOLDER_PATTERN')
           game = game.replace(old, new, 1)
 
-          old = """      const gameRoot = winPath.join(library.root, child.name);
-          const gameName = steamNames.get(normalizeWindowsPath(gameRoot)) || child.name;
-          const executablePath = findLikelyExecutable(gameRoot, gameName, { fsImpl });
-          """
-          new = """      const gameRoot = winPath.join(library.root, child.name);
-          const gameName = steamNames.get(normalizeWindowsPath(gameRoot)) || child.name;
-
-          // Known provider libraries can contain standalone launchers/clients that are
-          // installed independently from any playable game. Do not present those as
-          // games. Custom folders stay permissive because users may intentionally keep
-          // unusual community clients or alternate engines there.
-          if (!library.custom && PROVIDER_UTILITY_GAME_NAME_PATTERN.test(gameName)) {
-            return;
-          }
-
-          const executablePath = findLikelyExecutable(gameRoot, gameName, { fsImpl });
-          """
+          old = "      const gameName = steamNames.get(normalizeWindowsPath(gameRoot)) || child.name;\n      const executablePath = findLikelyExecutable(gameRoot, gameName, { fsImpl });\n"
+          new = "      const gameName = steamNames.get(normalizeWindowsPath(gameRoot)) || child.name;\n\n      // Known provider libraries can contain standalone launchers/clients that are\n      // installed independently from any playable game. Do not present those as\n      // games. Custom folders stay permissive because users may intentionally keep\n      // unusual community clients or alternate engines there.\n      if (!library.custom && PROVIDER_UTILITY_GAME_NAME_PATTERN.test(gameName)) {\n        return;\n      }\n\n      const executablePath = findLikelyExecutable(gameRoot, gameName, { fsImpl });\n"
           if old not in game:
               raise SystemExit('Missing scan child block')
           game = game.replace(old, new, 1)
