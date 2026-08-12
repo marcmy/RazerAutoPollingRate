@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { parseProcessConfig, serializeProcessConfig } = require('./config');
+const { normalizeGameMetadata } = require('./gameMetadata');
 const { parsePollingRate } = require('./rates');
 
 const DEFAULT_SETTINGS = {
@@ -118,22 +119,39 @@ function parseListSection(section = {}) {
     .filter(Boolean);
 }
 
+function parseGameMetadataSection(section = {}) {
+  const parsed = [];
+  parseListSection(section).forEach((value) => {
+    try {
+      const item = JSON.parse(value);
+      if (item && typeof item === 'object') {
+        parsed.push(item);
+      }
+    } catch {
+      // Ignore malformed metadata without affecting the rest of config.ini.
+    }
+  });
+  return normalizeGameMetadata(parsed);
+}
+
 function readAppConfig(configPath, options = {}) {
   const contents = fs.existsSync(configPath) ? fs.readFileSync(configPath, 'utf8') : '';
   const sections = parseIni(contents);
   const settings = normalizeSettings(sections.settings);
   const parsedRules = parseRulesSection(sections.rules, options);
   const gameFolders = parseListSection(sections.game_folders);
+  const gameMetadata = parseGameMetadataSection(sections.game_metadata);
 
   return {
     settings,
     entries: parsedRules.entries,
     gameFolders,
+    gameMetadata,
     warnings: parsedRules.warnings,
   };
 }
 
-function serializeAppConfig(settings, entries, gameFolders = []) {
+function serializeAppConfig(settings, entries, gameFolders = [], gameMetadata = []) {
   const normalizedSettings = {
     ...DEFAULT_SETTINGS,
     ...settings,
@@ -144,6 +162,7 @@ function serializeAppConfig(settings, entries, gameFolders = []) {
   const folders = Array.isArray(gameFolders)
     ? gameFolders.map((folder) => String(folder || '').trim()).filter(Boolean)
     : [];
+  const metadata = normalizeGameMetadata(gameMetadata);
 
   return [
     '[settings]',
@@ -160,16 +179,19 @@ function serializeAppConfig(settings, entries, gameFolders = []) {
     '[game_folders]',
     ...folders.map((folder, index) => `${index + 1}=${folder}`),
     '',
+    '[game_metadata]',
+    ...metadata.map((item, index) => `${index + 1}=${JSON.stringify(item)}`),
+    '',
     '[rules]',
     ...ruleLines.map((line, index) => `${index + 1}=${line}`),
     '',
   ].join('\n');
 }
 
-function writeAppConfig(configPath, settings, entries, gameFolders = []) {
+function writeAppConfig(configPath, settings, entries, gameFolders = [], gameMetadata = []) {
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   const tempPath = `${configPath}.tmp`;
-  fs.writeFileSync(tempPath, serializeAppConfig(settings, entries, gameFolders), 'utf8');
+  fs.writeFileSync(tempPath, serializeAppConfig(settings, entries, gameFolders, gameMetadata), 'utf8');
   fs.renameSync(tempPath, configPath);
 }
 
@@ -184,6 +206,7 @@ module.exports = {
   configExists,
   normalizePollingCheckIntervalMs,
   normalizeSettings,
+  parseGameMetadataSection,
   parseIni,
   parseListSection,
   readAppConfig,
