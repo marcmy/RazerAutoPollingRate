@@ -301,9 +301,17 @@ function executableScore(executablePath, gameName, gameRoot, fsImpl = fs) {
 function findLikelyExecutable(gameRoot, gameName, options = {}) {
   const fsImpl = options.fsImpl || fs;
   const maxDepth = Number.isInteger(options.maxDepth) ? options.maxDepth : 3;
-  const maxVisited = Number.isInteger(options.maxVisited) ? options.maxVisited : 500;
+  const maxVisited = Number.isInteger(options.maxVisited) ? options.maxVisited : 1500;
   const candidates = [];
+  const launcherCandidates = [];
   let visited = 0;
+
+  function directoryPriority(name) {
+    if (/^(?:rerelease|remaster(?:ed)?|enhanced)$/i.test(name)) return 100;
+    if (/^(?:binaries|bin)$/i.test(name)) return 80;
+    if (/^(?:win64|x64|game)$/i.test(name)) return 60;
+    return 0;
+  }
 
   function walk(directory, depth) {
     if (depth > maxDepth || visited >= maxVisited) {
@@ -317,37 +325,48 @@ function findLikelyExecutable(gameRoot, gameName, options = {}) {
       return;
     }
 
-    for (const item of items) {
-      if (visited >= maxVisited) {
-        break;
-      }
+    // Inspect files at this level before descending. Large asset/support
+    // directories must not consume the traversal budget before a root EXE
+    // (for example r5apex_dx12.exe) gets considered.
+    for (const item of items.filter((entry) => entry.isFile())) {
+      if (visited >= maxVisited) break;
       visited += 1;
+      if (!/\.exe$/i.test(item.name)) continue;
+
       const fullPath = winPath.join(directory, item.name);
+      const baseName = winPath.basename(item.name, '.exe');
+      if (HELPER_EXECUTABLE_PATTERN.test(baseName)) continue;
 
-      if (item.isDirectory()) {
-        if (!HELPER_DIRECTORY_PATTERN.test(item.name)) {
-          walk(fullPath, depth + 1);
-        }
-        continue;
+      const candidate = {
+        path: fullPath,
+        score: executableScore(fullPath, gameName, gameRoot, fsImpl),
+      };
+
+      // Launchers are useful only as a last resort. They frequently exit as
+      // soon as the actual game starts, which would immediately drop the
+      // polling rate back to the inactive value.
+      if (/launcher/i.test(baseName)) {
+        launcherCandidates.push(candidate);
+      } else {
+        candidates.push(candidate);
       }
+    }
 
-      if (item.isFile() && /\.exe$/i.test(item.name)) {
-        const baseName = winPath.basename(item.name, '.exe');
-        if (HELPER_EXECUTABLE_PATTERN.test(baseName)) {
-          continue;
-        }
+    const directories = items
+      .filter((entry) => entry.isDirectory() && !HELPER_DIRECTORY_PATTERN.test(entry.name))
+      .sort((left, right) => directoryPriority(right.name) - directoryPriority(left.name));
 
-        candidates.push({
-          path: fullPath,
-          score: executableScore(fullPath, gameName, gameRoot, fsImpl),
-        });
-      }
+    for (const item of directories) {
+      if (visited >= maxVisited) break;
+      visited += 1;
+      walk(winPath.join(directory, item.name), depth + 1);
     }
   }
 
   walk(gameRoot, 0);
-  candidates.sort((left, right) => right.score - left.score || left.path.localeCompare(right.path));
-  return candidates.length > 0 ? candidates[0].path : null;
+  const pool = candidates.length > 0 ? candidates : launcherCandidates;
+  pool.sort((left, right) => right.score - left.score || left.path.localeCompare(right.path));
+  return pool.length > 0 ? pool[0].path : null;
 }
 
 function getSteamManifestNames(libraryRoot, fsImpl = fs) {

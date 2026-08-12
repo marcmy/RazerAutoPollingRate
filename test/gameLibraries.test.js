@@ -135,3 +135,58 @@ test('nested rerelease executable paths keep the parent game name', () => {
     'Quake',
   );
 });
+
+
+test('non-launcher executable wins even when launcher scores higher', () => {
+  const root = 'D:\\SteamLibrary\\steamapps\\common\\Apex Legends';
+  const fsImpl = {
+    readdirSync(directory) {
+      if (directory === root) {
+        return [
+{ name: 'ApexLauncher.exe', isDirectory: () => false, isFile: () => true },
+{ name: 'r5apex_dx12.exe', isDirectory: () => false, isFile: () => true },
+        ];
+      }
+      return [];
+    },
+    statSync(file) {
+      return { size: /launcher/i.test(file) ? 500_000_000 : 10_000_000 };
+    },
+  };
+
+  assert.equal(
+    findLikelyExecutable(root, 'Apex Legends', { fsImpl }),
+    `${root}\\r5apex_dx12.exe`,
+  );
+});
+
+test('root executables are inspected before deep directories consume the scan budget', () => {
+  const root = 'D:\\Games\\Example';
+  const huge = `${root}\\A-Huge-Assets`;
+  const fsImpl = {
+    readdirSync(directory) {
+      if (directory === root) {
+        return [
+{ name: 'A-Huge-Assets', isDirectory: () => true, isFile: () => false },
+{ name: 'ExampleGame.exe', isDirectory: () => false, isFile: () => true },
+        ];
+      }
+      if (directory === huge) {
+        return Array.from({ length: 100 }, (_, index) => ({
+name: `asset-${index}.bin`,
+isDirectory: () => false,
+isFile: () => true,
+        }));
+      }
+      return [];
+    },
+    statSync() {
+      return { size: 50_000_000 };
+    },
+  };
+
+  assert.equal(
+    findLikelyExecutable(root, 'Example Game', { fsImpl, maxVisited: 3 }),
+    `${root}\\ExampleGame.exe`,
+  );
+});

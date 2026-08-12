@@ -370,17 +370,111 @@ function ruleMatchesGame(rule, game) {
   return Boolean(game.processName) && processName === String(game.processName).toLowerCase();
 }
 
+const executableIconCache = new Map();
+let genericExecutableIconPromise = null;
+
+function execFileText(file, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(file, args, {
+      windowsHide: true,
+      maxBuffer: 2 * 1024 * 1024,
+      ...options,
+    }, (error, stdout, stderr) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(String(stdout || '').trim());
+    });
+  });
+}
+
+async function getGenericExecutableIconDataUrl() {
+  if (process.platform !== 'win32') {
+    return null;
+  }
+
+  if (!genericExecutableIconPromise) {
+    genericExecutableIconPromise = (async () => {
+      const probe = path.join(app.getPath('temp'), `rapr-generic-${process.pid}.exe`);
+      try {
+        fs.writeFileSync(probe, '');
+        const image = await app.getFileIcon(probe, { size: 'large' });
+        return image && !image.isEmpty() ? image.toDataURL() : null;
+      } catch {
+        return null;
+      } finally {
+        try { fs.unlinkSync(probe); } catch { /* best effort */ }
+      }
+    })();
+  }
+
+  return genericExecutableIconPromise;
+}
+
+async function extractEmbeddedExecutableIconDataUrl(executablePath) {
+  if (process.platform !== 'win32') {
+    return null;
+  }
+
+  const command = [
+    'Add-Type -AssemblyName System.Drawing;',
+    '$icon = [System.Drawing.Icon]::ExtractAssociatedIcon($env:RAPR_ICON_PATH);',
+    'if ($null -eq $icon) { exit 2 };',
+    '$bitmap = $icon.ToBitmap();',
+    '$stream = New-Object System.IO.MemoryStream;',
+    '$bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png);',
+    '[Console]::Out.Write([Convert]::ToBase64String($stream.ToArray()));',
+    '$stream.Dispose(); $bitmap.Dispose(); $icon.Dispose();',
+  ].join(' ');
+
+  try {
+    const base64 = await execFileText(
+      'powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', command],
+      {
+        env: { ...process.env, RAPR_ICON_PATH: executablePath },
+        timeout: 5000,
+      },
+    );
+    return base64 ? `data:image/png;base64,${base64}` : null;
+  } catch {
+    return null;
+  }
+}
+
 async function getExecutableIconDataUrl(executablePath) {
   if (!executablePath || !fs.existsSync(executablePath)) {
     return null;
   }
 
-  try {
-    const image = await app.getFileIcon(executablePath, { size: 'large' });
-    return image && !image.isEmpty() ? image.toDataURL() : null;
-  } catch {
-    return null;
+  const key = normalizeWindowsPath(executablePath);
+  if (executableIconCache.has(key)) {
+    return executableIconCache.get(key);
   }
+
+  const iconPromise = (async () => {
+    let shellIcon = null;
+    try {
+      const image = await app.getFileIcon(executablePath, { size: 'large' });
+      shellIcon = image && !image.isEmpty() ? image.toDataURL() : null;
+    } catch {
+      // Fall through to embedded-resource extraction below.
+    }
+
+    const genericIcon = await getGenericExecutableIconDataUrl();
+    if (!shellIcon || (genericIcon && shellIcon === genericIcon)) {
+      const embeddedIcon = await extractEmbeddedExecutableIconDataUrl(executablePath);
+      if (embeddedIcon) {
+        return embeddedIcon;
+      }
+    }
+
+    return shellIcon;
+  })();
+
+  executableIconCache.set(key, iconPromise);
+  return iconPromise;
 }
 
 async function buildGameCards(entries) {
