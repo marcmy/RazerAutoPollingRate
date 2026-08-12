@@ -1,0 +1,29 @@
+name: Scoop Bucket Excavator
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  trigger-excavator:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger scoop bucket Excavator
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN || secrets.GH_PAT || secrets.PAT }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+            Write-Warning "No cross-repo token is configured. Skipping the immediate Scoop trigger; the scheduled Excavator in marcmy/scoop-bucket will pick up the release automatically."
+            exit 0
+          }
+
+          gh workflow run excavator.yml --repo marcmy/scoop-bucket --ref master
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Immediate Scoop trigger failed. The cross-repo token may be expired or lack Actions access; the scheduled Excavator in marcmy/scoop-bucket will pick up the release automatically."
+            exit 0
+          }
