@@ -223,7 +223,6 @@
     <h1>Settings</h1>
     <div class="title-actions">
       <div id="status" class="status"></div>
-      <button id="save" type="button">Save</button>
     </div>
   </header>
   <main>
@@ -304,6 +303,9 @@
     const verboseLoggingLabel = document.getElementById('verbose-logging-label');
     const diagnosticLogsLinkRow = document.getElementById('diagnostic-logs-link-row');
     const verboseLogsLinkRow = document.getElementById('verbose-logs-link-row');
+    let saveTimer = null;
+    let saveInProgress = false;
+    let saveQueued = false;
 
     function setStatus(message, isError = false) {
       statusElement.textContent = message;
@@ -352,6 +354,15 @@
       verboseLogsLinkRow.classList.toggle('is-hidden', !diagnosticEnabled);
     }
 
+    function scheduleSave(delay = 250) {
+      clearTimeout(saveTimer);
+      setStatus('Saving...');
+      saveTimer = setTimeout(() => {
+        saveTimer = null;
+        saveSettings();
+      }, delay);
+    }
+
     function moveRow(row, direction) {
       if (direction < 0 && row.previousElementSibling) {
         rulesBody.insertBefore(row, row.previousElementSibling);
@@ -380,11 +391,21 @@
           const selectedPath = await window.settingsApi.browseExecutable();
           if (selectedPath) {
             targetInput.value = selectedPath;
+            scheduleSave(0);
           }
         }],
-        ['Up', () => moveRow(row, -1)],
-        ['Down', () => moveRow(row, 1)],
-        ['Delete', () => row.remove()],
+        ['Up', () => {
+          moveRow(row, -1);
+          scheduleSave(0);
+        }],
+        ['Down', () => {
+          moveRow(row, 1);
+          scheduleSave(0);
+        }],
+        ['Delete', () => {
+          row.remove();
+          scheduleSave(0);
+        }],
       ].forEach(([label, handler]) => {
         const button = document.createElement('button');
         button.type = 'button';
@@ -415,23 +436,57 @@
     }
 
     async function saveSettings() {
-      const result = await window.settingsApi.save({
-        settings: readSettingsFromForm(),
-        rules: readRulesFromForm(),
-      });
-      if (!result.ok) {
-        setStatus(result.warnings.join(' '), true);
+      if (saveInProgress) {
+        saveQueued = true;
         return;
       }
 
-      setStatus('Saved');
+      saveInProgress = true;
+      setStatus('Saving...');
+      try {
+        const result = await window.settingsApi.save({
+          settings: readSettingsFromForm(),
+          rules: readRulesFromForm(),
+        });
+        if (!result.ok) {
+          setStatus(result.warnings.join(' '), true);
+          return;
+        }
+
+        setStatus('Saved');
+      } catch (error) {
+        setStatus(error.message, true);
+      } finally {
+        saveInProgress = false;
+        if (saveQueued) {
+          saveQueued = false;
+          scheduleSave(0);
+        }
+      }
     }
 
     document.getElementById('add-rule').addEventListener('click', () => addRule());
-    document.getElementById('save').addEventListener('click', saveSettings);
     document.getElementById('open-config').addEventListener('click', () => window.settingsApi.openConfig());
     document.getElementById('open-logs').addEventListener('click', () => window.settingsApi.openLogs());
     document.getElementById('open-logs-verbose').addEventListener('click', () => window.settingsApi.openLogs());
+
+    [inactiveRateSelect, defaultGameRateSelect, detectionModeSelect, autostartCheckbox,
+      diagnosticLoggingCheckbox, verboseDiagnosticLoggingCheckbox].forEach((control) => {
+      control.addEventListener('change', () => scheduleSave(0));
+    });
+
+    rulesBody.addEventListener('change', (event) => {
+      if (event.target.matches('[data-field="rate"]')) {
+        scheduleSave(0);
+      }
+    });
+
+    rulesBody.addEventListener('input', (event) => {
+      if (event.target.matches('[data-field="target"]')) {
+        scheduleSave(250);
+      }
+    });
+
     diagnosticLoggingCheckbox.addEventListener('change', updateVerboseLoggingState);
     loadSettings().catch((error) => setStatus(error.message, true));
   </script>
