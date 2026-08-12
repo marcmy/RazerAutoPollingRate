@@ -34,22 +34,22 @@ jobs:
           game = game.replace(old, new, 1)
 
           old = """      const gameRoot = winPath.join(library.root, child.name);
-      const gameName = steamNames.get(normalizeWindowsPath(gameRoot)) || child.name;
-      const executablePath = findLikelyExecutable(gameRoot, gameName, { fsImpl });
-"""
+          const gameName = steamNames.get(normalizeWindowsPath(gameRoot)) || child.name;
+          const executablePath = findLikelyExecutable(gameRoot, gameName, { fsImpl });
+          """
           new = """      const gameRoot = winPath.join(library.root, child.name);
-      const gameName = steamNames.get(normalizeWindowsPath(gameRoot)) || child.name;
+          const gameName = steamNames.get(normalizeWindowsPath(gameRoot)) || child.name;
 
-      // Known provider libraries can contain standalone launchers/clients that are
-      // installed independently from any playable game. Do not present those as
-      // games. Custom folders stay permissive because users may intentionally keep
-      // unusual community clients or alternate engines there.
-      if (!library.custom && PROVIDER_UTILITY_GAME_NAME_PATTERN.test(gameName)) {
-        return;
-      }
+          // Known provider libraries can contain standalone launchers/clients that are
+          // installed independently from any playable game. Do not present those as
+          // games. Custom folders stay permissive because users may intentionally keep
+          // unusual community clients or alternate engines there.
+          if (!library.custom && PROVIDER_UTILITY_GAME_NAME_PATTERN.test(gameName)) {
+            return;
+          }
 
-      const executablePath = findLikelyExecutable(gameRoot, gameName, { fsImpl });
-"""
+          const executablePath = findLikelyExecutable(gameRoot, gameName, { fsImpl });
+          """
           if old not in game:
               raise SystemExit('Missing scan child block')
           game = game.replace(old, new, 1)
@@ -71,66 +71,66 @@ jobs:
 
           tests += r'''
 
-test('known provider launcher-only entries are not shown as games', () => {
-  const root = 'D:\\XboxGames';
-  const fsImpl = {
-    existsSync(candidate) {
-      return candidate === root;
-    },
-    statSync(candidate) {
-      if (candidate === root) return { isDirectory: () => true };
-      throw new Error(`unexpected stat ${candidate}`);
-    },
-    readdirSync(directory) {
-      if (directory === root) {
-        return [
-          { name: 'Minecraft Launcher', isDirectory: () => true, isFile: () => false },
-        ];
-      }
-      throw new Error(`launcher directory should not be scanned: ${directory}`);
-    },
-  };
+          test('known provider launcher-only entries are not shown as games', () => {
+            const root = 'D:\\XboxGames';
+            const fsImpl = {
+              existsSync(candidate) {
+                return candidate === root;
+              },
+              statSync(candidate) {
+                if (candidate === root) return { isDirectory: () => true };
+                throw new Error(`unexpected stat ${candidate}`);
+              },
+              readdirSync(directory) {
+                if (directory === root) {
+                  return [
+                    { name: 'Minecraft Launcher', isDirectory: () => true, isFile: () => false },
+                  ];
+                }
+                throw new Error(`launcher directory should not be scanned: ${directory}`);
+              },
+            };
 
-  assert.deepEqual(
-    scanLibraryGames([{ name: 'Xbox', provider: 'xbox', root, custom: false }], { fsImpl }),
-    [],
-  );
-});
+            assert.deepEqual(
+              scanLibraryGames([{ name: 'Xbox', provider: 'xbox', root, custom: false }], { fsImpl }),
+              [],
+            );
+          });
 
-test('custom folders remain permissive for unusual launcher or client names', () => {
-  const root = 'C:\\Games';
-  const gameRoot = `${root}\\Custom Client`;
-  const executable = `${gameRoot}\\clientgame.exe`;
-  const fsImpl = {
-    existsSync(candidate) {
-      return candidate === root;
-    },
-    statSync(candidate) {
-      if (candidate === root) return { isDirectory: () => true };
-      if (candidate === executable) return { size: 50_000_000 };
-      throw new Error(`unexpected stat ${candidate}`);
-    },
-    readdirSync(directory) {
-      if (directory === root) {
-        return [
-          { name: 'Custom Client', isDirectory: () => true, isFile: () => false },
-        ];
-      }
-      if (directory === gameRoot) {
-        return [
-          { name: 'clientgame.exe', isDirectory: () => false, isFile: () => true },
-        ];
-      }
-      return [];
-    },
-  };
+          test('custom folders remain permissive for unusual launcher or client names', () => {
+            const root = 'C:\\Games';
+            const gameRoot = `${root}\\Custom Client`;
+            const executable = `${gameRoot}\\clientgame.exe`;
+            const fsImpl = {
+              existsSync(candidate) {
+                return candidate === root;
+              },
+              statSync(candidate) {
+                if (candidate === root) return { isDirectory: () => true };
+                if (candidate === executable) return { size: 50_000_000 };
+                throw new Error(`unexpected stat ${candidate}`);
+              },
+              readdirSync(directory) {
+                if (directory === root) {
+                  return [
+                    { name: 'Custom Client', isDirectory: () => true, isFile: () => false },
+                  ];
+                }
+                if (directory === gameRoot) {
+                  return [
+                    { name: 'clientgame.exe', isDirectory: () => false, isFile: () => true },
+                  ];
+                }
+                return [];
+              },
+            };
 
-  const games = scanLibraryGames([{ name: 'Custom', provider: 'custom', root, custom: true }], { fsImpl });
-  assert.equal(games.length, 1);
-  assert.equal(games[0].name, 'Custom Client');
-  assert.equal(games[0].executablePath, executable);
-});
-'''
+            const games = scanLibraryGames([{ name: 'Custom', provider: 'custom', root, custom: true }], { fsImpl });
+            assert.equal(games.length, 1);
+            assert.equal(games[0].name, 'Custom Client');
+            assert.equal(games[0].executablePath, executable);
+          });
+          '''
           test_path.write_text(tests, encoding='utf-8')
           PY
 
