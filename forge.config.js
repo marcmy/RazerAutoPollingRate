@@ -1,6 +1,7 @@
 module.exports = {
   packagerConfig: {
-    icon: 'src/assets/app'
+    icon: 'src/assets/app',
+    electronZipDir: process.env.ELECTRON_ZIP_DIR || undefined
   },
   rebuildConfig: {},
   makers: [

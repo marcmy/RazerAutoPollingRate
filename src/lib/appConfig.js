@@ -1,12 +1,14 @@
 const fs = require('fs');
 const path = require('path');
 const { parseProcessConfig, serializeProcessConfig } = require('./config');
+const { normalizeGameMetadata } = require('./gameMetadata');
 const { parsePollingRate } = require('./rates');
 
 const DEFAULT_SETTINGS = {
   inactivePollingRate: 500,
   defaultGamePollingRate: 1000,
   detectionMode: 'foreground',
+  autoDetectGames: true,
   autostart: true,
   diagnosticLogging: false,
   verboseDiagnosticLogging: false,
@@ -90,6 +92,7 @@ function normalizeSettings(rawSettings = {}) {
       : DEFAULT_SETTINGS.inactivePollingRate,
     defaultGamePollingRate: defaultGamePollingRate || DEFAULT_SETTINGS.defaultGamePollingRate,
     detectionMode,
+    autoDetectGames: parseBoolean(rawSettings.auto_detect_games, DEFAULT_SETTINGS.autoDetectGames),
     autostart: parseBoolean(rawSettings.autostart, DEFAULT_SETTINGS.autostart),
     diagnosticLogging: parseBoolean(rawSettings.diagnostic_logging, DEFAULT_SETTINGS.diagnosticLogging),
     verboseDiagnosticLogging: parseBoolean(
@@ -108,20 +111,47 @@ function parseRulesSection(rulesSection = {}, options = {}) {
   return parseProcessConfig(ruleLines, options);
 }
 
+function parseListSection(section = {}) {
+  return Object.keys(section)
+    .filter((key) => /^\d+$/.test(key))
+    .sort((left, right) => Number(left) - Number(right))
+    .map((key) => String(section[key] || '').trim())
+    .filter(Boolean);
+}
+
+function parseGameMetadataSection(section = {}) {
+  const parsed = [];
+  parseListSection(section).forEach((value) => {
+    try {
+      const item = JSON.parse(value);
+      if (item && typeof item === 'object') {
+        parsed.push(item);
+      }
+    } catch {
+      // Ignore malformed metadata without affecting the rest of config.ini.
+    }
+  });
+  return normalizeGameMetadata(parsed);
+}
+
 function readAppConfig(configPath, options = {}) {
   const contents = fs.existsSync(configPath) ? fs.readFileSync(configPath, 'utf8') : '';
   const sections = parseIni(contents);
   const settings = normalizeSettings(sections.settings);
   const parsedRules = parseRulesSection(sections.rules, options);
+  const gameFolders = parseListSection(sections.game_folders);
+  const gameMetadata = parseGameMetadataSection(sections.game_metadata);
 
   return {
     settings,
     entries: parsedRules.entries,
+    gameFolders,
+    gameMetadata,
     warnings: parsedRules.warnings,
   };
 }
 
-function serializeAppConfig(settings, entries) {
+function serializeAppConfig(settings, entries, gameFolders = [], gameMetadata = []) {
   const normalizedSettings = {
     ...DEFAULT_SETTINGS,
     ...settings,
@@ -129,17 +159,28 @@ function serializeAppConfig(settings, entries) {
   const ruleLines = serializeProcessConfig(entries)
     .split(/\r?\n/)
     .filter(Boolean);
+  const folders = Array.isArray(gameFolders)
+    ? gameFolders.map((folder) => String(folder || '').trim()).filter(Boolean)
+    : [];
+  const metadata = normalizeGameMetadata(gameMetadata);
 
   return [
     '[settings]',
     `inactive_polling_rate=${normalizedSettings.inactivePollingRate}`,
     `default_game_polling_rate=${normalizedSettings.defaultGamePollingRate}`,
     `detection_mode=${normalizedSettings.detectionMode === 'running' ? 'running' : 'foreground'}`,
+    `auto_detect_games=${normalizedSettings.autoDetectGames ? 'true' : 'false'}`,
     `autostart=${normalizedSettings.autostart ? 'true' : 'false'}`,
     `diagnostic_logging=${normalizedSettings.diagnosticLogging ? 'true' : 'false'}`,
     `verbose_diagnostic_logging=${normalizedSettings.verboseDiagnosticLogging ? 'true' : 'false'}`,
     '# Debug only: default 1500 ms; accepted range 200-60000 ms.',
     `polling_check_interval_ms=${normalizePollingCheckIntervalMs(normalizedSettings.pollingCheckIntervalMs)}`,
+    '',
+    '[game_folders]',
+    ...folders.map((folder, index) => `${index + 1}=${folder}`),
+    '',
+    '[game_metadata]',
+    ...metadata.map((item, index) => `${index + 1}=${JSON.stringify(item)}`),
     '',
     '[rules]',
     ...ruleLines.map((line, index) => `${index + 1}=${line}`),
@@ -147,10 +188,10 @@ function serializeAppConfig(settings, entries) {
   ].join('\n');
 }
 
-function writeAppConfig(configPath, settings, entries) {
+function writeAppConfig(configPath, settings, entries, gameFolders = [], gameMetadata = []) {
   fs.mkdirSync(path.dirname(configPath), { recursive: true });
   const tempPath = `${configPath}.tmp`;
-  fs.writeFileSync(tempPath, serializeAppConfig(settings, entries), 'utf8');
+  fs.writeFileSync(tempPath, serializeAppConfig(settings, entries, gameFolders, gameMetadata), 'utf8');
   fs.renameSync(tempPath, configPath);
 }
 
@@ -165,7 +206,9 @@ module.exports = {
   configExists,
   normalizePollingCheckIntervalMs,
   normalizeSettings,
+  parseGameMetadataSection,
   parseIni,
+  parseListSection,
   readAppConfig,
   serializeAppConfig,
   writeAppConfig,

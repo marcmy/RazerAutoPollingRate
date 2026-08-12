@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Fixed
+
+- Improved automatic executable selection so crash/reporting helpers such as `crashmsg.exe` are ignored in favor of real game binaries.
+- Treat launcher executables as fallback-only candidates so short-lived launchers do not beat persistent game processes such as `r5apex_dx12.exe`.
+- Prefer rerelease/remastered/enhanced binaries over legacy root executables when both are present in one game install.
+- Explicit executables inside an auto-detected game folder now merge into that game card and retain the parent game name instead of a build subfolder such as `rerelease`.
+- Filter standalone provider launcher/client entries from automatic game discovery while keeping custom folders permissive for community clients and alternate engines.
+- Added a Windows embedded-icon fallback when Electron returns the generic executable icon for a game binary.
+- Updated Electron and replaced the vulnerable transitive `extract-zip` build dependency with Electron's maintained internal package without moving to a Forge prerelease.
+
+### Added
+
+- Added automatic game-library discovery for Steam libraries plus common Xbox, Epic, EA, GOG, Ubisoft, Riot, Rockstar, Amazon Games, itch.io, and HoYoPlay locations, with custom game folders and rescanning.
+- Added automatic foreground game matching under detected library roots without generating permanent polling rules.
+- Added per-game polling-rate and detection-mode overrides, including inherited defaults and running-process fallback for elevated games.
+- Added editable per-game display names so manually added games and unusual folder layouts can use a friendly name without changing detection.
+- Added Hide / ignore game support plus a Hidden filter for restoring ignored entries; ignored games do not activate automatic or explicit polling rules.
+- Added executable icons, searchable game cards, source badges, customized indicators, and live running/polling status.
+
+### Changed
+
+- Rebuilt Settings into General, Games, Game Libraries, and Diagnostics views with a card grid and per-game configuration dialog.
+- Made game cards denser so more titles fit in the Games view at once.
+- Existing polling rules remain compatible and now appear as game overrides instead of a large editable table.
+- Store custom display names and ignored-game state separately from polling rules so cosmetic/ignore changes do not create fake rate overrides.
+- Moved diagnostic and advanced controls into a dedicated Diagnostics page.
+- Hardened CI/release packaging by prefetching and SHA256-verifying the exact Electron Windows ZIP before handing it to Electron Packager.
+
 ## v1.3.3
 
 ### Added
@@ -85,7 +113,7 @@
 
 ## v1.2.8
 
-- Improved foreground-window detection for elevated or protected apps so bare process-name rules can still match when Windows does not expose the executable path.
+- Improved foreground-window detection for elevated or protected apps so bare process-name rules can still match when Windows does not expose the executable path from unelevated apps.
 - Documented that elevated/protected games may need bare `.exe` rules because Windows can hide the full executable path from unelevated apps.
 - Simplified GitHub Actions: CI now verifies tests only, while the manual draft release workflow is the single path that builds Windows release assets, SHA256 hashes, and tags/releases.
 - Updated the draft release workflow default tag to `v1.2.8-maintained`.
