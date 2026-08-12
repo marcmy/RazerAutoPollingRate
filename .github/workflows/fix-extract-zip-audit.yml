@@ -1,0 +1,59 @@
+name: Fix Electron extract-zip audit
+
+on:
+  push:
+    branches:
+      - v1.3.4-game-library-ui
+    paths:
+      - .github/workflows/fix-extract-zip-audit.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: v1.3.4-game-library-ui
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply dependency override
+        shell: pwsh
+        run: |
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          $pkg.devDependencies.electron = '^42.7.1'
+          if (-not $pkg.overrides) {
+            $pkg | Add-Member -NotePropertyName overrides -NotePropertyValue ([pscustomobject]@{})
+          }
+          $pkg.overrides | Add-Member -Force -NotePropertyName 'extract-zip' -NotePropertyValue 'npm:@electron-internal/extract-zip@^1.0.4'
+          $pkg | ConvertTo-Json -Depth 100 | Set-Content package.json -Encoding utf8
+          npm install --package-lock-only --ignore-scripts
+
+      - name: Verify resolved dependency tree
+        run: |
+          npm ci
+          npm ls extract-zip @electron-internal/extract-zip electron
+
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+
+      - name: Test
+        run: npm test
+
+      - name: Build Windows installer
+        run: npm run make
+
+      - name: Commit dependency fix
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "Replace vulnerable extract-zip build dependency"
+          git push origin HEAD:v1.3.4-game-library-ui
