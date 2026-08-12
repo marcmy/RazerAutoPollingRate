@@ -26,6 +26,11 @@ jobs:
   prepare-release:
     if: github.ref == 'refs/heads/main'
     runs-on: windows-2022
+    outputs:
+      release_tag: ${{ steps.export-release.outputs.release_tag }}
+      release_version: ${{ steps.export-release.outputs.release_version }}
+      release_commit: ${{ steps.export-release.outputs.release_commit }}
+
     steps:
       - name: Check out source
         uses: actions/checkout@v7
@@ -105,6 +110,7 @@ jobs:
           "RELEASE_BRANCH=$releaseBranch" >> $env:GITHUB_ENV
           "RELEASE_BRANCH_EXISTS=$($branchExists.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
           "RELEASE_ALREADY_MERGED=$($alreadyMerged.ToString().ToLowerInvariant())" >> $env:GITHUB_ENV
+          "RELEASE_BASE_COMMIT=$remoteMainCommit" >> $env:GITHUB_ENV
 
           if ($alreadyMerged) {
             "RELEASE_COMMIT=$remoteMainCommit" >> $env:GITHUB_ENV
@@ -119,6 +125,83 @@ jobs:
 
           exit 0
 
+      - name: Generate release notes and update changelog
+        if: env.RELEASE_ALREADY_MERGED != 'true' && env.RELEASE_BRANCH_EXISTS != 'true'
+        shell: pwsh
+        run: |
+          $changelog = Get-Content -LiteralPath 'CHANGELOG.md' -Raw
+          $pattern = '(?ms)^## Unreleased[ \t]*\r?\n(.*?)(?=^##\s+v|\z)'
+          $match = [regex]::Match($changelog, $pattern)
+
+          if (-not $match.Success) {
+            throw "CHANGELOG.md does not contain an '## Unreleased' section"
+          }
+
+          $manualNotes = $match.Groups[1].Value.Trim()
+
+          if ($manualNotes) {
+            $releaseNotes = $manualNotes
+            Write-Host "Using hand-written notes from the Unreleased section"
+          }
+          else {
+            $previousTag = git describe --tags --abbrev=0 --match 'v[0-9]*' 2>$null
+            if ($LASTEXITCODE -ne 0) {
+              $previousTag = $null
+            }
+
+            $arguments = @(
+              'api',
+              '--method', 'POST',
+              "repos/$env:GITHUB_REPOSITORY/releases/generate-notes",
+              '-f', "tag_name=$env:RELEASE_TAG",
+              '-f', "target_commitish=$env:RELEASE_BASE_COMMIT",
+              '--jq', '.body'
+            )
+
+            if ($previousTag) {
+              $arguments += @('-f', "previous_tag_name=$previousTag")
+            }
+
+            $generated = & gh @arguments
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to generate release notes"
+            }
+
+            $releaseNotes = ($generated -join "`n").Trim()
+            $releaseNotes = [regex]::Replace($releaseNotes, '(?m)^## ', '### ')
+            $releaseNotes = [regex]::Replace(
+              $releaseNotes,
+              '(?m)^\*\*Full Changelog\*\*:.*(?:\r?\n)?',
+              ''
+            ).Trim()
+
+            if (-not $releaseNotes) {
+              $releaseNotes = '- Maintenance release.'
+            }
+
+            Write-Host "Generated release notes from changes since $previousTag"
+          }
+
+          $replacement = @(
+            '## Unreleased',
+            '',
+            "## $env:RELEASE_TAG",
+            '',
+            $releaseNotes,
+            '',
+            ''
+          ) -join "`r`n"
+
+          $updated = $changelog.Substring(0, $match.Index) +
+            $replacement +
+            $changelog.Substring($match.Index + $match.Length)
+
+          [IO.File]::WriteAllText(
+            (Resolve-Path 'CHANGELOG.md').Path,
+            $updated,
+            [Text.UTF8Encoding]::new($false)
+          )
+
       - name: Validate existing release branch
         if: env.RELEASE_ALREADY_MERGED != 'true' && env.RELEASE_BRANCH_EXISTS == 'true'
         shell: pwsh
@@ -130,9 +213,14 @@ jobs:
 
           $branchPackage = git show "FETCH_HEAD:package.json" | Out-String | ConvertFrom-Json
           $branchHeadSha = git rev-parse FETCH_HEAD
+          $branchChangelog = git show "FETCH_HEAD:CHANGELOG.md" | Out-String
 
           if ($branchPackage.version -ne $env:RELEASE_VERSION) {
             throw "Existing branch contains version $($branchPackage.version), expected $env:RELEASE_VERSION"
+          }
+
+          if ($branchChangelog -notmatch "(?m)^## $([regex]::Escape($env:RELEASE_TAG))\s*$") {
+            throw "Existing release branch does not contain a CHANGELOG.md section for $env:RELEASE_TAG"
           }
 
           if ($branchHeadSha -ne $env:RELEASE_HEAD_SHA) {
@@ -147,10 +235,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
           git switch -c $env:RELEASE_BRANCH
-          git add package.json package-lock.json
+          git add package.json package-lock.json CHANGELOG.md
           git commit -m "chore: release $env:RELEASE_TAG"
           if ($LASTEXITCODE -ne 0) {
-            throw "Unable to commit release version"
+            throw "Unable to commit release version and notes"
           }
 
           git push origin "HEAD:$env:RELEASE_BRANCH"
@@ -182,7 +270,9 @@ jobs:
             $body = @(
               "Automated version bump from $env:CURRENT_VERSION to $env:RELEASE_VERSION.",
               '',
-              'After the required CI checks pass, this workflow will merge the pull request and dispatch the Windows publishing workflow.'
+              'The workflow also promotes the Unreleased changelog section when present, or generates release notes automatically from changes since the previous tag.',
+              '',
+              'After the required CI checks pass, this workflow merges the pull request and publishes the Windows release from the exact merged commit.'
             ) -join [Environment]::NewLine
 
             $prUrl = gh pr create `
@@ -295,24 +385,34 @@ jobs:
 
           $releaseCommit = git rev-parse origin/main
           $mergedPackage = git show "origin/main:package.json" | Out-String | ConvertFrom-Json
+          $mergedChangelog = git show "origin/main:CHANGELOG.md" | Out-String
 
           if ($mergedPackage.version -ne $env:RELEASE_VERSION) {
             throw "Merged main contains version $($mergedPackage.version), expected $env:RELEASE_VERSION"
           }
 
+          if ($mergedChangelog -notmatch "(?m)^## $([regex]::Escape($env:RELEASE_TAG))\s*$") {
+            throw "Merged main does not contain release notes for $env:RELEASE_TAG"
+          }
+
           "RELEASE_COMMIT=$releaseCommit" >> $env:GITHUB_ENV
 
-      - name: Dispatch Windows publishing
+      - name: Validate resumed release metadata
+        if: env.RELEASE_ALREADY_MERGED == 'true'
         shell: pwsh
         run: |
-          gh workflow run publish-release.yml `
-            --repo $env:GITHUB_REPOSITORY `
-            --ref main `
-            -f tag=$env:RELEASE_TAG `
-            -f commit=$env:RELEASE_COMMIT
-          if ($LASTEXITCODE -ne 0) {
-            throw "Unable to dispatch the publishing workflow"
+          $mergedChangelog = git show "$($env:RELEASE_COMMIT):CHANGELOG.md" | Out-String
+          if ($mergedChangelog -notmatch "(?m)^## $([regex]::Escape($env:RELEASE_TAG))\s*$") {
+            throw "Merged release commit does not contain release notes for $env:RELEASE_TAG"
           }
+
+      - name: Export release state
+        id: export-release
+        shell: pwsh
+        run: |
+          "release_tag=$env:RELEASE_TAG" >> $env:GITHUB_OUTPUT
+          "release_version=$env:RELEASE_VERSION" >> $env:GITHUB_OUTPUT
+          "release_commit=$env:RELEASE_COMMIT" >> $env:GITHUB_OUTPUT
 
           if ($env:RELEASE_PR_URL) {
             "## Release prepared: [$env:RELEASE_TAG]($env:RELEASE_PR_URL)" >> $env:GITHUB_STEP_SUMMARY
@@ -320,4 +420,216 @@ jobs:
           else {
             "## Release resumed: $env:RELEASE_TAG" >> $env:GITHUB_STEP_SUMMARY
           }
-          "The exact release commit passed tests, dependency audit, and Windows packaging before publication was dispatched." >> $env:GITHUB_STEP_SUMMARY
+
+          "Version bump, release notes, CI validation, merge, packaging, and publication are handled by this one workflow." >> $env:GITHUB_STEP_SUMMARY
+
+  publish:
+    needs: prepare-release
+    runs-on: windows-2022
+    env:
+      RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
+      RELEASE_VERSION: ${{ needs.prepare-release.outputs.release_version }}
+      RELEASE_COMMIT: ${{ needs.prepare-release.outputs.release_commit }}
+
+    steps:
+      - name: Check out release commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare-release.outputs.release_commit }}
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Validate release metadata
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "Invalid release tag format"
+          }
+          if ($env:RELEASE_COMMIT -notmatch '^[0-9a-fA-F]{40}$') {
+            throw "Invalid release commit format"
+          }
+
+          $version = node -p "require('./package.json').version"
+          $expectedTag = "v$version"
+          $actualCommit = git rev-parse HEAD
+          $expectedCommit = $env:RELEASE_COMMIT.ToLowerInvariant()
+
+          if ($env:RELEASE_TAG -ne $expectedTag) {
+            throw "Release tag $env:RELEASE_TAG does not match package version $version"
+          }
+
+          if ($actualCommit -ne $expectedCommit) {
+            throw "Checked out commit $actualCommit, expected $expectedCommit"
+          }
+
+          git fetch origin main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to fetch origin/main"
+          }
+
+          git merge-base --is-ancestor $actualCommit origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Release commit $actualCommit is not reachable from main"
+          }
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit dependencies
+        run: npm audit
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build Windows installer
+        run: npm run make
+
+      - name: Generate SHA256 hashes
+        shell: pwsh
+        run: |
+          $root = (Resolve-Path 'out/make').Path
+
+          Get-ChildItem -Path $root -Recurse -File |
+            Sort-Object FullName |
+            ForEach-Object {
+              $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName
+              $relativePath = [IO.Path]::GetRelativePath($root, $_.FullName).Replace('\', '/')
+              "$($hash.Hash.ToLower())  $relativePath"
+            } | Set-Content -Encoding ASCII SHA256SUMS.txt
+
+      - name: Generate release notes from changelog
+        shell: pwsh
+        run: |
+          $lines = @(Get-Content -LiteralPath 'CHANGELOG.md')
+          $heading = "## $env:RELEASE_TAG"
+          $start = [Array]::IndexOf($lines, $heading)
+
+          if ($start -lt 0) {
+            throw "CHANGELOG.md does not contain an exact '$heading' section"
+          }
+
+          $end = $lines.Count
+          for ($index = $start + 1; $index -lt $lines.Count; $index++) {
+            if ($lines[$index] -match '^##\s+') {
+              $end = $index
+              break
+            }
+          }
+
+          $section = if ($end -gt ($start + 1)) {
+            @($lines[($start + 1)..($end - 1)])
+          }
+          else {
+            @()
+          }
+
+          while ($section.Count -gt 0 -and [string]::IsNullOrWhiteSpace($section[0])) {
+            $section = @($section | Select-Object -Skip 1)
+          }
+          while ($section.Count -gt 0 -and [string]::IsNullOrWhiteSpace($section[-1])) {
+            $section = @($section | Select-Object -SkipLast 1)
+          }
+
+          if ($section.Count -eq 0) {
+            throw "The $heading changelog section is empty"
+          }
+
+          $changelogUrl = "https://github.com/$env:GITHUB_REPOSITORY/blob/$env:RELEASE_COMMIT/CHANGELOG.md"
+          $notes = @($section) + @('', '---', '', "[Complete changelog]($changelogUrl)")
+          [IO.File]::WriteAllLines('RELEASE_NOTES.md', $notes, [Text.UTF8Encoding]::new($false))
+
+      - name: Create or update draft release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view $env:RELEASE_TAG `
+            --repo $env:GITHUB_REPOSITORY `
+            --json tagName *> $null
+
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:RELEASE_TAG `
+              --repo $env:GITHUB_REPOSITORY `
+              --target $env:RELEASE_COMMIT `
+              --title "Razer Auto Polling Rate $env:RELEASE_VERSION" `
+              --notes-file RELEASE_NOTES.md `
+              --draft
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to create draft release"
+            }
+          }
+          else {
+            gh release edit $env:RELEASE_TAG `
+              --repo $env:GITHUB_REPOSITORY `
+              --title "Razer Auto Polling Rate $env:RELEASE_VERSION" `
+              --notes-file RELEASE_NOTES.md
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to update draft release notes"
+            }
+          }
+
+      - name: Upload release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = @(
+            Get-ChildItem -Path 'out/make' -Recurse -File |
+              Sort-Object FullName |
+              ForEach-Object { $_.FullName }
+          )
+          $assets += (Resolve-Path 'SHA256SUMS.txt').Path
+
+          $arguments = @(
+            'release',
+            'upload',
+            $env:RELEASE_TAG,
+            '--repo',
+            $env:GITHUB_REPOSITORY,
+            '--clobber'
+          ) + $assets
+
+          & gh @arguments
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to upload release assets"
+          }
+
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit $env:RELEASE_TAG `
+            --repo $env:GITHUB_REPOSITORY `
+            --draft=false `
+            --latest
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to publish release"
+          }
+
+          $releaseUrl = gh release view $env:RELEASE_TAG `
+            --repo $env:GITHUB_REPOSITORY `
+            --json url `
+            --jq .url
+
+          "RELEASE_URL=$releaseUrl" >> $env:GITHUB_ENV
+
+      - name: Trigger Scoop bucket update
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run scoop-excavator.yml `
+            --repo $env:GITHUB_REPOSITORY `
+            --ref main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to dispatch the Scoop excavator trigger"
+          }
+
+          "## Released [$env:RELEASE_TAG]($env:RELEASE_URL)" >> $env:GITHUB_STEP_SUMMARY
+          "Windows artifacts and SHA256SUMS.txt were uploaded, and the Scoop trigger workflow was dispatched." >> $env:GITHUB_STEP_SUMMARY
