@@ -3,9 +3,18 @@ const path = require('path');
 
 const winPath = path.win32;
 
-const HELPER_DIRECTORY_PATTERN = /^(?:_commonredist|redist|redistributables|support|installer|installers|uninstall|uninstaller|crash(?:pad|reporter)?|easyanticheat|battleye)$/i;
-const HELPER_EXECUTABLE_PATTERN = /(?:unins|uninstall|setup|installer|crash|report|easyanticheat|eac|battleye|beservice|vc_redist|vcredist|dxsetup|dotnet|ue4prereq|ue5prereq|cefprocess|helper|updater|update)\b/i;
+const HELPER_DIRECTORY_PATTERN = /^(?:_commonredist|redist|redistributables|support|installer|installers|uninstall|uninstaller|crash(?:msg|pad|reporter|handler|sender)?|easyanticheat|battleye)$/i;
+const HELPER_EXECUTABLE_PATTERN = /(?:unins|uninstall|setup|installer|crash(?:msg|pad|reporter|handler|sender)?|report(?:er)?|easyanticheat|eac|battleye|beservice|vc_redist|vcredist|dxsetup|dotnet|ue4prereq|ue5prereq|cefprocess|helper|updater|update)\b/i;
 const NON_GAME_FOLDER_PATTERN = /^(?:launcher|launchers|riot client|social club|redistributables|support|tools?)$/i;
+const GAME_IDENTITY_NOISE_TOKENS = new Set([
+  'x64', 'x86', 'win64', 'win32', 'shipping', 'release', 'launcher',
+  'steam', 'gog', 'epic', 'dx11', 'dx12', 'd3d11', 'd3d12', 'vulkan',
+]);
+const GAME_NAME_STOP_TOKENS = new Set([
+  'game', 'games', 'edition', 'deluxe', 'ultimate', 'complete', 'collection',
+  'remastered', 'enhanced', 'launcher', 'windows', 'microsoft',
+]);
+const GENERIC_GAME_SUBDIRECTORY_PATTERN = /^(?:win64|win32|x64|x86|binaries|bin|rerelease|release|remaster(?:ed)?|enhanced)$/i;
 
 function normalizeWindowsPath(value) {
   const text = String(value || '').trim().replace(/\//g, '\\');
@@ -221,11 +230,22 @@ function discoverGameLibraries(options = {}) {
   return dedupeLibraries(libraries);
 }
 
-function normalizeGameName(value) {
+function splitNameTokens(value) {
   return String(value || '')
     .toLowerCase()
-    .replace(/\b(?:x64|win64|shipping|release|launcher)\b/g, '')
-    .replace(/[^a-z0-9]+/g, '');
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+function normalizeGameName(value) {
+  return splitNameTokens(value)
+    .filter((token) => !GAME_IDENTITY_NOISE_TOKENS.has(token))
+    .join('');
+}
+
+function getMeaningfulGameNameTokens(value) {
+  return splitNameTokens(value)
+    .filter((token) => token.length >= 4 && !GAME_NAME_STOP_TOKENS.has(token));
 }
 
 function executableScore(executablePath, gameName, gameRoot, fsImpl = fs) {
@@ -244,8 +264,20 @@ function executableScore(executablePath, gameName, gameRoot, fsImpl = fs) {
     }
   }
 
-  if (/\\binaries\\win64\\/i.test(executablePath.replace(/\//g, '\\'))) {
+  const tokenMatch = getMeaningfulGameNameTokens(gameName)
+    .filter((token) => normalizedBase.includes(token))
+    .sort((left, right) => right.length - left.length)[0];
+  if (tokenMatch) {
+    score += 70 + Math.min(30, tokenMatch.length * 3);
+  }
+
+  const normalizedExecutablePath = executablePath.replace(/\//g, '\\');
+  if (/\\binaries\\win64\\/i.test(normalizedExecutablePath)) {
     score += 24;
+  }
+
+  if (/\\(?:rerelease|remaster(?:ed)?|enhanced)\\/i.test(normalizedExecutablePath)) {
+    score += 120;
   }
 
   if (/launcher/i.test(base)) {
@@ -253,7 +285,7 @@ function executableScore(executablePath, gameName, gameRoot, fsImpl = fs) {
   }
 
   if (HELPER_EXECUTABLE_PATTERN.test(base)) {
-    score -= 250;
+    score -= 400;
   }
 
   try {
@@ -300,6 +332,11 @@ function findLikelyExecutable(gameRoot, gameName, options = {}) {
       }
 
       if (item.isFile() && /\.exe$/i.test(item.name)) {
+        const baseName = winPath.basename(item.name, '.exe');
+        if (HELPER_EXECUTABLE_PATTERN.test(baseName)) {
+          continue;
+        }
+
         candidates.push({
           path: fullPath,
           score: executableScore(fullPath, gameName, gameRoot, fsImpl),
@@ -413,6 +450,27 @@ function scanLibraryGames(libraries = [], options = {}) {
   });
 }
 
+function getFriendlyGameNameFromExecutable(executablePath) {
+  const target = displayWindowsPath(executablePath);
+  if (!target) {
+    return 'Game';
+  }
+
+  if (/^[a-z]:\\/i.test(target)) {
+    let directory = winPath.dirname(target);
+    while (GENERIC_GAME_SUBDIRECTORY_PATTERN.test(winPath.basename(directory))) {
+      directory = winPath.dirname(directory);
+    }
+
+    const folderName = winPath.basename(directory);
+    if (folderName) {
+      return folderName;
+    }
+  }
+
+  return winPath.basename(target, winPath.extname(target)) || target || 'Game';
+}
+
 function gameForExecutable(executablePath, libraries = []) {
   const library = findContainingLibrary(executablePath, libraries);
   if (!library) {
@@ -444,6 +502,7 @@ module.exports = {
   findContainingLibrary,
   findLikelyExecutable,
   gameForExecutable,
+  getFriendlyGameNameFromExecutable,
   getDriveRoots,
   isPathInsideRoot,
   normalizeWindowsPath,

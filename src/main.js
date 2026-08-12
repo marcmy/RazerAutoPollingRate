@@ -38,6 +38,8 @@ const {
 const {
   discoverGameLibraries,
   gameForExecutable,
+  getFriendlyGameNameFromExecutable,
+  isPathInsideRoot,
   normalizeWindowsPath,
   scanLibraryGames,
 } = require('./lib/gameLibraries');
@@ -347,20 +349,7 @@ function upsertPickedRule(entries, newEntry) {
 }
 
 function getFriendlyRuleName(rule) {
-  const target = String(rule.target || '').trim();
-  if (/^[a-z]:\\/i.test(target)) {
-    let directory = path.win32.dirname(target);
-    const generic = /^(?:win64|win32|x64|x86|binaries|bin)$/i;
-    while (generic.test(path.win32.basename(directory))) {
-      directory = path.win32.dirname(directory);
-    }
-    const folderName = path.win32.basename(directory);
-    if (folderName) {
-      return folderName;
-    }
-  }
-
-  return path.win32.basename(target, path.win32.extname(target)) || target || 'Game';
+  return getFriendlyGameNameFromExecutable(rule.target);
 }
 
 function ruleMatchesGame(rule, game) {
@@ -370,7 +359,11 @@ function ruleMatchesGame(rule, game) {
   }
 
   if (/^[a-z]:\\/i.test(target) && game.executablePath) {
-    return normalizeWindowsPath(target) === normalizeWindowsPath(game.executablePath);
+    if (normalizeWindowsPath(target) === normalizeWindowsPath(game.executablePath)) {
+      return true;
+    }
+
+    return Boolean(game.gameRoot) && isPathInsideRoot(target, game.gameRoot);
   }
 
   const processName = path.win32.basename(target).toLowerCase();
@@ -402,14 +395,24 @@ async function buildGameCards(entries) {
       usedRules.add(overrideIndex);
     }
 
+    const overrideExecutablePath = override && /^[a-z]:\\/i.test(override.target)
+      ? override.target
+      : null;
+    const cardExecutablePath = overrideExecutablePath || game.executablePath;
+    const cardProcessName = override
+      ? path.win32.basename(override.target)
+      : game.processName;
+
     cards.push({
       ...game,
+      executablePath: cardExecutablePath,
+      processName: cardProcessName,
       kind: 'auto',
       customized: Boolean(override),
       pollingRate: override ? override.pollingRate : null,
       detectionMode: override ? override.detectionMode : 'default',
       overrideTarget: override ? override.target : null,
-      iconDataUrl: await getExecutableIconDataUrl(game.executablePath),
+      iconDataUrl: await getExecutableIconDataUrl(cardExecutablePath),
     });
   }
 

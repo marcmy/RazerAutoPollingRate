@@ -3,7 +3,9 @@ const assert = require('node:assert/strict');
 
 const {
   findContainingLibrary,
+  findLikelyExecutable,
   gameForExecutable,
+  getFriendlyGameNameFromExecutable,
   isPathInsideRoot,
   parseSteamAppManifest,
   parseSteamLibraryFolders,
@@ -72,4 +74,64 @@ test('runtime game identity is derived from the first folder under a library roo
   assert.equal(game.provider, 'steam');
   assert.equal(game.gameRoot, 'D:\\SteamLibrary\\steamapps\\common\\Quake');
   assert.equal(game.processName, 'Quake_x64.exe');
+});
+
+
+test('Apex discovery ignores crashmsg.exe and prefers the real game executable', () => {
+  const root = 'D:\\SteamLibrary\\steamapps\\common\\Apex Legends';
+  const fsImpl = {
+    readdirSync(directory) {
+      if (directory === root) {
+        return [
+          { name: 'crashmsg.exe', isDirectory: () => false, isFile: () => true },
+          { name: 'r5apex_dx12.exe', isDirectory: () => false, isFile: () => true },
+        ];
+      }
+      return [];
+    },
+    statSync(file) {
+      return { size: /r5apex/i.test(file) ? 80_000_000 : 8_000_000 };
+    },
+  };
+
+  assert.equal(
+    findLikelyExecutable(root, 'Apex Legends', { fsImpl }),
+    `${root}\\r5apex_dx12.exe`,
+  );
+});
+
+test('Quake discovery prefers the rerelease binary over the legacy root executable', () => {
+  const root = 'D:\\SteamLibrary\\steamapps\\common\\Quake';
+  const rerelease = `${root}\\rerelease`;
+  const fsImpl = {
+    readdirSync(directory) {
+      if (directory === root) {
+        return [
+          { name: 'quake.exe', isDirectory: () => false, isFile: () => true },
+          { name: 'rerelease', isDirectory: () => true, isFile: () => false },
+        ];
+      }
+      if (directory === rerelease) {
+        return [
+          { name: 'quake_x64_steam.exe', isDirectory: () => false, isFile: () => true },
+        ];
+      }
+      return [];
+    },
+    statSync() {
+      return { size: 20_000_000 };
+    },
+  };
+
+  assert.equal(
+    findLikelyExecutable(root, 'Quake', { fsImpl }),
+    `${rerelease}\\quake_x64_steam.exe`,
+  );
+});
+
+test('nested rerelease executable paths keep the parent game name', () => {
+  assert.equal(
+    getFriendlyGameNameFromExecutable('D:\\SteamLibrary\\steamapps\\common\\Quake\\rerelease\\quake_x64_steam.exe'),
+    'Quake',
+  );
 });

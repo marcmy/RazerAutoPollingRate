@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- Improved automatic executable selection so crash/reporting helpers such as `crashmsg.exe` are ignored in favor of real game binaries.
+- Prefer rerelease/remastered/enhanced binaries over legacy root executables when both are present in one game install.
+- Explicit executables inside an auto-detected game folder now merge into that game card and retain the parent game name instead of a build subfolder such as `rerelease`.
+
 ### Added
 
 - Added automatic game-library discovery for Steam libraries plus common Xbox, Epic, EA, GOG, Ubisoft, Riot, Rockstar, Amazon Games, itch.io, and HoYoPlay locations, with custom game folders and rescanning.
