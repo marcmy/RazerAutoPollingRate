@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.3.4
+
 ### Fixed
 
 - Improved automatic executable selection so crash/reporting helpers such as `crashmsg.exe` are ignored in favor of real game binaries.
