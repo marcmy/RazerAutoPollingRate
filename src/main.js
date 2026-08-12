@@ -44,6 +44,12 @@ const {
   scanLibraryGames,
 } = require('./lib/gameLibraries');
 const {
+  isGameHidden,
+  isRuleHidden,
+  metadataForGame,
+  normalizeGameMetadata,
+} = require('./lib/gameMetadata');
+const {
   getForegroundProcess,
   getForegroundProcessSnapshot,
   getRunningProcesses,
@@ -213,8 +219,8 @@ function loadConfig(warn = (message) => log(message, true)) {
   return readAppConfig(getConfigPath(), { warn });
 }
 
-function saveConfig(settings, entries, gameFolders = []) {
-  writeAppConfig(getConfigPath(), settings, entries, gameFolders);
+function saveConfig(settings, entries, gameFolders = [], gameMetadata = []) {
+  writeAppConfig(getConfigPath(), settings, entries, gameFolders, gameMetadata);
 }
 
 function buildLibraryConfigurationKey(settings, gameFolders) {
@@ -477,8 +483,9 @@ async function getExecutableIconDataUrl(executablePath) {
   return iconPromise;
 }
 
-async function buildGameCards(entries) {
+async function buildGameCards(entries, gameMetadata = []) {
   const rules = editorRulesFromEntries(entries);
+  const metadata = normalizeGameMetadata(gameMetadata);
   const cards = [];
   const usedRules = new Set();
 
@@ -496,13 +503,23 @@ async function buildGameCards(entries) {
     const cardProcessName = override
       ? path.win32.basename(override.target)
       : game.processName;
+    const gameMeta = metadataForGame(game, metadata);
+    const defaultName = game.name;
+    const customName = gameMeta && gameMeta.name ? gameMeta.name : null;
+    const hidden = Boolean(gameMeta && gameMeta.hidden);
+    const hasRuleOverride = Boolean(override);
 
     cards.push({
       ...game,
+      name: customName || defaultName,
+      defaultName,
+      customName,
+      hidden,
       executablePath: cardExecutablePath,
       processName: cardProcessName,
       kind: 'auto',
-      customized: Boolean(override),
+      customized: hasRuleOverride || Boolean(customName) || hidden,
+      hasRuleOverride,
       pollingRate: override ? override.pollingRate : null,
       detectionMode: override ? override.detectionMode : 'default',
       overrideTarget: override ? override.target : null,
@@ -517,9 +534,10 @@ async function buildGameCards(entries) {
 
     const rule = rules[index];
     const executablePath = /^[a-z]:\\/i.test(rule.target) ? rule.target : null;
-    cards.push({
+    const defaultName = getFriendlyRuleName(rule);
+    const baseCard = {
       id: `manual:${normalizeProcessName(rule.target)}`,
-      name: getFriendlyRuleName(rule),
+      defaultName,
       source: 'Manual',
       provider: 'manual',
       gameRoot: executablePath ? path.win32.dirname(executablePath) : null,
@@ -527,10 +545,21 @@ async function buildGameCards(entries) {
       processName: path.win32.basename(rule.target),
       autoDetected: false,
       kind: 'manual',
-      customized: true,
+      hasRuleOverride: true,
       pollingRate: rule.pollingRate,
       detectionMode: rule.detectionMode || 'default',
       overrideTarget: rule.target,
+    };
+    const gameMeta = metadataForGame(baseCard, metadata);
+    const customName = gameMeta && gameMeta.name ? gameMeta.name : null;
+    const hidden = Boolean(gameMeta && gameMeta.hidden);
+
+    cards.push({
+      ...baseCard,
+      name: customName || defaultName,
+      customName,
+      hidden,
+      customized: true,
       iconDataUrl: await getExecutableIconDataUrl(executablePath),
     });
   }
@@ -552,6 +581,7 @@ function setupSettingsIpc() {
       settings,
       entries,
       gameFolders,
+      gameMetadata,
       warnings,
     } = loadConfig((message) => log(message, true));
     applySettings(settings);
@@ -562,8 +592,9 @@ function setupSettingsIpc() {
       settings: getCurrentSettings(),
       rules: editorRulesFromEntries(entries),
       gameFolders,
+      gameMetadata,
       libraries: gameLibraries,
-      games: await buildGameCards(entries),
+      games: await buildGameCards(entries, gameMetadata),
       runtime: getRuntimeStatus(),
       warnings,
     };
@@ -595,9 +626,10 @@ function setupSettingsIpc() {
       const gameFolders = Array.isArray(payload.gameFolders)
         ? payload.gameFolders.map((folder) => String(folder || '').trim()).filter(Boolean)
         : [];
+      const gameMetadata = normalizeGameMetadata(payload.gameMetadata);
       const autostartChanged = settings.autostart !== autostartEnabled;
       applySettings(settings);
-      saveConfig(getCurrentSettings(), entries, gameFolders);
+      saveConfig(getCurrentSettings(), entries, gameFolders, gameMetadata);
       syncGameLibraries(settings, gameFolders, true);
 
       if (autostartChanged) {
@@ -611,6 +643,7 @@ function setupSettingsIpc() {
         settings: getCurrentSettings(),
         rules: editorRulesFromEntries(entries),
         gameFolders,
+        gameMetadata,
         warnings: [],
       };
     } catch (error) {
@@ -623,12 +656,13 @@ function setupSettingsIpc() {
       settings,
       entries,
       gameFolders,
+      gameMetadata,
     } = loadConfig((message) => log(message, true));
     applySettings(settings);
     rescanGames(settings, gameFolders);
     return {
       libraries: gameLibraries,
-      games: await buildGameCards(entries),
+      games: await buildGameCards(entries, gameMetadata),
     };
   });
 
@@ -869,11 +903,12 @@ async function handlePickWindowShortcut() {
       settings,
       entries,
       gameFolders,
+      gameMetadata,
     } = loadConfig((message) => log(message, true));
     applySettings(settings);
     const newEntry = createRuleEntry(target, defaultGamePollingRate);
     const updatedEntries = upsertPickedRule(entries, newEntry);
-    saveConfig(getCurrentSettings(), updatedEntries, gameFolders);
+    saveConfig(getCurrentSettings(), updatedEntries, gameFolders, gameMetadata);
     setTrayStatus({
       icon: 'loading.png',
       tooltip: `Added ${target} at ${defaultGamePollingRate} Hz`,
@@ -1118,7 +1153,7 @@ function updateDiagnosticSession(entries, runningProcesses, lookupError) {
   return runningSelection;
 }
 
-function selectCurrentPollingRate(entries, foregroundProcess, runningProcesses) {
+function selectCurrentPollingRate(entries, foregroundProcess, runningProcesses, gameMetadata = []) {
   const configured = selectConfiguredPollingRate(entries, {
     foregroundProcess,
     runningProcesses,
@@ -1133,7 +1168,7 @@ function selectCurrentPollingRate(entries, foregroundProcess, runningProcesses) 
 
   if (foregroundProcess && foregroundProcess.executablePath && gameLibraries.length > 0) {
     const game = gameForExecutable(foregroundProcess.executablePath, gameLibraries);
-    if (game) {
+    if (game && !isGameHidden(game, gameMetadata)) {
       rememberDetectedGame(game);
       return {
         targetRate: defaultGamePollingRate,
@@ -1176,9 +1211,11 @@ async function checkPollingRate(firstRun) {
       settings,
       entries,
       gameFolders,
+      gameMetadata,
     } = loadConfig((message) => log(message, true));
     applySettings(settings);
     syncGameLibraries(settings, gameFolders);
+    const activeEntries = entries.filter((entry) => !isRuleHidden(entry, gameMetadata));
 
     let runningProcesses = null;
     let runningProcessesError = null;
@@ -1191,7 +1228,7 @@ async function checkPollingRate(firstRun) {
     }
 
     const needsRunningProcesses = diagnosticLoggingEnabled
-      || (detectionEnabled && entries.some((entry) => ruleNeedsRunningProcesses(entry, getDetectionMode())));
+      || (detectionEnabled && activeEntries.some((entry) => ruleNeedsRunningProcesses(entry, getDetectionMode())));
 
     if (needsRunningProcesses) {
       try {
@@ -1201,20 +1238,20 @@ async function checkPollingRate(firstRun) {
       }
     }
 
-    const loggingSelection = updateDiagnosticSession(entries, runningProcesses, runningProcessesError);
+    const loggingSelection = updateDiagnosticSession(activeEntries, runningProcesses, runningProcessesError);
     let selected;
 
     if (!detectionEnabled) {
       selected = createInactiveSelection();
     } else {
       if (needsRunningProcesses && !runningProcesses && runningProcessesError) {
-        const requiredForMatching = entries.some((entry) => ruleNeedsRunningProcesses(entry, getDetectionMode()));
+        const requiredForMatching = activeEntries.some((entry) => ruleNeedsRunningProcesses(entry, getDetectionMode()));
         if (requiredForMatching) {
           throw runningProcessesError;
         }
       }
 
-      selected = selectCurrentPollingRate(entries, foregroundProcess, runningProcesses || []);
+      selected = selectCurrentPollingRate(activeEntries, foregroundProcess, runningProcesses || [], gameMetadata);
     }
 
     const requestedTarget = selected.targetRate;
@@ -1282,7 +1319,7 @@ async function checkPollingRate(firstRun) {
       currentRate: pollingRate,
       targetRate,
       requestedTarget,
-      rules: entries.length,
+      rules: activeEntries.length,
       libraries: gameLibraries.length,
     }, { verbose: true });
 

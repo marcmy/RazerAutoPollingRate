@@ -82,7 +82,7 @@
     }
 
     .brand-title {
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 650;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -355,7 +355,7 @@
     .games-grid {
       display: grid;
       gap: 12px;
-      grid-template-columns: repeat(auto-fill, minmax(205px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
     }
 
     .game-card {
@@ -364,9 +364,9 @@
       border-radius: 12px;
       color: CanvasText;
       display: grid;
-      gap: 12px;
-      min-height: 176px;
-      padding: 14px;
+      gap: 8px;
+      min-height: 142px;
+      padding: 11px;
       position: relative;
       text-align: left;
       transition: border-color 120ms ease, transform 120ms ease, background 120ms ease;
@@ -400,10 +400,10 @@
       flex: 0 0 auto;
       font-size: 20px;
       font-weight: 700;
-      height: 48px;
+      height: 40px;
       justify-content: center;
       overflow: hidden;
-      width: 48px;
+      width: 40px;
     }
 
     .game-icon img,
@@ -439,7 +439,7 @@
       display: flex;
       flex-wrap: wrap;
       gap: 5px;
-      margin-top: 7px;
+      margin-top: 5px;
     }
 
     .badge {
@@ -464,7 +464,7 @@
       color: var(--muted);
       display: grid;
       font-size: 11px;
-      gap: 4px;
+      gap: 2px;
       margin-top: auto;
     }
 
@@ -803,6 +803,7 @@
                 <button class="segment active" data-filter="all" type="button">All</button>
                 <button class="segment" data-filter="customized" type="button">Customized</button>
                 <button class="segment" data-filter="auto" type="button">Auto-detected</button>
+                <button class="segment" data-filter="hidden" type="button">Hidden</button>
               </div>
               <button id="add-game" class="button primary" type="button">+ Add Game</button>
             </div>
@@ -882,6 +883,12 @@
 
     <div class="modal-body">
       <div class="field">
+        <label for="modal-name">Display name</label>
+        <input id="modal-name" type="text" maxlength="80" spellcheck="false">
+        <div class="field-help">Customize the name shown on the game card without changing detection.</div>
+      </div>
+
+      <div class="field">
         <label for="modal-executable">Executable</label>
         <div class="path-field">
           <input id="modal-executable" type="text" spellcheck="false">
@@ -903,6 +910,14 @@
             <option value="running">Running process</option>
           </select>
         </div>
+      </div>
+
+      <div class="field">
+        <label class="toggle-row">
+          <input id="modal-hidden" type="checkbox">
+          <span>Hide and ignore this game</span>
+        </label>
+        <div class="field-help">Ignored games stay out of the normal list and will not activate an automatic or explicit polling rule. Use the Hidden filter to restore them.</div>
       </div>
     </div>
 
@@ -928,6 +943,7 @@
       settings: null,
       rules: [],
       gameFolders: [],
+      gameMetadata: [],
       libraries: [],
       games: [],
       runtime: null,
@@ -1021,6 +1037,7 @@
           settings: state.settings,
           rules: state.rules,
           gameFolders: state.gameFolders,
+          gameMetadata: state.gameMetadata,
         });
 
         if (!result.ok) {
@@ -1031,6 +1048,7 @@
         state.settings = result.settings;
         state.rules = result.rules;
         state.gameFolders = result.gameFolders;
+        state.gameMetadata = result.gameMetadata || state.gameMetadata;
         setStatus('Saved');
         renderGames();
       } catch (error) {
@@ -1112,11 +1130,12 @@
       const query = byId('game-search').value.trim().toLowerCase();
 
       const visible = state.games.filter((card) => {
-        if (state.filter === 'customized' && !card.customized) {
-          return false;
-        }
-        if (state.filter === 'auto' && card.kind !== 'auto') {
-          return false;
+        if (state.filter === 'hidden') {
+          if (!card.hidden) return false;
+        } else {
+          if (card.hidden) return false;
+          if (state.filter === 'customized' && !card.customized) return false;
+          if (state.filter === 'auto' && card.kind !== 'auto') return false;
         }
 
         if (!query) {
@@ -1173,6 +1192,12 @@
           customized.textContent = 'Customized';
           badges.appendChild(customized);
         }
+        if (card.hidden) {
+          const hidden = document.createElement('span');
+          hidden.className = 'badge customized';
+          hidden.textContent = 'Ignored';
+          badges.appendChild(hidden);
+        }
 
         titleWrap.append(title, exe, badges);
         top.appendChild(titleWrap);
@@ -1191,9 +1216,11 @@
         const dot = document.createElement('span');
         dot.className = 'status-dot';
         const liveText = document.createElement('span');
-        liveText.textContent = running
-          ? `Running · ${state.runtime.targetRate || state.runtime.requestedTarget || getRateLabel(card)} Hz active`
-          : 'Not running';
+        liveText.textContent = card.hidden
+          ? 'Ignored'
+          : (running
+            ? `Running · ${state.runtime.targetRate || state.runtime.requestedTarget || getRateLabel(card)} Hz active`
+            : 'Not running');
         live.append(dot, liveText);
 
         summary.append(rate, detection, live);
@@ -1324,10 +1351,12 @@
       setModalIcon(card);
       byId('modal-title').textContent = card.name || card.processName || 'Game';
       byId('modal-subtitle').textContent = `${card.source || 'Manual'} · ${card.kind === 'auto' ? 'Automatically detected' : 'Manual game'}`;
+      byId('modal-name').value = card.name || card.defaultName || card.processName || 'Game';
       byId('modal-executable').value = card.overrideTarget || card.executablePath || card.processName || '';
       fillRateSelect(byId('modal-rate'), validRates, card.pollingRate, true);
       byId('modal-detection').value = card.detectionMode || 'default';
-      byId('modal-remove').classList.toggle('hidden', card.kind !== 'auto' || !card.customized);
+      byId('modal-hidden').checked = Boolean(card.hidden);
+      byId('modal-remove').classList.toggle('hidden', card.kind !== 'auto' || !card.hasRuleOverride);
       byId('modal-delete').classList.toggle('hidden', card.kind !== 'manual');
       gameDialog.showModal();
     }
@@ -1335,6 +1364,33 @@
     function closeGameDialog() {
       state.modalCard = null;
       gameDialog.close();
+    }
+
+    function metadataIdForCard(card) {
+      return String(card && card.id || '').trim().toLowerCase();
+    }
+
+    function removeMetadataForCard(card) {
+      const id = metadataIdForCard(card);
+      state.gameMetadata = state.gameMetadata.filter((item) => String(item.id || '').trim().toLowerCase() !== id);
+    }
+
+    function upsertMetadataForCard(card, customName, hidden, target, previousId = null) {
+      const id = metadataIdForCard(card);
+      const oldId = String(previousId || '').trim().toLowerCase();
+      state.gameMetadata = state.gameMetadata.filter((item) => {
+        const itemId = String(item.id || '').trim().toLowerCase();
+        return itemId !== id && (!oldId || itemId !== oldId);
+      });
+
+      if (customName || hidden) {
+        state.gameMetadata.push({
+          id: card.id,
+          ...(customName ? { name: customName } : {}),
+          ...(hidden ? { hidden: true } : {}),
+          ...(target ? { target } : {}),
+        });
+      }
     }
 
     function upsertRule(target, pollingRate, detectionMode) {
@@ -1367,26 +1423,40 @@
         return;
       }
 
+      const displayName = byId('modal-name').value.trim();
       const rateValue = byId('modal-rate').value;
       const pollingRate = rateValue === 'default' ? null : Number(rateValue);
       const detectionMode = byId('modal-detection').value;
+      const hidden = byId('modal-hidden').checked;
+      const defaultName = card.defaultName || card.name || card.processName || 'Game';
+      const customName = displayName && displayName !== defaultName ? displayName : null;
+      const previousMetadataId = metadataIdForCard(card);
 
       if (card.kind === 'auto' && pollingRate === null && detectionMode === 'default'
         && normalizedPath(target) === normalizedPath(card.executablePath)) {
         removeRuleForCard(card);
-        card.customized = false;
         card.pollingRate = null;
         card.detectionMode = 'default';
         card.overrideTarget = null;
+        card.hasRuleOverride = false;
       } else {
         upsertRule(target, pollingRate, detectionMode);
-        card.customized = true;
         card.pollingRate = pollingRate;
         card.detectionMode = detectionMode;
         card.overrideTarget = target;
+        card.hasRuleOverride = true;
         card.executablePath = /^[a-z]:\\/i.test(target) ? target : card.executablePath;
         card.processName = target.split(/[\\/]/).pop();
+        if (card.kind === 'manual') {
+          card.id = `manual:${normalizedPath(target)}`;
+        }
       }
+
+      card.customName = customName;
+      card.name = customName || defaultName;
+      card.hidden = hidden;
+      card.customized = Boolean(card.hasRuleOverride || customName || hidden);
+      upsertMetadataForCard(card, customName, hidden, target, previousMetadataId);
 
       closeGameDialog();
       renderGames();
@@ -1421,6 +1491,9 @@
       const card = {
         id: `manual:${normalizedPath(selected.path)}`,
         name: selected.name || selected.processName,
+        defaultName: selected.name || selected.processName,
+        customName: null,
+        hidden: false,
         source: 'Manual',
         provider: 'manual',
         executablePath: selected.path,
@@ -1428,6 +1501,7 @@
         autoDetected: false,
         kind: 'manual',
         customized: true,
+        hasRuleOverride: true,
         pollingRate: null,
         detectionMode: 'default',
         overrideTarget: selected.path,
@@ -1487,6 +1561,7 @@
       state.settings = result.settings;
       state.rules = result.rules || [];
       state.gameFolders = result.gameFolders || [];
+      state.gameMetadata = result.gameMetadata || [];
       state.libraries = result.libraries || [];
       state.games = result.games || [];
       state.runtime = result.runtime || null;
@@ -1544,10 +1619,11 @@
       const card = state.modalCard;
       if (!card) return;
       removeRuleForCard(card);
-      card.customized = false;
+      card.hasRuleOverride = false;
       card.pollingRate = null;
       card.detectionMode = 'default';
       card.overrideTarget = null;
+      card.customized = Boolean(card.customName || card.hidden);
       closeGameDialog();
       renderGames();
       scheduleSave(0);
@@ -1556,6 +1632,7 @@
       const card = state.modalCard;
       if (!card) return;
       removeRuleForCard(card);
+      removeMetadataForCard(card);
       state.games = state.games.filter((item) => item !== card);
       closeGameDialog();
       renderGames();

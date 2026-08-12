@@ -147,3 +147,22 @@ test('writeAppConfig writes a readable config.ini', () => {
   assert.equal(readBack.entries[0].processName, 'r5apex.exe');
   assert.deepEqual(readBack.gameFolders, ['D:\\Games']);
 });
+
+
+test('config.ini persists custom game names and ignored games', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'rapr-config-'));
+  const configPath = path.join(directory, 'config.ini');
+  const { entries } = parseProcessConfig('r5apex.exe default');
+  const metadata = [
+    { id: 'manual:r5apex.exe', name: 'R5Reloaded', target: 'r5apex.exe' },
+    { id: 'C:\\Games\\Hollow Knight', hidden: true, target: 'C:\\Games\\Hollow Knight\\hollow_knight.exe' },
+  ];
+
+  writeAppConfig(configPath, DEFAULT_SETTINGS, entries, ['C:\\Games'], metadata);
+  const readBack = readAppConfig(configPath);
+
+  assert.deepEqual(readBack.gameMetadata, [
+    { id: 'manual:r5apex.exe', name: 'R5Reloaded', target: 'r5apex.exe' },
+    { id: 'c:\\games\\hollow knight', hidden: true, target: 'c:\\games\\hollow knight\\hollow_knight.exe' },
+  ]);
+});
