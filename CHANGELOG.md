@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added
+
+- Added automatic game-library discovery for Steam libraries plus common Xbox, Epic, EA, GOG, Ubisoft, Riot, Rockstar, Amazon Games, itch.io, and HoYoPlay locations, with custom game folders and rescanning.
+- Added automatic foreground game matching under detected library roots without generating permanent polling rules.
+- Added per-game polling-rate and detection-mode overrides, including inherited defaults and running-process fallback for elevated games.
+- Added executable icons, searchable game cards, source badges, customized indicators, and live running/polling status.
+
+### Changed
+
+- Rebuilt Settings into General, Games, Game Libraries, and Diagnostics views with a card grid and per-game configuration dialog.
+- Existing polling rules remain compatible and now appear as game overrides instead of a large editable table.
+- Moved diagnostic and advanced controls into a dedicated Diagnostics page.
+
 ## v1.3.3
 
 ### Added
@@ -85,7 +98,7 @@
 
 ## v1.2.8
 
-- Improved foreground-window detection for elevated or protected apps so bare process-name rules can still match when Windows does not expose the executable path.
+- Improved foreground-window detection for elevated or protected apps so bare process-name rules can still match when Windows does not expose the executable path from unelevated apps.
 - Documented that elevated/protected games may need bare `.exe` rules because Windows can hide the full executable path from unelevated apps.
 - Simplified GitHub Actions: CI now verifies tests only, while the manual draft release workflow is the single path that builds Windows release assets, SHA256 hashes, and tags/releases.
 - Updated the draft release workflow default tag to `v1.2.8-maintained`.
