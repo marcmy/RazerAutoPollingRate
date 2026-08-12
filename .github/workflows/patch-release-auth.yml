@@ -47,51 +47,40 @@ jobs:
         run: |
           $path = '.github/workflows/release.yml'
           $content = (Get-Content -LiteralPath $path -Raw).Replace("`r`n", "`n")
+          $tokenExpression = '$' + '{{ github.token }}'
 
-          $prepareOld = @'
-  prepare-release:
-    if: github.ref == 'refs/heads/main'
-    runs-on: windows-2022
-    outputs:
-'@.Replace("`r`n", "`n")
+          $prepareOld = @(
+            '  prepare-release:',
+            "    if: github.ref == 'refs/heads/main'",
+            '    runs-on: windows-2022',
+            '    outputs:'
+          ) -join "`n"
 
-          $prepareNew = @'
-  prepare-release:
-    if: github.ref == 'refs/heads/main'
-    runs-on: windows-2022
-    env:
-      GH_TOKEN: ${{ github.token }}
-    outputs:
-'@.Replace("`r`n", "`n")
+          $prepareNew = @(
+            '  prepare-release:',
+            "    if: github.ref == 'refs/heads/main'",
+            '    runs-on: windows-2022',
+            '    env:',
+            "      GH_TOKEN: $tokenExpression",
+            '    outputs:'
+          ) -join "`n"
 
           if (-not $content.Contains($prepareOld)) {
             throw 'Unable to locate prepare-release header'
           }
           $content = $content.Replace($prepareOld, $prepareNew)
 
-          $credentialsBlock = @'
-      - name: Configure release automation credentials
-        shell: pwsh
-        env:
-          RELEASE_AUTOMATION_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.SCOOP_BUCKET_TOKEN || secrets.GH_PAT || secrets.PAT }}
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:RELEASE_AUTOMATION_TOKEN)) {
-            throw 'No release automation token configured. Add RELEASE_TOKEN, SCOOP_BUCKET_TOKEN, GH_PAT, or PAT.'
-          }
-
-          "GH_TOKEN=$env:RELEASE_AUTOMATION_TOKEN" >> $env:GITHUB_ENV
-
-'@.Replace("`r`n", "`n")
-
-          if (-not $content.Contains($credentialsBlock)) {
+          $credentialPattern = '(?ms)^      - name: Configure release automation credentials\n.*?^          "GH_TOKEN=\$env:RELEASE_AUTOMATION_TOKEN" >> \$env:GITHUB_ENV\n\n'
+          $updated = [regex]::Replace($content, $credentialPattern, '', 1)
+          if ($updated -eq $content) {
             throw 'Unable to locate obsolete release credential block'
           }
-          $content = $content.Replace($credentialsBlock, '')
+          $content = $updated
 
           if ($content.Contains('RELEASE_AUTOMATION_TOKEN')) {
             throw 'Obsolete release automation token reference still exists'
           }
-          if (-not $content.Contains('GH_TOKEN: ${{ github.token }}')) {
+          if (-not $content.Contains("GH_TOKEN: $tokenExpression")) {
             throw 'Built-in GITHUB_TOKEN was not added to prepare-release'
           }
 
@@ -107,30 +96,30 @@ jobs:
           $path = '.github/workflows/scoop-excavator.yml'
           $content = (Get-Content -LiteralPath $path -Raw).Replace("`r`n", "`n")
 
-          $old = @'
-          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
-            Write-Host "No cross-repo token secret configured; skipping scoop-bucket Excavator trigger. Add SCOOP_BUCKET_TOKEN, GH_PAT, or PAT with repo/workflow access to enable this."
-            exit 0
-          }
+          $old = @(
+            '          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {',
+            '            Write-Host "No cross-repo token secret configured; skipping scoop-bucket Excavator trigger. Add SCOOP_BUCKET_TOKEN, GH_PAT, or PAT with repo/workflow access to enable this."',
+            '            exit 0',
+            '          }',
+            '',
+            '          gh workflow run excavator.yml --repo marcmy/scoop-bucket --ref master',
+            '          if ($LASTEXITCODE -ne 0) {',
+            '            throw "Unable to trigger scoop-bucket Excavator"',
+            '          }'
+          ) -join "`n"
 
-          gh workflow run excavator.yml --repo marcmy/scoop-bucket --ref master
-          if ($LASTEXITCODE -ne 0) {
-            throw "Unable to trigger scoop-bucket Excavator"
-          }
-'@.Replace("`r`n", "`n")
-
-          $new = @'
-          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
-            Write-Warning "No cross-repo token is configured. Skipping the immediate Scoop trigger; the scheduled Excavator in marcmy/scoop-bucket will pick up the release automatically."
-            exit 0
-          }
-
-          gh workflow run excavator.yml --repo marcmy/scoop-bucket --ref master
-          if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Immediate Scoop trigger failed. The cross-repo token may be expired or lack Actions access; the scheduled Excavator in marcmy/scoop-bucket will pick up the release automatically."
-            exit 0
-          }
-'@.Replace("`r`n", "`n")
+          $new = @(
+            '          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {',
+            '            Write-Warning "No cross-repo token is configured. Skipping the immediate Scoop trigger; the scheduled Excavator in marcmy/scoop-bucket will pick up the release automatically."',
+            '            exit 0',
+            '          }',
+            '',
+            '          gh workflow run excavator.yml --repo marcmy/scoop-bucket --ref master',
+            '          if ($LASTEXITCODE -ne 0) {',
+            '            Write-Warning "Immediate Scoop trigger failed. The cross-repo token may be expired or lack Actions access; the scheduled Excavator in marcmy/scoop-bucket will pick up the release automatically."',
+            '            exit 0',
+            '          }'
+          ) -join "`n"
 
           if (-not $content.Contains($old)) {
             throw 'Unable to locate Scoop trigger block'
@@ -157,15 +146,16 @@ jobs:
           $content = $content.Replace($oldBullet, $newBullet)
 
           if (-not $content.Contains('## Authentication')) {
-            $content = $content.TrimEnd() + @'
-
-
-## Authentication
-
-The release workflow uses GitHub Actions' repository-scoped `GITHUB_TOKEN` for all operations inside `RazerAutoPollingRate`, including release branches, pull requests, CI dispatch, merging, tags, and release publication. A personal access token is not required for those operations.
-
-`SCOOP_BUCKET_TOKEN`, `GH_PAT`, or `PAT` is only an optional fast-path for immediately dispatching the Excavator in `marcmy/scoop-bucket`. If that token is missing, expired, or lacks Actions access, the release still succeeds and the bucket's scheduled Excavator picks up the new release automatically.
-'@.Replace("`r`n", "`n")
+            $authSection = @(
+              '',
+              '',
+              '## Authentication',
+              '',
+              "The release workflow uses GitHub Actions' repository-scoped `GITHUB_TOKEN` for all operations inside `RazerAutoPollingRate`, including release branches, pull requests, CI dispatch, merging, tags, and release publication. A personal access token is not required for those operations.",
+              '',
+              '`SCOOP_BUCKET_TOKEN`, `GH_PAT`, or `PAT` is only an optional fast-path for immediately dispatching the Excavator in `marcmy/scoop-bucket`. If that token is missing, expired, or lacks Actions access, the release still succeeds and the bucket''s scheduled Excavator picks up the new release automatically.'
+            ) -join "`n"
+            $content = $content.TrimEnd() + $authSection
           }
 
           [IO.File]::WriteAllText(
