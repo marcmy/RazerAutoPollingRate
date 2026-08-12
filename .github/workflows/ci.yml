@@ -50,6 +50,31 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: npm run make
 
+      - name: Generate SHA256 hashes
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          $root = (Resolve-Path 'out/make').Path
+
+          Get-ChildItem -Path $root -Recurse -File |
+            Sort-Object FullName |
+            ForEach-Object {
+              $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName
+              $relativePath = [IO.Path]::GetRelativePath($root, $_.FullName).Replace('\\', '/')
+              "$($hash.Hash.ToLower())  $relativePath"
+            } | Set-Content -Encoding ASCII SHA256SUMS.txt
+
+      - name: Upload Windows test build
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: RazerAutoPollingRate-Windows-${{ github.sha }}
+          path: |
+            out/make/**
+            SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Standard CI marker
         if: github.event_name != 'workflow_dispatch'
         shell: pwsh
