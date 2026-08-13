@@ -8,3 +8,4 @@ require('./processDiscovery.test');
 require('./processes.test');
 require('./rates.test');
 require('./retryImmediately.test');
+require('./runtimeGameMatching.test');
