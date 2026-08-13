@@ -61,6 +61,22 @@ function entryMatchesProcess(entry, processInfo, options = {}) {
   return Boolean(process.processName) && entry.processName === process.processName;
 }
 
+function canSafelyFallbackPathRuleByName(entries, entry, processInfo) {
+  if (!entry || !entry.executablePath) {
+    return false;
+  }
+
+  const process = normalizeProcessInfo(processInfo);
+  if (process.executablePath || !process.processName || entry.processName !== process.processName) {
+    return false;
+  }
+
+  const matchingPathRules = entries.filter((candidate) => candidate.executablePath
+    && candidate.processName === process.processName);
+
+  return matchingPathRules.length === 1;
+}
+
 function findBestMatchingProcess(entries, processInfos) {
   const processes = processInfos.map(normalizeProcessInfo);
   const runningPaths = new Set(processes.map((processInfo) => processInfo.executablePath).filter(Boolean));
@@ -146,9 +162,10 @@ function findConfiguredMatch(entries, options = {}) {
       const candidates = mode === 'running'
         ? runningProcesses
         : (foregroundProcess ? [foregroundProcess] : []);
-      const allowPathNameFallback = mode === 'running';
 
-      if (candidates.some((candidate) => entryMatchesProcess(entry, candidate, { allowPathNameFallback }))) {
+      if (candidates.some((candidate) => entryMatchesProcess(entry, candidate, {
+        allowPathNameFallback: canSafelyFallbackPathRuleByName(entries, entry, candidate),
+      }))) {
         return {
           entry,
           detectionMode: mode,
@@ -175,6 +192,7 @@ function selectConfiguredPollingRate(entries, options = {}) {
 }
 
 module.exports = {
+  canSafelyFallbackPathRuleByName,
   entryMatchesProcess,
   findBestMatchingProcess,
   findConfiguredMatch,

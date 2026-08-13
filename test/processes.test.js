@@ -65,6 +65,40 @@ test('foreground mode matches exact full executable path', () => {
   assert.equal(selected.targetRate, 4000);
 });
 
+test('foreground path rule falls back to a unique process name when Windows hides the path', () => {
+  const { entries } = parseProcessConfig([
+    '"C:\\Program Files (x86)\\Steam\\steamapps\\common\\Apex Legends\\r5apex_dx12.exe" 4000',
+  ].join('\n'));
+  const selected = selectConfiguredPollingRate(entries, {
+    foregroundProcess: { processName: 'R5APEX_DX12.EXE', executablePath: null },
+    runningProcesses: [],
+    defaultDetectionMode: 'foreground',
+    inactivePollingRate: 125,
+    defaultGamePollingRate: 1000,
+  });
+
+  assert.equal(selected.targetRate, 4000);
+  assert.equal(selected.matchedDetectionMode, 'foreground');
+  assert.equal(selected.matchedProcess, 'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Apex Legends\\r5apex_dx12.exe');
+});
+
+test('foreground path-name fallback refuses ambiguous configured paths', () => {
+  const { entries } = parseProcessConfig([
+    '"C:\\Games\\Build A\\game.exe" 2000',
+    '"D:\\Games\\Build B\\game.exe" 4000',
+  ].join('\n'));
+  const selected = selectConfiguredPollingRate(entries, {
+    foregroundProcess: { processName: 'game.exe', executablePath: null },
+    runningProcesses: [],
+    defaultDetectionMode: 'foreground',
+    inactivePollingRate: 125,
+    defaultGamePollingRate: 1000,
+  });
+
+  assert.equal(selected.targetRate, 125);
+  assert.equal(selected.matchedProcess, null);
+});
+
 test('per-game running mode overrides the global foreground default', () => {
   const { entries } = parseProcessConfig('admin-game.exe 4000 running');
   const selected = selectConfiguredPollingRate(entries, {
