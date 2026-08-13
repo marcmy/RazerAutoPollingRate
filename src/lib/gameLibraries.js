@@ -506,6 +506,13 @@ function gameForExecutable(executablePath, libraries = []) {
     return null;
   }
 
+  if (!library.custom) {
+    const baseName = winPath.basename(executablePath, '.exe');
+    if (/launcher/i.test(baseName) || HELPER_EXECUTABLE_PATTERN.test(baseName)) {
+      return null;
+    }
+  }
+
   const relative = winPath.relative(library.root, displayWindowsPath(executablePath));
   const firstSegment = relative.split('\\').filter(Boolean)[0];
   const executableAtRoot = Boolean(firstSegment && /\.exe$/i.test(firstSegment));
