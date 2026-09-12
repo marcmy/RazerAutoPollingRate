@@ -6,6 +6,7 @@ require('./devices.test');
 require('./gameLibraries.test');
 require('./processDiscovery.test');
 require('./processes.test');
+require('./pulsarCrazyLightBackend.test');
 require('./pulsarCrazyLightProtocol.test');
 require('./rates.test');
 require('./retryImmediately.test');
