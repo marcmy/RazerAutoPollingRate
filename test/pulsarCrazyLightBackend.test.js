@@ -139,3 +139,15 @@ test('CrazyLight backend rejects unknown polling bytes', async () => {
   await assert.rejects(() => backend.getPollingRate(), /unknown polling-rate value/i);
   await backend.close();
 });
+
+test('probe closes the device when claiming the interface fails', async () => {
+  const device = createFakeDevice();
+  device.claimInterface = async (value) => {
+    device.calls.push(['claimInterface', value]);
+    throw new Error('claimInterface failed');
+  };
+  const backend = createBackendForDevice(device);
+
+  await assert.rejects(() => backend.probe(), /claimInterface failed/);
+  assert.ok(device.calls.some(([name]) => name === 'close'));
+});
