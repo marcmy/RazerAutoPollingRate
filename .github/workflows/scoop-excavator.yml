@@ -11,6 +11,7 @@ permissions: {}
 jobs:
   trigger-excavator:
     runs-on: ubuntu-latest
+    environment: scoop-bucket
     steps:
       - name: Trigger scoop bucket Excavator
         shell: pwsh
