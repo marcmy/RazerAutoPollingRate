@@ -11,19 +11,43 @@ permissions: {}
 jobs:
   trigger-excavator:
     runs-on: ubuntu-latest
+    environment: scoop-bucket
     steps:
       - name: Trigger scoop bucket Excavator
         shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN || secrets.GH_PAT || secrets.PAT }}
+          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          PAT: ${{ secrets.PAT }}
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+          $credentials = @(
+            @{ Name = 'SCOOP_BUCKET_TOKEN'; Value = $env:SCOOP_BUCKET_TOKEN }
+            @{ Name = 'GH_PAT'; Value = $env:GH_PAT }
+            @{ Name = 'PAT'; Value = $env:PAT }
+          )
+
+          $configured = @(
+            $credentials | Where-Object {
+              -not [string]::IsNullOrWhiteSpace($_.Value)
+            }
+          )
+
+          if ($configured.Count -eq 0) {
             Write-Warning "No cross-repo token is configured. Skipping the immediate Scoop trigger; the scheduled Excavator in marcmy/scoop-bucket will pick up the release automatically."
             exit 0
           }
 
-          gh workflow run excavator.yml --repo marcmy/scoop-bucket --ref master
-          if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Immediate Scoop trigger failed. The cross-repo token may be expired or lack Actions access; the scheduled Excavator in marcmy/scoop-bucket will pick up the release automatically."
-            exit 0
+          foreach ($credential in $configured) {
+            Write-Host "Trying cross-repo credential $($credential.Name)..."
+            $env:GH_TOKEN = $credential.Value
+
+            gh workflow run excavator.yml --repo marcmy/scoop-bucket --ref master
+            if ($LASTEXITCODE -eq 0) {
+              Write-Host "Triggered Scoop Excavator using $($credential.Name)."
+              exit 0
+            }
+
+            Write-Warning "$($credential.Name) failed to trigger the Scoop Excavator. Trying the next configured credential."
           }
+
+          throw "Immediate Scoop trigger failed with all configured cross-repo credentials."
