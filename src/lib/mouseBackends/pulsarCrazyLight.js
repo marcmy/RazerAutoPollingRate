@@ -172,8 +172,8 @@ function createPulsarCrazyLightBackend(options = {}) {
 
   async function probe() {
     await discover();
-    await open();
     try {
+      await open();
       const activeProfile = await getActiveProfile();
       const pollingRate = await getPollingRate();
       return {
