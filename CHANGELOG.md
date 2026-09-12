@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v1.3.5
+
+### What's Changed
+* Harden Electron navigation and routine CI by @marcmy in https://github.com/marcmy/RazerAutoPollingRate/pull/60
+* Bump anchore/sbom-action from 0.24.0 to 0.24.2 by @dependabot[bot] in https://github.com/marcmy/RazerAutoPollingRate/pull/61
+* Bump github/codeql-action/upload-sarif from 4.37.8 to 4.37.9 by @dependabot[bot] in https://github.com/marcmy/RazerAutoPollingRate/pull/62
+* build(deps): bump the npm_and_yarn group across 1 directory with 2 updates by @dependabot[bot] in https://github.com/marcmy/RazerAutoPollingRate/pull/63
+* feat: single instance and Synapse tray colors by @marcmy in https://github.com/marcmy/RazerAutoPollingRate/pull/64
+
 ## v1.3.4
 
 ### Fixed
