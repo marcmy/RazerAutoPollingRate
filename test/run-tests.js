@@ -9,6 +9,7 @@ require('./processes.test');
 require('./pulsarCrazyLightBackend.test');
 require('./pulsarCrazyLightProtocol.test');
 require('./pulsarDiscovery.test');
+require('./pulsarStartupProbe.test');
 require('./rates.test');
 require('./retryImmediately.test');
 require('./runtimeGameMatching.test');
