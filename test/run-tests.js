@@ -8,6 +8,7 @@ require('./processDiscovery.test');
 require('./processes.test');
 require('./pulsarCrazyLightBackend.test');
 require('./pulsarCrazyLightProtocol.test');
+require('./pulsarDiscovery.test');
 require('./rates.test');
 require('./retryImmediately.test');
 require('./runtimeGameMatching.test');
