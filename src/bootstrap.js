@@ -1,6 +1,15 @@
+if (require('electron-squirrel-startup')) return;
+
 const path = require('path');
 const { pathToFileURL } = require('url');
-const { app } = require('electron');
+const { app, nativeImage } = require('electron');
+
+const { acquireSingleInstanceLock } = require('./lib/singleInstance');
+const { installPollingRateIconColorizer } = require('./lib/trayIcons');
+
+if (!acquireSingleInstanceLock(app)) return;
+
+installPollingRateIconColorizer(nativeImage);
 
 const settingsUrl = pathToFileURL(path.join(__dirname, 'settings.html')).href;
 
