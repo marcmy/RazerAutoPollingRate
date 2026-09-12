@@ -8,6 +8,7 @@
   "scripts": {
     "start": "electron-forge start",
     "test": "node --test test/run-tests.js",
+    "probe:pulsar": "node scripts/probe-crazylight.js",
     "package": "electron-forge package",
     "make": "node scripts/make.js"
   },
