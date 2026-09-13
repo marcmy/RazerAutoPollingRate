@@ -4,6 +4,7 @@ require('./config.test');
 require('./diagnosticLogger.test');
 require('./devices.test');
 require('./gameLibraries.test');
+require('./mainBackendIntegration.test');
 require('./mouseBackendRuntime.test');
 require('./processDiscovery.test');
 require('./processes.test');
