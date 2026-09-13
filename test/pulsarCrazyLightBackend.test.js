@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   CMD_GET_ACTIVE_PROFILE,
   CMD_READ_MEMORY,
+  CMD_WRITE_MEMORY,
   buildCommandPacket,
 } = require('../src/lib/mouseBackends/pulsarCrazyLightProtocol');
 const {
@@ -57,21 +58,22 @@ function createFakeDevice(replies = []) {
   return device;
 }
 
-function createBackendForDevice(device, diagnostics = []) {
+function createBackendForDevice(device, diagnostics = [], options = {}) {
   return createPulsarCrazyLightBackend({
     createWebUsb: () => ({
       requestDevice: async () => device,
     }),
     onDiagnostic: (event, details) => diagnostics.push([event, details]),
+    ...options,
   });
 }
 
-test('CrazyLight backend is explicitly read-only', async () => {
+test('CrazyLight backend remains read-only unless hardware-validation writes are explicit', async () => {
   const backend = createBackendForDevice(createFakeDevice());
   assert.equal(backend.canWrite, false);
   await assert.rejects(
     () => backend.setPollingRate(8000),
-    /read-only until hardware validation/i,
+    /hardware-validation/i,
   );
 });
 
@@ -137,6 +139,64 @@ test('CrazyLight backend rejects unknown polling bytes', async () => {
   await backend.discover();
   await backend.open();
   await assert.rejects(() => backend.getPollingRate(), /unknown polling-rate value/i);
+  await backend.close();
+});
+
+test('hardware-validation backend writes polling value plus complement and verifies readback', async () => {
+  const writeReply = buildCommandPacket(CMD_WRITE_MEMORY, {
+    3: 0x00,
+    4: 0x00,
+    5: 0x02,
+    6: 0x40,
+    7: 0x15,
+  });
+  const pollingReply = buildCommandPacket(CMD_READ_MEMORY, {
+    3: 0x00,
+    4: 0x00,
+    5: 0x01,
+    6: 0x40,
+  });
+  const device = createFakeDevice([writeReply, pollingReply]);
+  const backend = createBackendForDevice(device, [], {
+    allowHardwareValidationWrites: true,
+  });
+
+  assert.equal(backend.canWrite, true);
+  await backend.discover();
+  await backend.open();
+  assert.equal(await backend.setPollingRate(8000), 8000);
+  await backend.close();
+
+  const transferOutCalls = device.calls.filter(([name]) => name === 'controlTransferOut');
+  assert.equal(transferOutCalls.length, 2);
+  const writePacket = transferOutCalls[0][2];
+  assert.equal(writePacket[1], CMD_WRITE_MEMORY);
+  assert.equal(writePacket[3], 0x00);
+  assert.equal(writePacket[4], 0x00);
+  assert.equal(writePacket[5], 0x02);
+  assert.equal(writePacket[6], 0x40);
+  assert.equal(writePacket[7], 0x15);
+  assert.equal(transferOutCalls[1][2][1], CMD_READ_MEMORY);
+});
+
+test('hardware-validation backend rejects polling write when readback does not match', async () => {
+  const writeReply = buildCommandPacket(CMD_WRITE_MEMORY);
+  const wrongPollingReply = buildCommandPacket(CMD_READ_MEMORY, {
+    3: 0x00,
+    4: 0x00,
+    5: 0x01,
+    6: 0x01,
+  });
+  const backend = createBackendForDevice(createFakeDevice([writeReply, wrongPollingReply]), [], {
+    allowHardwareValidationWrites: true,
+  });
+
+  await backend.discover();
+  await backend.open();
+  await assert.rejects(
+    () => backend.setPollingRate(8000),
+    /readback.*1000.*8000/i,
+  );
   await backend.close();
 });
 
