@@ -3,6 +3,7 @@
 const REPORT_ID = 0x08;
 const REPORT_SIZE = 17;
 
+const CMD_WRITE_MEMORY = 0x07;
 const CMD_READ_MEMORY = 0x08;
 const CMD_GET_ACTIVE_PROFILE = 0x0E;
 
@@ -15,6 +16,9 @@ const POLLING_RATE_BY_VALUE = new Map([
   [0x20, 4000],
   [0x40, 8000],
 ]);
+const POLLING_VALUE_BY_RATE = new Map(
+  Array.from(POLLING_RATE_BY_VALUE, ([value, rate]) => [rate, value]),
+);
 
 function calculateChecksum(report) {
   let sum = 0;
@@ -41,19 +45,41 @@ function buildCommandPacket(command, fields = {}) {
   return packet;
 }
 
-function buildMemoryReadPacket(address, length) {
+function validateMemoryRange(address, length, operation) {
   if (!Number.isInteger(address) || address < 0 || address > 0xffff) {
     throw new Error(`CrazyLight memory address ${address} is out of range`);
   }
   if (!Number.isInteger(length) || length < 1 || length > 10) {
-    throw new Error(`CrazyLight memory read length ${length} must be between 1 and 10`);
+    throw new Error(`CrazyLight memory ${operation} length ${length} must be between 1 and 10`);
   }
+  if (address + length - 1 > 0xffff) {
+    throw new Error(`CrazyLight memory ${operation} crosses the 16-bit address boundary`);
+  }
+}
+
+function buildMemoryReadPacket(address, length) {
+  validateMemoryRange(address, length, 'read');
 
   return buildCommandPacket(CMD_READ_MEMORY, {
     3: (address >> 8) & 0xff,
     4: address & 0xff,
     5: length,
   });
+}
+
+function buildMemoryWritePacket(address, data) {
+  const payload = Buffer.from(data || []);
+  validateMemoryRange(address, payload.length, 'write');
+
+  const fields = {
+    3: (address >> 8) & 0xff,
+    4: address & 0xff,
+    5: payload.length,
+  };
+  payload.forEach((value, index) => {
+    fields[6 + index] = value;
+  });
+  return buildCommandPacket(CMD_WRITE_MEMORY, fields);
 }
 
 function toBuffer(report) {
@@ -94,6 +120,10 @@ function decodePollingRate(value) {
   return POLLING_RATE_BY_VALUE.get(Number(value) & 0xff) || null;
 }
 
+function encodePollingRate(rate) {
+  return POLLING_VALUE_BY_RATE.get(Number(rate)) || null;
+}
+
 function parseActiveProfileReply(report) {
   const reply = validateReply(report, CMD_GET_ACTIVE_PROFILE);
   return reply[6] + 1;
@@ -116,13 +146,17 @@ function parseMemoryReadReply(report, expectedAddress, expectedLength) {
 module.exports = {
   CMD_GET_ACTIVE_PROFILE,
   CMD_READ_MEMORY,
+  CMD_WRITE_MEMORY,
   POLLING_RATE_BY_VALUE,
+  POLLING_VALUE_BY_RATE,
   REPORT_ID,
   REPORT_SIZE,
   buildCommandPacket,
   buildMemoryReadPacket,
+  buildMemoryWritePacket,
   calculateChecksum,
   decodePollingRate,
+  encodePollingRate,
   parseActiveProfileReply,
   parseMemoryReadReply,
   validateReply,
