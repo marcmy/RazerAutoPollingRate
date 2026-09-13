@@ -1,5 +1,7 @@
 'use strict';
 
+const { sendWindowsHidOutputReport } = require('./windowsHidOutputReport');
+
 const CRAZYLIGHT_VENDOR_ID = 0x3710;
 const CRAZYLIGHT_PRODUCT_ID = 0x5406;
 const CRAZYLIGHT_INTERFACE = 0x01;
@@ -44,6 +46,7 @@ function normalizeInfo(device) {
 function createCrazyLightHidTransport(options = {}) {
   const hidApi = options.hidApi || loadNodeHid();
   const log = options.log || (() => {});
+  const sendOutputReport = options.sendOutputReport || sendWindowsHidOutputReport;
 
   let selected = null;
   let handle = null;
@@ -95,7 +98,7 @@ function createCrazyLightHidTransport(options = {}) {
   }
 
   async function writeReport(packet) {
-    if (!handle) {
+    if (!handle || !selected) {
       throw new Error('CrazyLight HID transport is not open');
     }
 
@@ -104,10 +107,11 @@ function createCrazyLightHidTransport(options = {}) {
       throw new Error('CrazyLight HID output report must be 17 bytes with report ID 0x08');
     }
 
-    const written = await handle.write(report);
-    if (Number.isInteger(written) && written < REPORT_SIZE) {
-      throw new Error(`CrazyLight HID write was short (${written} bytes)`);
-    }
+    // The CrazyLight configuration interface accepts report 0x08 through the
+    // HID SET_REPORT(Output) control path. node-hid.write() maps to hid_write()
+    // / WriteFile on Windows, which fails for this interface because there is
+    // no writable interrupt OUT endpoint. Use HidD_SetOutputReport instead.
+    await sendOutputReport(selected.path, report);
   }
 
   async function readReport() {
