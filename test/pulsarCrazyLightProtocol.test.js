@@ -4,11 +4,14 @@ const assert = require('node:assert/strict');
 const {
   CMD_GET_ACTIVE_PROFILE,
   CMD_READ_MEMORY,
+  CMD_WRITE_MEMORY,
   REPORT_ID,
   REPORT_SIZE,
   buildCommandPacket,
   buildMemoryReadPacket,
+  buildMemoryWritePacket,
   decodePollingRate,
+  encodePollingRate,
   parseActiveProfileReply,
   parseMemoryReadReply,
 } = require('../src/lib/mouseBackends/pulsarCrazyLightProtocol');
@@ -45,6 +48,29 @@ test('buildMemoryReadPacket encodes address and requested byte count', () => {
   assert.equal(packet[4], 0x34);
   assert.equal(packet[5], 0x03);
   assert.equal(packet[16], checksum(packet));
+});
+
+test('buildMemoryWritePacket encodes a dense Nordic MEM_SET payload', () => {
+  const packet = buildMemoryWritePacket(0x1234, Buffer.from([0x40, 0x15]));
+
+  assert.equal(packet[1], CMD_WRITE_MEMORY);
+  assert.equal(packet[3], 0x12);
+  assert.equal(packet[4], 0x34);
+  assert.equal(packet[5], 0x02);
+  assert.equal(packet[6], 0x40);
+  assert.equal(packet[7], 0x15);
+  assert.equal(packet[16], checksum(packet));
+});
+
+test('polling-rate encoder mirrors every validated CrazyLight read value', () => {
+  assert.equal(encodePollingRate(125), 0x08);
+  assert.equal(encodePollingRate(250), 0x04);
+  assert.equal(encodePollingRate(500), 0x02);
+  assert.equal(encodePollingRate(1000), 0x01);
+  assert.equal(encodePollingRate(2000), 0x10);
+  assert.equal(encodePollingRate(4000), 0x20);
+  assert.equal(encodePollingRate(8000), 0x40);
+  assert.equal(encodePollingRate(1234), null);
 });
 
 test('decodePollingRate handles every CrazyLight polling value', () => {
