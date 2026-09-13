@@ -1,6 +1,7 @@
 'use strict';
 
 const { WebUSB } = require('usb');
+const { createCrazyLightHidTransport } = require('./pulsarCrazyLightHid');
 const {
   CMD_GET_ACTIVE_PROFILE,
   REPORT_SIZE,
@@ -44,11 +45,31 @@ function createPulsarCrazyLightBackend(options = {}) {
   const createWebUsb = options.createWebUsb || defaultCreateWebUsb;
   const onDiagnostic = options.onDiagnostic || (() => {});
   const log = options.log || (() => {});
+  // Tests that inject WebUSB keep exercising the original transport unless
+  // they explicitly request Windows. Real Windows runs default to HIDAPI.
+  const platform = options.platform || (options.createWebUsb ? 'webusb' : process.platform);
+  const useHidTransport = platform === 'win32';
+  const hidTransport = useHidTransport
+    ? createCrazyLightHidTransport({ hidApi: options.hidApi, log })
+    : null;
 
   let device = null;
   let claimedInterface = null;
 
   async function discover() {
+    if (hidTransport) {
+      const info = await hidTransport.discover();
+      device = {
+        vendorId: info.vendorId,
+        productId: info.productId,
+        productName: info.productName,
+        path: info.path,
+        usagePage: info.usagePage,
+        usage: info.usage,
+      };
+      return device;
+    }
+
     const webUsb = createWebUsb((devices) => devices.find(isCrazyLightDevice));
     const discovered = await webUsb.requestDevice({ filters: [{}] });
     if (!isCrazyLightDevice(discovered)) {
@@ -61,6 +82,12 @@ function createPulsarCrazyLightBackend(options = {}) {
   async function open() {
     if (!device) {
       throw new Error('Pulsar X2 CrazyLight has not been discovered');
+    }
+
+    if (hidTransport) {
+      await hidTransport.open();
+      claimedInterface = CRAZYLIGHT_INTERFACE;
+      return;
     }
 
     await device.open();
@@ -80,30 +107,20 @@ function createPulsarCrazyLightBackend(options = {}) {
     claimedInterface = CRAZYLIGHT_INTERFACE;
   }
 
-  async function sendCommand(packet, expectedCommand) {
-    if (!device || claimedInterface === null) {
-      throw new Error('Pulsar X2 CrazyLight backend is not open');
-    }
-
-    const out = await device.controlTransferOut({
-      requestType: 'class',
-      recipient: 'interface',
-      request: 0x09,
-      value: 0x0208,
-      index: CRAZYLIGHT_INTERFACE,
-    }, packet);
-
-    if (out && out.status && out.status !== 'ok') {
-      throw new Error(`CrazyLight SET_REPORT failed with status ${out.status}`);
-    }
-
+  async function receiveExpectedReply(expectedCommand) {
     for (let attempt = 0; attempt <= MAX_STALE_REPLIES; attempt += 1) {
-      const result = await device.transferIn(CRAZYLIGHT_ENDPOINT_NUMBER, REPORT_SIZE);
-      if (result && result.status && result.status !== 'ok') {
-        throw new Error(`CrazyLight interrupt read failed with status ${result.status}`);
+      let reply;
+
+      if (hidTransport) {
+        reply = await hidTransport.readReport();
+      } else {
+        const result = await device.transferIn(CRAZYLIGHT_ENDPOINT_NUMBER, REPORT_SIZE);
+        if (result && result.status && result.status !== 'ok') {
+          throw new Error(`CrazyLight interrupt read failed with status ${result.status}`);
+        }
+        reply = transferDataToBuffer(result && result.data);
       }
 
-      const reply = transferDataToBuffer(result && result.data);
       const command = reply.length > 1 ? reply[1] : null;
       if (command === expectedCommand) {
         return reply;
@@ -120,6 +137,30 @@ function createPulsarCrazyLightBackend(options = {}) {
     throw new Error(
       `CrazyLight did not return command 0x${expectedCommand.toString(16).padStart(2, '0')} after ${MAX_STALE_REPLIES + 1} replies`,
     );
+  }
+
+  async function sendCommand(packet, expectedCommand) {
+    if (!device || claimedInterface === null) {
+      throw new Error('Pulsar X2 CrazyLight backend is not open');
+    }
+
+    if (hidTransport) {
+      await hidTransport.writeReport(packet);
+    } else {
+      const out = await device.controlTransferOut({
+        requestType: 'class',
+        recipient: 'interface',
+        request: 0x09,
+        value: 0x0208,
+        index: CRAZYLIGHT_INTERFACE,
+      }, packet);
+
+      if (out && out.status && out.status !== 'ok') {
+        throw new Error(`CrazyLight SET_REPORT failed with status ${out.status}`);
+      }
+    }
+
+    return receiveExpectedReply(expectedCommand);
   }
 
   async function getActiveProfile() {
@@ -151,6 +192,16 @@ function createPulsarCrazyLightBackend(options = {}) {
 
   async function close() {
     if (!device) return;
+
+    if (hidTransport) {
+      try {
+        await hidTransport.close();
+      } finally {
+        claimedInterface = null;
+        device = null;
+      }
+      return;
+    }
 
     if (claimedInterface !== null) {
       try {
@@ -186,6 +237,7 @@ function createPulsarCrazyLightBackend(options = {}) {
         activeProfile,
         pollingRate,
         canWrite: false,
+        transport: hidTransport ? 'hid' : 'webusb',
       };
     } finally {
       await close();
@@ -205,6 +257,12 @@ function createPulsarCrazyLightBackend(options = {}) {
     setPollingRate,
     close,
     get deviceInfo() {
+      if (hidTransport && hidTransport.deviceInfo) {
+        return {
+          ...hidTransport.deviceInfo,
+          endpoint: CRAZYLIGHT_ENDPOINT_IN,
+        };
+      }
       return {
         vendorId: device ? device.vendorId : CRAZYLIGHT_VENDOR_ID,
         productId: device ? device.productId : CRAZYLIGHT_PRODUCT_ID,
