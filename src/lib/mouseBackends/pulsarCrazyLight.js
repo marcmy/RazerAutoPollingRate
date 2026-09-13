@@ -50,7 +50,11 @@ function createPulsarCrazyLightBackend(options = {}) {
   const platform = options.platform || (options.createWebUsb ? 'webusb' : process.platform);
   const useHidTransport = platform === 'win32';
   const hidTransport = useHidTransport
-    ? createCrazyLightHidTransport({ hidApi: options.hidApi, log })
+    ? createCrazyLightHidTransport({
+      hidApi: options.hidApi,
+      log,
+      sendOutputReport: options.sendOutputReport,
+    })
     : null;
 
   let device = null;
