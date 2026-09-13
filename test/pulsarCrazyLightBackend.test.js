@@ -195,6 +195,9 @@ test('CrazyLight backend uses HID transport on Windows instead of WebUSB', async
   const backend = createPulsarCrazyLightBackend({
     platform: 'win32',
     hidApi,
+    sendOutputReport: async (devicePath, packet) => {
+      calls.push(['sendOutputReport', devicePath, Buffer.from(packet)]);
+    },
     createWebUsb: () => {
       throw new Error('WebUSB must not be used for CrazyLight on Windows');
     },
@@ -206,6 +209,7 @@ test('CrazyLight backend uses HID transport on Windows instead of WebUSB', async
   assert.equal(result.pollingRate, 4000);
   assert.equal(result.transport, 'hid');
   assert.ok(calls.some(([name, devicePath]) => name === 'open' && devicePath === 'vendor-config-interface'));
-  assert.equal(calls.filter(([name]) => name === 'write').length, 2);
+  assert.equal(calls.filter(([name]) => name === 'sendOutputReport').length, 2);
+  assert.equal(calls.filter(([name]) => name === 'write').length, 0);
   assert.ok(calls.some(([name]) => name === 'close'));
 });
