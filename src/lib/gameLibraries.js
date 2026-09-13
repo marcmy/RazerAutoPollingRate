@@ -54,13 +54,22 @@ function findContainingLibrary(executablePath, libraries = []) {
 function makeLibrary(provider, name, root, options = {}) {
   const cleanRoot = displayWindowsPath(root);
   const key = normalizeWindowsPath(cleanRoot);
-  return {
+  const library = {
     id: `${provider}:${key}`,
     provider,
     name,
     root: cleanRoot,
     custom: Boolean(options.custom),
   };
+
+  if (options.directGame) {
+    library.directGame = {
+      name: String(options.directGame.name || '').trim(),
+      executablePath: displayWindowsPath(options.directGame.executablePath),
+    };
+  }
+
+  return library;
 }
 
 function dedupeLibraries(libraries) {
@@ -83,6 +92,18 @@ function existingDirectory(fsImpl, candidate) {
 
   try {
     return fsImpl.existsSync(candidate) && fsImpl.statSync(candidate).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function existingFile(fsImpl, candidate) {
+  if (!candidate) {
+    return false;
+  }
+
+  try {
+    return fsImpl.existsSync(candidate) && !fsImpl.statSync(candidate).isDirectory();
   } catch {
     return false;
   }
@@ -151,6 +172,66 @@ function readSteamLibraryRoots(steamInstallRoot, fsImpl = fs) {
   return roots;
 }
 
+function getHeroicInstalledMetadataPaths(env = process.env) {
+  const appData = env.APPDATA || '';
+  const userProfile = env.USERPROFILE || '';
+  return [
+    appData ? winPath.join(appData, 'heroic', 'legendaryConfig', 'legendary', 'installed.json') : '',
+    userProfile ? winPath.join(userProfile, '.config', 'legendary', 'installed.json') : '',
+  ].filter(Boolean);
+}
+
+function readHeroicLibraries(env = process.env, fsImpl = fs) {
+  const libraries = [];
+
+  getHeroicInstalledMetadataPaths(env).forEach((metadataPath) => {
+    try {
+      if (!fsImpl.existsSync(metadataPath)) {
+        return;
+      }
+
+      const installed = JSON.parse(fsImpl.readFileSync(metadataPath, 'utf8'));
+      if (!installed || typeof installed !== 'object' || Array.isArray(installed)) {
+        return;
+      }
+
+      Object.values(installed).forEach((entry) => {
+        if (!entry || typeof entry !== 'object' || entry.is_dlc) {
+          return;
+        }
+
+        const platform = String(entry.platform || '').trim().toLowerCase();
+        if (platform && platform !== 'windows' && platform !== 'win32') {
+          return;
+        }
+
+        const gameRoot = displayWindowsPath(entry.install_path);
+        if (!existingDirectory(fsImpl, gameRoot)) {
+          return;
+        }
+
+        const executable = displayWindowsPath(entry.executable);
+        const executablePath = executable
+          ? (/^[a-z]:\\/i.test(executable) ? executable : winPath.join(gameRoot, executable))
+          : '';
+        const gameName = String(entry.title || entry.app_title || entry.app_name || winPath.basename(gameRoot)).trim();
+
+        libraries.push(makeLibrary('heroic', 'Heroic', gameRoot, {
+          directGame: {
+            name: gameName || winPath.basename(gameRoot) || 'Game',
+            executablePath,
+          },
+        }));
+      });
+    } catch {
+      // Missing, malformed or temporarily locked Heroic metadata should not
+      // disable discovery for the other launchers.
+    }
+  });
+
+  return libraries;
+}
+
 function discoverGameLibraries(options = {}) {
   const fsImpl = options.fsImpl || fs;
   const env = options.env || process.env;
@@ -164,6 +245,10 @@ function discoverGameLibraries(options = {}) {
   const appData = env.APPDATA || '';
 
   if (includeKnown) {
+  readHeroicLibraries(env, fsImpl).forEach((library) => {
+    libraries.push(library);
+  });
+
   const steamRoots = [
     winPath.join(programFilesX86, 'Steam'),
     winPath.join(programFiles, 'Steam'),
@@ -402,6 +487,32 @@ function scanLibraryGames(libraries = [], options = {}) {
       return;
     }
 
+    if (library.directGame) {
+      const gameRoot = library.root;
+      const gameName = library.directGame.name || winPath.basename(gameRoot) || library.name;
+      const configuredExecutable = displayWindowsPath(library.directGame.executablePath);
+      const executablePath = existingFile(fsImpl, configuredExecutable)
+        ? configuredExecutable
+        : findLikelyExecutable(gameRoot, gameName, { fsImpl });
+
+      if (!executablePath) {
+        return;
+      }
+
+      games.push({
+        id: normalizeWindowsPath(gameRoot),
+        name: gameName,
+        source: library.name,
+        provider: library.provider,
+        libraryRoot: library.root,
+        gameRoot,
+        executablePath: displayWindowsPath(executablePath),
+        processName: winPath.basename(executablePath),
+        autoDetected: true,
+      });
+      return;
+    }
+
     const steamNames = library.provider === 'steam'
       ? getSteamManifestNames(library.root, fsImpl)
       : new Map();
@@ -511,6 +622,20 @@ function gameForExecutable(executablePath, libraries = []) {
     if (/launcher/i.test(baseName) || HELPER_EXECUTABLE_PATTERN.test(baseName)) {
       return null;
     }
+  }
+
+  if (library.directGame) {
+    return {
+      id: normalizeWindowsPath(library.root),
+      name: library.directGame.name || winPath.basename(library.root) || library.name,
+      source: library.name,
+      provider: library.provider,
+      libraryRoot: library.root,
+      gameRoot: library.root,
+      executablePath: displayWindowsPath(executablePath),
+      processName: winPath.basename(executablePath),
+      autoDetected: true,
+    };
   }
 
   const relative = winPath.relative(library.root, displayWindowsPath(executablePath));
