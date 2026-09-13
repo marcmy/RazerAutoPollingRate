@@ -52,6 +52,7 @@ function createPulsarCrazyLightBackend(options = {}) {
   const hidTransport = useHidTransport
     ? createCrazyLightHidTransport({
       hidApi: options.hidApi,
+      inspectHidCaps: options.inspectHidCaps,
       log,
       sendOutputReport: options.sendOutputReport,
     })
@@ -70,6 +71,9 @@ function createPulsarCrazyLightBackend(options = {}) {
         path: info.path,
         usagePage: info.usagePage,
         usage: info.usage,
+        inputReportByteLength: info.inputReportByteLength,
+        outputReportByteLength: info.outputReportByteLength,
+        featureReportByteLength: info.featureReportByteLength,
       };
       return device;
     }
