@@ -9,6 +9,7 @@
     "start": "electron-forge start",
     "test": "node --test test/run-tests.js",
     "probe:pulsar": "node scripts/probe-crazylight.js",
+    "validate:pulsar-write": "node scripts/validate-crazylight-write.js",
     "package": "electron-forge package",
     "make": "node scripts/make.js"
   },
