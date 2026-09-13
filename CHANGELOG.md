@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- Added Heroic Games Launcher discovery from current and legacy Legendary installed-game metadata, including games installed in custom locations on non-system drives.
+- Added regression coverage confirming known game libraries are discovered on non-system drives.
+
 ## v1.3.5
 
 ### What's Changed
