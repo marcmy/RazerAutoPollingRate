@@ -89,10 +89,16 @@ test('Windows HID transport selects interface 1 vendor-defined collection first'
   await transport.close();
 });
 
-test('Windows HID transport sends report 0x08 unchanged as an output report and reads input report', async () => {
+test('Windows HID transport sends report 0x08 through control output path and reads input report', async () => {
   const reply = Buffer.from([0x08, 0x0e, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x3e]);
   const hidApi = createFakeHidApi([reply]);
-  const transport = createCrazyLightHidTransport({ hidApi });
+  const controlWrites = [];
+  const transport = createCrazyLightHidTransport({
+    hidApi,
+    sendOutputReport: async (devicePath, packet) => {
+      controlWrites.push([devicePath, Buffer.from(packet)]);
+    },
+  });
   const packet = Buffer.alloc(17);
   packet[0] = 0x08;
   packet[1] = 0x0e;
@@ -103,8 +109,8 @@ test('Windows HID transport sends report 0x08 unchanged as an output report and 
   const received = await transport.readReport();
   await transport.close();
 
-  const write = hidApi.calls.find(([name]) => name === 'write');
-  assert.deepEqual(write[1], packet);
+  assert.deepEqual(controlWrites, [['vendor-collection', packet]]);
+  assert.equal(hidApi.calls.some(([name]) => name === 'write'), false);
   assert.deepEqual(received, reply);
   assert.ok(hidApi.calls.some(([name, timeout]) => name === 'read' && timeout === 2000));
 });
