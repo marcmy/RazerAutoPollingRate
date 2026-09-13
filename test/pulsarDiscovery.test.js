@@ -53,9 +53,9 @@ test('supported Razer remains preferred for automatic switching when both vendor
   assert.equal(choosePreferredMousePath(result), 'razer');
 });
 
-test('known CrazyLight without Razer selects probe-only path', () => {
+test('known hardware-validated CrazyLight without Razer selects automatic Pulsar path', () => {
   const result = classifyUsbDevices([rawUsb(0x3710, 0x5406)]);
-  assert.equal(choosePreferredMousePath(result), 'pulsar-probe');
+  assert.equal(choosePreferredMousePath(result), 'pulsar');
 });
 
 test('unknown Pulsar alone never selects a protocol path', () => {
