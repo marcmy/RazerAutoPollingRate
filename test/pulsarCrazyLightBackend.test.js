@@ -151,3 +151,61 @@ test('probe closes the device when claiming the interface fails', async () => {
   await assert.rejects(() => backend.probe(), /claimInterface failed/);
   assert.ok(device.calls.some(([name]) => name === 'close'));
 });
+
+test('CrazyLight backend uses HID transport on Windows instead of WebUSB', async () => {
+  const profileReply = buildCommandPacket(CMD_GET_ACTIVE_PROFILE, { 6: 1 });
+  const pollingReply = buildCommandPacket(CMD_READ_MEMORY, {
+    3: 0x00,
+    4: 0x00,
+    5: 0x01,
+    6: 0x20,
+  });
+  const replies = [profileReply, pollingReply];
+  const calls = [];
+  const hidApi = {
+    devicesAsync: async () => [{
+      vendorId: CRAZYLIGHT_VENDOR_ID,
+      productId: CRAZYLIGHT_PRODUCT_ID,
+      path: 'vendor-config-interface',
+      interface: 1,
+      usagePage: 0xff00,
+      usage: 1,
+      product: 'Pulsar X2 CrazyLight',
+    }],
+    HIDAsync: {
+      open: async (devicePath, options) => {
+        calls.push(['open', devicePath, options]);
+        return {
+          async write(packet) {
+            calls.push(['write', Buffer.from(packet)]);
+            return packet.length;
+          },
+          async read(timeout) {
+            calls.push(['read', timeout]);
+            return replies.shift();
+          },
+          async close() {
+            calls.push(['close']);
+          },
+        };
+      },
+    },
+  };
+
+  const backend = createPulsarCrazyLightBackend({
+    platform: 'win32',
+    hidApi,
+    createWebUsb: () => {
+      throw new Error('WebUSB must not be used for CrazyLight on Windows');
+    },
+  });
+
+  const result = await backend.probe();
+
+  assert.equal(result.activeProfile, 2);
+  assert.equal(result.pollingRate, 4000);
+  assert.equal(result.transport, 'hid');
+  assert.ok(calls.some(([name, devicePath]) => name === 'open' && devicePath === 'vendor-config-interface'));
+  assert.equal(calls.filter(([name]) => name === 'write').length, 2);
+  assert.ok(calls.some(([name]) => name === 'close'));
+});
