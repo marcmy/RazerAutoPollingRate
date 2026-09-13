@@ -219,7 +219,9 @@ function createRazerBackend(options = {}) {
     }
 
     device = null;
-    currentModel = null;
+    // Deliberately retain currentModel. The original main.js transport kept
+    // its selected model after USB cleanup, and is8kCompatible() remained
+    // meaningful until the next discovery replaced it.
   }
 
   return {
