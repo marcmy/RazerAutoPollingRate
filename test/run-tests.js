@@ -11,6 +11,7 @@ require('./pulsarCrazyLightHid.test');
 require('./pulsarCrazyLightProtocol.test');
 require('./pulsarDiscovery.test');
 require('./pulsarStartupProbe.test');
+require('./pulsarWriteValidation.test');
 require('./rates.test');
 require('./retryImmediately.test');
 require('./runtimeGameMatching.test');
