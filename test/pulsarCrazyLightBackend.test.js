@@ -195,6 +195,13 @@ test('CrazyLight backend uses HID transport on Windows instead of WebUSB', async
   const backend = createPulsarCrazyLightBackend({
     platform: 'win32',
     hidApi,
+    inspectHidCaps: async () => ({
+      usagePage: 0xff00,
+      usage: 1,
+      inputReportByteLength: 17,
+      outputReportByteLength: 17,
+      featureReportByteLength: 0,
+    }),
     sendOutputReport: async (devicePath, packet) => {
       calls.push(['sendOutputReport', devicePath, Buffer.from(packet)]);
     },
