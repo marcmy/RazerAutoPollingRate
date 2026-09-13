@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v1.3.6
+
 ### Added
 
 - Added Heroic Games Launcher discovery from current and legacy Legendary installed-game metadata, including games installed in custom locations on non-system drives.
