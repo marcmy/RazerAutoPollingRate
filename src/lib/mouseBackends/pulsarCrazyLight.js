@@ -4,12 +4,16 @@ const { WebUSB } = require('usb');
 const { createCrazyLightHidTransport } = require('./pulsarCrazyLightHid');
 const {
   CMD_GET_ACTIVE_PROFILE,
+  CMD_WRITE_MEMORY,
   REPORT_SIZE,
   buildCommandPacket,
   buildMemoryReadPacket,
+  buildMemoryWritePacket,
   decodePollingRate,
+  encodePollingRate,
   parseActiveProfileReply,
   parseMemoryReadReply,
+  validateReply,
 } = require('./pulsarCrazyLightProtocol');
 
 const CRAZYLIGHT_VENDOR_ID = 0x3710;
@@ -45,6 +49,7 @@ function createPulsarCrazyLightBackend(options = {}) {
   const createWebUsb = options.createWebUsb || defaultCreateWebUsb;
   const onDiagnostic = options.onDiagnostic || (() => {});
   const log = options.log || (() => {});
+  const allowHardwareValidationWrites = options.allowHardwareValidationWrites === true;
   // Tests that inject WebUSB keep exercising the original transport unless
   // they explicitly request Windows. Real Windows runs default to HIDAPI.
   const platform = options.platform || (options.createWebUsb ? 'webusb' : process.platform);
@@ -184,6 +189,14 @@ function createPulsarCrazyLightBackend(options = {}) {
     return parseMemoryReadReply(reply, address, length);
   }
 
+  async function writeMemory(address, data) {
+    const reply = await sendCommand(
+      buildMemoryWritePacket(address, data),
+      CMD_WRITE_MEMORY,
+    );
+    validateReply(reply, CMD_WRITE_MEMORY);
+  }
+
   async function getPollingRate() {
     const bytes = await readMemory(0x0000, 1);
     const value = bytes[0];
@@ -194,8 +207,29 @@ function createPulsarCrazyLightBackend(options = {}) {
     return rate;
   }
 
-  async function setPollingRate() {
-    throw new Error('Pulsar X2 CrazyLight backend is read-only until hardware validation');
+  async function setPollingRate(rate) {
+    if (!allowHardwareValidationWrites) {
+      throw new Error('Pulsar X2 CrazyLight writes require explicit hardware-validation mode');
+    }
+
+    const requestedRate = Number(rate);
+    const value = encodePollingRate(requestedRate);
+    if (!value) {
+      throw new Error(`Unsupported CrazyLight polling rate ${rate}`);
+    }
+
+    await writeMemory(0x0000, Buffer.from([
+      value,
+      (0x55 - value) & 0xff,
+    ]));
+
+    const readback = await getPollingRate();
+    if (readback !== requestedRate) {
+      throw new Error(
+        `CrazyLight polling-rate readback ${readback} Hz did not match requested ${requestedRate} Hz`,
+      );
+    }
+    return readback;
   }
 
   async function close() {
@@ -244,7 +278,7 @@ function createPulsarCrazyLightBackend(options = {}) {
         endpoint: CRAZYLIGHT_ENDPOINT_IN,
         activeProfile,
         pollingRate,
-        canWrite: false,
+        canWrite: allowHardwareValidationWrites,
         transport: hidTransport ? 'hid' : 'webusb',
       };
     } finally {
@@ -255,7 +289,7 @@ function createPulsarCrazyLightBackend(options = {}) {
   return {
     id: 'pulsar-x2-crazylight',
     name: 'Pulsar X2 CrazyLight',
-    canWrite: false,
+    canWrite: allowHardwareValidationWrites,
     supportedRates: [125, 250, 500, 1000, 2000, 4000, 8000],
     discover,
     open,
