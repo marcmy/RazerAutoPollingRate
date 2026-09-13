@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  discoverGameLibraries,
   findContainingLibrary,
   findLikelyExecutable,
   gameForExecutable,
@@ -43,6 +44,142 @@ test('Steam app manifests expose friendly name and install directory', () => {
     name: 'Apex Legends',
     installDir: 'Apex Legends',
   });
+});
+
+test('known libraries are discovered on non-system drives', () => {
+  const steamCommon = 'E:\\SteamLibrary\\steamapps\\common';
+  const fsImpl = {
+    existsSync(candidate) {
+      return candidate === steamCommon;
+    },
+    statSync(candidate) {
+      if (candidate === steamCommon) return { isDirectory: () => true };
+      throw new Error(`unexpected stat ${candidate}`);
+    },
+  };
+
+  const libraries = discoverGameLibraries({
+    fsImpl,
+    driveRoots: ['C:\\', 'E:\\'],
+    env: {
+      ProgramFiles: 'C:\\Program Files',
+      'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+      APPDATA: 'C:\\Users\\Tester\\AppData\\Roaming',
+    },
+  });
+
+  assert.equal(
+    libraries.some((library) => library.provider === 'steam' && library.root === steamCommon),
+    true,
+  );
+});
+
+test('Heroic installed metadata discovers games on arbitrary drives', () => {
+  const appData = 'C:\\Users\\Tester\\AppData\\Roaming';
+  const metadataPath = `${appData}\\heroic\\legendaryConfig\\legendary\\installed.json`;
+  const gameRoot = 'E:\\Games\\Heroic\\Control';
+  const executable = `${gameRoot}\\Control_DX12.exe`;
+  const fsImpl = {
+    existsSync(candidate) {
+      return candidate === metadataPath || candidate === gameRoot || candidate === executable;
+    },
+    statSync(candidate) {
+      if (candidate === gameRoot) return { isDirectory: () => true };
+      if (candidate === executable) return { isDirectory: () => false, size: 120_000_000 };
+      throw new Error(`unexpected stat ${candidate}`);
+    },
+    readFileSync(candidate) {
+      if (candidate !== metadataPath) throw new Error(`unexpected read ${candidate}`);
+      return JSON.stringify({
+        Control: {
+          app_name: 'Control',
+          executable: 'Control_DX12.exe',
+          install_path: gameRoot,
+          is_dlc: false,
+          platform: 'Windows',
+          title: 'Control Ultimate Edition',
+        },
+        ControlDLC: {
+          app_name: 'ControlDLC',
+          executable: 'Control_DLC.exe',
+          install_path: `${gameRoot}\\DLC`,
+          is_dlc: true,
+          platform: 'Windows',
+          title: 'Control DLC',
+        },
+      });
+    },
+    readdirSync() {
+      throw new Error('Heroic direct-game metadata should not require directory enumeration');
+    },
+  };
+
+  const libraries = discoverGameLibraries({
+    fsImpl,
+    driveRoots: [],
+    env: {
+      ProgramFiles: 'C:\\Program Files',
+      'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+      APPDATA: appData,
+      USERPROFILE: 'C:\\Users\\Tester',
+    },
+  });
+  const games = scanLibraryGames(libraries, { fsImpl });
+
+  assert.equal(games.length, 1);
+  assert.equal(games[0].name, 'Control Ultimate Edition');
+  assert.equal(games[0].provider, 'heroic');
+  assert.equal(games[0].source, 'Heroic');
+  assert.equal(games[0].gameRoot, gameRoot);
+  assert.equal(games[0].executablePath, executable);
+});
+
+test('Heroic legacy Legendary metadata is still recognized', () => {
+  const userProfile = 'C:\\Users\\Tester';
+  const metadataPath = `${userProfile}\\.config\\legendary\\installed.json`;
+  const gameRoot = 'D:\\Heroic\\Celeste';
+  const executable = `${gameRoot}\\Celeste.exe`;
+  const fsImpl = {
+    existsSync(candidate) {
+      return candidate === metadataPath || candidate === gameRoot || candidate === executable;
+    },
+    statSync(candidate) {
+      if (candidate === gameRoot) return { isDirectory: () => true };
+      if (candidate === executable) return { isDirectory: () => false, size: 20_000_000 };
+      throw new Error(`unexpected stat ${candidate}`);
+    },
+    readFileSync(candidate) {
+      if (candidate !== metadataPath) throw new Error(`unexpected read ${candidate}`);
+      return JSON.stringify({
+        Celeste: {
+          app_name: 'Celeste',
+          executable: 'Celeste.exe',
+          install_path: gameRoot,
+          is_dlc: false,
+          platform: 'Windows',
+          title: 'Celeste',
+        },
+      });
+    },
+    readdirSync() {
+      throw new Error('Heroic direct-game metadata should not require directory enumeration');
+    },
+  };
+
+  const games = scanLibraryGames(discoverGameLibraries({
+    fsImpl,
+    driveRoots: [],
+    env: {
+      ProgramFiles: 'C:\\Program Files',
+      'ProgramFiles(x86)': 'C:\\Program Files (x86)',
+      APPDATA: 'C:\\Users\\Tester\\AppData\\Roaming',
+      USERPROFILE: userProfile,
+    },
+  }), { fsImpl });
+
+  assert.equal(games.length, 1);
+  assert.equal(games[0].name, 'Celeste');
+  assert.equal(games[0].gameRoot, gameRoot);
 });
 
 test('library-root matching is case-insensitive and boundary safe', () => {
