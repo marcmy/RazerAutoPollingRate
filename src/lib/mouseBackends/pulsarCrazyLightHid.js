@@ -1,5 +1,6 @@
 'use strict';
 
+const { inspectWindowsHidCaps } = require('./windowsHidCaps');
 const { sendWindowsHidOutputReport } = require('./windowsHidOutputReport');
 
 const CRAZYLIGHT_VENDOR_ID = 0x3710;
@@ -24,31 +25,63 @@ function isVendorDefined(device) {
   return Number.isInteger(device && device.usagePage) && device.usagePage >= 0xff00;
 }
 
-function candidateScore(device) {
+function candidateScore(device, caps) {
   let score = 0;
   if (device.interface === CRAZYLIGHT_INTERFACE) score += 10;
-  if (isVendorDefined(device)) score += 100;
+  if (isVendorDefined(device)) score += 20;
+  // Exact 17-byte reports are the strongest match for the captured Nordic
+  // protocol. Larger reports remain eligible because Windows may pad them.
+  if (caps && caps.inputReportByteLength === REPORT_SIZE) score += 100;
+  if (caps && caps.outputReportByteLength === REPORT_SIZE) score += 200;
   return score;
 }
 
-function normalizeInfo(device) {
+function isProtocolCapable(caps) {
+  return Boolean(caps
+    && caps.inputReportByteLength >= REPORT_SIZE
+    && caps.outputReportByteLength >= REPORT_SIZE);
+}
+
+function hex16(value) {
+  if (!Number.isInteger(value)) return 'unknown';
+  return `0x${value.toString(16).toUpperCase().padStart(4, '0')}`;
+}
+
+function normalizeInfo(device, caps = null) {
   return {
     vendorId: device.vendorId,
     productId: device.productId,
     productName: device.product || null,
     path: device.path || null,
     interfaceNumber: CRAZYLIGHT_INTERFACE,
-    usagePage: Number.isInteger(device.usagePage) ? device.usagePage : null,
-    usage: Number.isInteger(device.usage) ? device.usage : null,
+    usagePage: caps && Number.isInteger(caps.usagePage)
+      ? caps.usagePage
+      : (Number.isInteger(device.usagePage) ? device.usagePage : null),
+    usage: caps && Number.isInteger(caps.usage)
+      ? caps.usage
+      : (Number.isInteger(device.usage) ? device.usage : null),
+    inputReportByteLength: caps ? caps.inputReportByteLength : null,
+    outputReportByteLength: caps ? caps.outputReportByteLength : null,
+    featureReportByteLength: caps ? caps.featureReportByteLength : null,
   };
+}
+
+function describeCandidate(entry) {
+  const { device, caps, error } = entry;
+  if (error) {
+    return `${device.path} [UsagePage=${hex16(device.usagePage)}; Usage=${hex16(device.usage)}; caps-error=${error.message}]`;
+  }
+  return `${device.path} [UsagePage=${hex16(caps.usagePage)}; Usage=${hex16(caps.usage)}; Input=${caps.inputReportByteLength}; Output=${caps.outputReportByteLength}; Feature=${caps.featureReportByteLength}]`;
 }
 
 function createCrazyLightHidTransport(options = {}) {
   const hidApi = options.hidApi || loadNodeHid();
   const log = options.log || (() => {});
+  const inspectHidCaps = options.inspectHidCaps || inspectWindowsHidCaps;
   const sendOutputReport = options.sendOutputReport || sendWindowsHidOutputReport;
 
   let selected = null;
+  let selectedCaps = null;
   let handle = null;
 
   async function enumerate() {
@@ -68,15 +101,48 @@ function createCrazyLightHidTransport(options = {}) {
         && device.vendorId === CRAZYLIGHT_VENDOR_ID
         && device.productId === CRAZYLIGHT_PRODUCT_ID
         && device.path
-        && isInterfaceOne(device))
-      .sort((left, right) => candidateScore(right) - candidateScore(left));
+        && isInterfaceOne(device));
 
     if (candidates.length === 0) {
       throw new Error('Pulsar X2 CrazyLight HID interface 1 was not found');
     }
 
-    selected = candidates[0];
-    return normalizeInfo(selected);
+    // A composite HID interface can expose several top-level collections. The
+    // CrazyLight hardware showed why usage-page heuristics are insufficient:
+    // one vendor-defined collection is input-only (8 bytes) and cannot carry
+    // the 17-byte Nordic config protocol. Inspect HIDP_CAPS and choose by the
+    // actual report capabilities instead.
+    const inspected = await Promise.all(candidates.map(async (device) => {
+      try {
+        const caps = await inspectHidCaps(device.path);
+        return { device, caps, error: null };
+      } catch (error) {
+        return { device, caps: null, error };
+      }
+    }));
+
+    const usable = inspected
+      .filter((entry) => isProtocolCapable(entry.caps))
+      .sort((left, right) => candidateScore(right.device, right.caps)
+        - candidateScore(left.device, left.caps));
+
+    if (usable.length === 0) {
+      const details = inspected.map(describeCandidate).join('; ');
+      throw new Error(
+        `No interface 1 HID collection supports 17-byte input/output reports. Candidates: ${details}`,
+      );
+    }
+
+    selected = usable[0].device;
+    selectedCaps = usable[0].caps;
+    log(
+      `CrazyLight HID selected ${selected.path} `
+      + `(UsagePage=${hex16(selectedCaps.usagePage)}, Usage=${hex16(selectedCaps.usage)}, `
+      + `Input=${selectedCaps.inputReportByteLength}, Output=${selectedCaps.outputReportByteLength}, `
+      + `Feature=${selectedCaps.featureReportByteLength})`,
+      true,
+    );
+    return normalizeInfo(selected, selectedCaps);
   }
 
   async function open() {
@@ -109,8 +175,8 @@ function createCrazyLightHidTransport(options = {}) {
 
     // The CrazyLight configuration interface accepts report 0x08 through the
     // HID SET_REPORT(Output) control path. node-hid.write() maps to hid_write()
-    // / WriteFile on Windows, which fails for this interface because there is
-    // no writable interrupt OUT endpoint. Use HidD_SetOutputReport instead.
+    // / WriteFile on Windows, which fails because interface 1 has no interrupt
+    // OUT endpoint. Use HidD_SetOutputReport on the caps-validated collection.
     await sendOutputReport(selected.path, report);
   }
 
@@ -153,7 +219,7 @@ function createCrazyLightHidTransport(options = {}) {
     readReport,
     close,
     get deviceInfo() {
-      return selected ? normalizeInfo(selected) : null;
+      return selected ? normalizeInfo(selected, selectedCaps) : null;
     },
   };
 }
@@ -164,5 +230,6 @@ module.exports = {
   CRAZYLIGHT_VENDOR_ID,
   createCrazyLightHidTransport,
   isInterfaceOne,
+  isProtocolCapable,
   isVendorDefined,
 };
