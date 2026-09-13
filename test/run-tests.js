@@ -16,3 +16,4 @@ require('./retryImmediately.test');
 require('./runtimeGameMatching.test');
 require('./singleInstance.test');
 require('./trayIcons.test');
+require('./windowsHidOutputReport.test');
