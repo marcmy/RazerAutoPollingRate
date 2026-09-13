@@ -59,7 +59,7 @@ function choosePreferredMousePath(discovery) {
     return 'razer';
   }
   if (discovery && discovery.knownCrazyLight && discovery.knownCrazyLight.length > 0) {
-    return 'pulsar-probe';
+    return 'pulsar';
   }
   return null;
 }
