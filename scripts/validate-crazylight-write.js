@@ -2,6 +2,9 @@
 
 const { createPulsarCrazyLightBackend } = require('../src/lib/mouseBackends/pulsarCrazyLight');
 const { validateCrazyLightPollingWrite } = require('../src/lib/mouseBackends/pulsarWriteValidation');
+const {
+  closeAllWindowsHidOutputBridges,
+} = require('../src/lib/mouseBackends/windowsHidOutputReport');
 
 function parseTargetRate(raw) {
   if (raw === undefined) return undefined;
@@ -31,7 +34,15 @@ async function main() {
   );
 }
 
-main().catch((error) => {
+async function run() {
+  try {
+    await main();
+  } finally {
+    await closeAllWindowsHidOutputBridges();
+  }
+}
+
+run().catch((error) => {
   console.error(`[Pulsar write validation] FAILED: ${error.message}`);
   process.exitCode = 1;
 });

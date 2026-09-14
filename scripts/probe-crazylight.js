@@ -1,6 +1,9 @@
 'use strict';
 
 const { runCrazyLightProbe } = require('../src/lib/mouseBackends/startupProbe');
+const {
+  closeAllWindowsHidOutputBridges,
+} = require('../src/lib/mouseBackends/windowsHidOutputReport');
 
 async function main() {
   const result = await runCrazyLightProbe({
@@ -24,7 +27,15 @@ async function main() {
   console.log('[Pulsar probe] No Pulsar USB device (VID 0x3710) detected.');
 }
 
-main().catch((error) => {
+async function run() {
+  try {
+    await main();
+  } finally {
+    await closeAllWindowsHidOutputBridges();
+  }
+}
+
+run().catch((error) => {
   console.error(`[Pulsar probe] Fatal error: ${error.message}`);
   process.exitCode = 1;
 });

@@ -21,6 +21,9 @@ const { createCheckGuard } = require('./lib/checkGuard');
 const { DiagnosticLogger } = require('./lib/diagnosticLogger');
 const { createPreferredMouseBackend } = require('./lib/mouseBackends/runtime');
 const {
+  closeAllWindowsHidOutputBridges,
+} = require('./lib/mouseBackends/windowsHidOutputReport');
+const {
   DEFAULT_SETTINGS,
   configExists,
   normalizePollingCheckIntervalMs,
@@ -744,6 +747,7 @@ app.on('window-all-closed', (event) => {
 app.on('will-quit', () => {
   globalShortcut.unregister('F3');
   stopForegroundProcessWatcher();
+  closeAllWindowsHidOutputBridges().catch(() => {});
   if (diagnosticLogger) {
     diagnosticLogger.stop(new Date(), 'app quitting');
   }
@@ -769,6 +773,8 @@ async function quit() {
   while (!hasStopped) {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
+
+  await closeAllWindowsHidOutputBridges();
 
   if (process.platform !== 'darwin') {
     app.quit();
