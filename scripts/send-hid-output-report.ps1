@@ -2,25 +2,22 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$DevicePath,
 
-    [Parameter(Mandatory = $true)]
-    [string]$ReportHex
+    [string]$ReportHex,
+
+    [switch]$Server
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-if (($ReportHex.Length % 2) -ne 0 -or $ReportHex -notmatch '^[0-9a-fA-F]+$') {
-    throw 'ReportHex must contain an even number of hexadecimal characters.'
-}
-
-if (-not ('CrazyLightHidNative' -as [type])) {
+if (-not ('CrazyLightHidSession' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
-public static class CrazyLightHidNative
+public sealed class CrazyLightHidSession : IDisposable
 {
     private const uint GENERIC_READ = 0x80000000;
     private const uint GENERIC_WRITE = 0x40000000;
@@ -85,7 +82,63 @@ public static class CrazyLightHidNative
         byte[] lpReportBuffer,
         uint ReportBufferLength);
 
-    private static string DescribeCaps(HIDP_CAPS caps, int originalLength, int sentLength)
+    private SafeFileHandle handle;
+    private HIDP_CAPS caps;
+    private bool disposed;
+
+    public CrazyLightHidSession(string path)
+    {
+        handle = CreateFile(
+            path,
+            GENERIC_READ | GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            IntPtr.Zero,
+            OPEN_EXISTING,
+            0,
+            IntPtr.Zero);
+
+        if (handle.IsInvalid)
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateFile failed for HID device");
+        }
+
+        IntPtr preparsedData = IntPtr.Zero;
+        try
+        {
+            if (!HidD_GetPreparsedData(handle, out preparsedData))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "HidD_GetPreparsedData failed");
+            }
+
+            int capsStatus = HidP_GetCaps(preparsedData, out caps);
+            if (capsStatus != HIDP_STATUS_SUCCESS)
+            {
+                throw new InvalidOperationException(
+                    String.Format("HidP_GetCaps failed with NTSTATUS 0x{0:X8}", capsStatus));
+            }
+
+            if (caps.OutputReportByteLength == 0)
+            {
+                throw new InvalidOperationException(
+                    "Selected HID collection exposes no output reports (" +
+                    DescribeCaps(0, 0) + ")");
+            }
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
+        }
+        finally
+        {
+            if (preparsedData != IntPtr.Zero)
+            {
+                HidD_FreePreparsedData(preparsedData);
+            }
+        }
+    }
+
+    private string DescribeCaps(int originalLength, int sentLength)
     {
         return String.Format(
             "UsagePage=0x{0:X4}; Usage=0x{1:X4}; InputReportByteLength={2}; OutputReportByteLength={3}; FeatureReportByteLength={4}; OriginalReportLength={5}; SentReportLength={6}",
@@ -98,80 +151,108 @@ public static class CrazyLightHidNative
             sentLength);
     }
 
-    public static void SendOutputReport(string path, byte[] report)
+    public void SendOutputReport(byte[] report)
     {
-        using (SafeFileHandle handle = CreateFile(
-            path,
-            GENERIC_READ | GENERIC_WRITE,
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            IntPtr.Zero,
-            OPEN_EXISTING,
-            0,
-            IntPtr.Zero))
+        if (disposed)
         {
-            if (handle.IsInvalid)
-            {
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateFile failed for HID device");
-            }
+            throw new ObjectDisposedException("CrazyLightHidSession");
+        }
+        if (report == null || report.Length == 0)
+        {
+            throw new ArgumentException("Output report cannot be empty", "report");
+        }
 
-            IntPtr preparsedData = IntPtr.Zero;
-            if (!HidD_GetPreparsedData(handle, out preparsedData))
-            {
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "HidD_GetPreparsedData failed");
-            }
+        // Windows requires ReportBufferLength to be at least the collection's
+        // OutputReportByteLength. Preserve the report ID/data and zero-pad
+        // short reports, matching hidapi's hid_send_output_report behavior.
+        int sendLength = Math.Max(report.Length, (int)caps.OutputReportByteLength);
+        byte[] sendBuffer = new byte[sendLength];
+        Array.Copy(report, sendBuffer, report.Length);
 
-            try
-            {
-                HIDP_CAPS caps;
-                int capsStatus = HidP_GetCaps(preparsedData, out caps);
-                if (capsStatus != HIDP_STATUS_SUCCESS)
-                {
-                    throw new InvalidOperationException(
-                        String.Format("HidP_GetCaps failed with NTSTATUS 0x{0:X8}", capsStatus));
-                }
+        if (!HidD_SetOutputReport(handle, sendBuffer, (uint)sendBuffer.Length))
+        {
+            int win32Error = Marshal.GetLastWin32Error();
+            string details = DescribeCaps(report.Length, sendBuffer.Length);
+            throw new Win32Exception(
+                win32Error,
+                String.Format(
+                    "HidD_SetOutputReport failed (Win32Error={0}; {1})",
+                    win32Error,
+                    details));
+        }
+    }
 
-                if (caps.OutputReportByteLength == 0)
-                {
-                    throw new InvalidOperationException(
-                        "Selected HID collection exposes no output reports (" +
-                        DescribeCaps(caps, report.Length, 0) + ")");
-                }
-
-                // Windows requires ReportBufferLength to be at least the collection's
-                // OutputReportByteLength. This mirrors hidapi's hid_send_output_report
-                // behavior: preserve the report ID/data and zero-pad short reports.
-                int sendLength = Math.Max(report.Length, (int)caps.OutputReportByteLength);
-                byte[] sendBuffer = new byte[sendLength];
-                Array.Copy(report, sendBuffer, report.Length);
-
-                if (!HidD_SetOutputReport(handle, sendBuffer, (uint)sendBuffer.Length))
-                {
-                    int win32Error = Marshal.GetLastWin32Error();
-                    string details = DescribeCaps(caps, report.Length, sendBuffer.Length);
-                    throw new Win32Exception(
-                        win32Error,
-                        String.Format(
-                            "HidD_SetOutputReport failed (Win32Error={0}; {1})",
-                            win32Error,
-                            details));
-                }
-            }
-            finally
-            {
-                if (preparsedData != IntPtr.Zero)
-                {
-                    HidD_FreePreparsedData(preparsedData);
-                }
-            }
+    public void Dispose()
+    {
+        if (disposed)
+        {
+            return;
+        }
+        disposed = true;
+        if (handle != null)
+        {
+            handle.Dispose();
+            handle = null;
         }
     }
 }
 '@
 }
 
-$report = New-Object byte[] ($ReportHex.Length / 2)
-for ($index = 0; $index -lt $report.Length; $index++) {
-    $report[$index] = [Convert]::ToByte($ReportHex.Substring($index * 2, 2), 16)
+function Convert-HexReport {
+    param([Parameter(Mandatory = $true)][string]$Hex)
+
+    if (($Hex.Length % 2) -ne 0 -or $Hex -notmatch '^[0-9a-fA-F]+$') {
+        throw 'ReportHex must contain an even number of hexadecimal characters.'
+    }
+
+    $report = New-Object byte[] ($Hex.Length / 2)
+    for ($index = 0; $index -lt $report.Length; $index++) {
+        $report[$index] = [Convert]::ToByte($Hex.Substring($index * 2, 2), 16)
+    }
+    return $report
 }
 
-[CrazyLightHidNative]::SendOutputReport($DevicePath, $report)
+if ($Server) {
+    $session = New-Object CrazyLightHidSession($DevicePath)
+    try {
+        [Console]::Out.WriteLine("READY")
+        [Console]::Out.Flush()
+
+        while ($null -ne ($line = [Console]::In.ReadLine())) {
+            $line = $line.Trim()
+            if ($line.Length -eq 0) {
+                continue
+            }
+
+            try {
+                $report = Convert-HexReport -Hex $line
+                $session.SendOutputReport($report)
+                [Console]::Out.WriteLine("OK")
+            }
+            catch {
+                $detail = $_.Exception.ToString()
+                $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($detail))
+                [Console]::Out.WriteLine("ERR:$encoded")
+            }
+            [Console]::Out.Flush()
+        }
+    }
+    finally {
+        $session.Dispose()
+    }
+    exit 0
+}
+
+if ([string]::IsNullOrWhiteSpace($ReportHex)) {
+    throw 'ReportHex is required unless -Server is specified.'
+}
+
+$singleReport = Convert-HexReport -Hex $ReportHex
+$singleSession = New-Object CrazyLightHidSession($DevicePath)
+try {
+    $singleSession.SendOutputReport($singleReport)
+}
+finally {
+    $singleSession.Dispose()
+}
