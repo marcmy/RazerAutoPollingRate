@@ -80,6 +80,13 @@ async function validateCrazyLightPollingWrite(options = {}) {
 
     if (opened && writeAttempted && originalRate !== null) {
       try {
+        const profileBeforeRestore = await backend.getActiveProfile();
+        if (profileBeforeRestore !== originalProfile) {
+          throw new Error(
+            `CrazyLight profile changed before restore: ${originalProfile} -> ${profileBeforeRestore}; `
+            + 'refusing to restore polling rate to a different profile',
+          );
+        }
         log(`[Pulsar write validation] Restoring ${originalRate} Hz.`);
         await backend.setPollingRate(originalRate);
         const restoredProfile = await backend.getActiveProfile();

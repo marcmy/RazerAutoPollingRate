@@ -93,6 +93,22 @@ test('write validator aborts on profile drift but still restores the original ra
   assert.equal(backend.calls.at(-1)[0], 'close');
 });
 
+test('write validator refuses to restore into a different active profile', async () => {
+  const { validateCrazyLightPollingWrite } = loadValidator();
+  const backend = createFakeBackend({ originalRate: 1000, profiles: [1, 2, 2] });
+
+  await assert.rejects(
+    () => validateCrazyLightPollingWrite({ backend }),
+    /profile.*changed.*1.*2.*restore.*refus/is,
+  );
+
+  assert.deepEqual(
+    backend.calls.filter(([name]) => name === 'setPollingRate'),
+    [['setPollingRate', 8000]],
+  );
+  assert.equal(backend.calls.at(-1)[0], 'close');
+});
+
 test('write validator surfaces restoration failure with the original failure context', async () => {
   const { validateCrazyLightPollingWrite } = loadValidator();
   const backend = createFakeBackend({
