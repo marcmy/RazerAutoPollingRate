@@ -35,7 +35,7 @@ jobs:
       - run: npm test
 
   build-windows:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: windows-2022
     timeout-minutes: 30
     needs: test
@@ -73,6 +73,30 @@ jobs:
               "$($hash.Hash.ToLower())  $relativePath"
             } | Set-Content -Encoding ASCII SHA256SUMS.txt
 
+      - name: Prepare Scoop package
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          $packageDirs = @(
+            Get-ChildItem -LiteralPath 'out' -Directory |
+              Where-Object { $_.Name -like '*-win32-x64' }
+          )
+
+          if ($packageDirs.Count -ne 1) {
+            $found = @($packageDirs | ForEach-Object { $_.Name }) -join ', '
+            throw "Expected exactly one packaged win32-x64 directory under out; found $($packageDirs.Count): $found"
+          }
+
+          $stagingRoot = Join-Path (Resolve-Path 'out').Path 'scoop-package'
+          $appRoot = Join-Path $stagingRoot 'lib\net45'
+          New-Item -ItemType Directory -Path $appRoot -Force | Out-Null
+          Copy-Item -Path (Join-Path $packageDirs[0].FullName '*') -Destination $appRoot -Recurse -Force
+
+          $expectedExe = Join-Path $appRoot 'razerautopollingrate.exe'
+          if (-not (Test-Path -LiteralPath $expectedExe -PathType Leaf)) {
+            throw "Scoop package is missing expected executable: $expectedExe"
+          }
+
       - name: Upload Windows test build
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -82,3 +106,12 @@ jobs:
             SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload Scoop package
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: RazerAutoPollingRate-Scoop-main-${{ github.sha }}
+          path: out/scoop-package/**
+          if-no-files-found: error
+          retention-days: 90
