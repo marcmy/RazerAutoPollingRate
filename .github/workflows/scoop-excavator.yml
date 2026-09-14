@@ -1,7 +1,11 @@
 name: Scoop Bucket Excavator
 
 on:
-  push:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
     branches:
       - main
   release:
@@ -13,6 +17,7 @@ permissions: {}
 
 jobs:
   trigger-excavator:
+    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-latest
     environment: scoop-bucket
     steps:
