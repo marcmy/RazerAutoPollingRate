@@ -10,7 +10,8 @@ on:
       - main
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  actions: read
 
 jobs:
   trigger-excavator:
@@ -18,7 +19,43 @@ jobs:
     runs-on: ubuntu-latest
     environment: scoop-bucket
     steps:
+      - name: Check for rolling Scoop artifact
+        id: rolling-artifact
+        if: github.event_name == 'workflow_run'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+          SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          $expected = "RazerAutoPollingRate-Scoop-main-$env:SOURCE_HEAD_SHA"
+          $response = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN_ID/artifacts?per_page=100" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to query source CI artifacts'
+          }
+
+          $artifact = @(
+            $response.artifacts | Where-Object {
+              $_.name -eq $expected -and -not $_.expired
+            }
+          )
+
+          if ($artifact.Count -gt 1) {
+            throw "Found multiple live artifacts named $expected"
+          }
+
+          $shouldDispatch = $artifact.Count -eq 1
+          "should_dispatch=$($shouldDispatch.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+          if ($shouldDispatch) {
+            "Found $expected; dispatching the Scoop Excavator." >> $env:GITHUB_STEP_SUMMARY
+          }
+          else {
+            "No rolling Scoop artifact was produced for this CI run; skipping Excavator dispatch." >> $env:GITHUB_STEP_SUMMARY
+          }
+
       - name: Trigger scoop bucket Excavator
+        if: github.event_name == 'workflow_dispatch' || steps.rolling-artifact.outputs.should_dispatch == 'true'
         shell: pwsh
         env:
           SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
