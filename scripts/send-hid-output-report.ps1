@@ -214,7 +214,7 @@ function Convert-HexReport {
 }
 
 if ($Server) {
-    $session = New-Object CrazyLightHidSession($DevicePath)
+    $session = New-Object -TypeName CrazyLightHidSession -ArgumentList $DevicePath
     try {
         [Console]::Out.WriteLine("READY")
         [Console]::Out.Flush()
@@ -249,7 +249,7 @@ if ([string]::IsNullOrWhiteSpace($ReportHex)) {
 }
 
 $singleReport = Convert-HexReport -Hex $ReportHex
-$singleSession = New-Object CrazyLightHidSession($DevicePath)
+$singleSession = New-Object -TypeName CrazyLightHidSession -ArgumentList $DevicePath
 try {
     $singleSession.SendOutputReport($singleReport)
 }
