@@ -610,17 +610,8 @@ jobs:
 
           "RELEASE_URL=$releaseUrl" >> $env:GITHUB_ENV
 
-      - name: Trigger Scoop bucket update
+      - name: Summarize release
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          gh workflow run scoop-excavator.yml `
-            --repo $env:GITHUB_REPOSITORY `
-            --ref main
-          if ($LASTEXITCODE -ne 0) {
-            throw "Unable to dispatch the Scoop excavator trigger"
-          }
-
           "## Released [$env:RELEASE_TAG]($env:RELEASE_URL)" >> $env:GITHUB_STEP_SUMMARY
-          "Windows artifacts and SHA256SUMS.txt were uploaded, and the Scoop trigger workflow was dispatched." >> $env:GITHUB_STEP_SUMMARY
+          "Windows artifacts and SHA256SUMS.txt were uploaded." >> $env:GITHUB_STEP_SUMMARY
