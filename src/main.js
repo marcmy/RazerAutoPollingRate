@@ -11,7 +11,6 @@ const {
   nativeImage,
 } = require('electron');
 
-const { WebUSB } = require('usb');
 const fs = require('fs');
 const Store = require('electron-store');
 const path = require('path');
@@ -19,9 +18,11 @@ const AutoLaunch = require('auto-launch');
 const { execFile } = require('child_process');
 
 const { createCheckGuard } = require('./lib/checkGuard');
-const { dongles } = require('./lib/devices');
 const { DiagnosticLogger } = require('./lib/diagnosticLogger');
-const { retryImmediately } = require('./lib/retryImmediately');
+const { createPreferredMouseBackend } = require('./lib/mouseBackends/runtime');
+const {
+  closeAllWindowsHidOutputBridges,
+} = require('./lib/mouseBackends/windowsHidOutputReport');
 const {
   DEFAULT_SETTINGS,
   configExists,
@@ -61,12 +62,9 @@ const {
   selectTargetPollingRate,
 } = require('./lib/processes');
 const {
-  getRateForReportByte,
-  getReportByteForRate,
   parsePollingRate,
   resolveSupportedPollingRate,
 } = require('./lib/rates');
-const { getRazerReport } = require('./lib/razerReports');
 
 const appPath = app.getAppPath();
 const legacyStore = new Store();
@@ -77,7 +75,6 @@ let tray;
 let autostartEnabled;
 let autolaunch;
 let contextMenu;
-let currentModel;
 let setRate = [0, false];
 let lowerRate = 500;
 let defaultGamePollingRate = 1000;
@@ -109,6 +106,8 @@ let runtimeStatus = {
   gameId: null,
   gameName: null,
   provider: null,
+  backend: null,
+  deviceName: null,
   error: null,
 };
 
@@ -158,10 +157,6 @@ function ensureConfigFile() {
   }
 
   writeAppConfig(getConfigPath(), settings, entries, []);
-}
-
-function is8kCompatible() {
-  return Boolean(currentModel && currentModel.is8kCompatible);
 }
 
 function setTrayStatus(status) {
@@ -737,7 +732,7 @@ app.whenReady().then(() => {
 
   tray = new Tray(nativeImage.createFromPath(path.join(appPath, assetsFolder + 'loading.png')));
   tray.on('click', () => tray.popUpContextMenu());
-  tray.setToolTip('Searching for Razer HyperPolling dongle');
+  tray.setToolTip('Searching for supported polling-rate mouse');
   tray.setTitle('Razer auto polling rate');
   updateTrayMenu();
   runLoop();
@@ -752,6 +747,7 @@ app.on('window-all-closed', (event) => {
 app.on('will-quit', () => {
   globalShortcut.unregister('F3');
   stopForegroundProcessWatcher();
+  closeAllWindowsHidOutputBridges().catch(() => {});
   if (diagnosticLogger) {
     diagnosticLogger.stop(new Date(), 'app quitting');
   }
@@ -777,6 +773,8 @@ async function quit() {
   while (!hasStopped) {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
+
+  await closeAllWindowsHidOutputBridges();
 
   if (process.platform !== 'darwin') {
     app.quit();
@@ -925,168 +923,6 @@ async function handlePickWindowShortcut() {
   }
 }
 
-async function getDongle() {
-  const webUsb = new WebUSB({
-    devicesFound: (devices) => devices.find((device) => device.vendorId === 0x1532
-      && dongles[device.productId] !== undefined),
-  });
-
-  try {
-    const device = await webUsb.requestDevice({ filters: [{}] });
-    if (!device) {
-      throw new Error('No compatible Razer HyperPolling dongle found');
-    }
-
-    currentModel = dongles[device.productId];
-    if (!currentModel) {
-      throw new Error('No compatible Razer HyperPolling dongle found');
-    }
-
-    return device;
-  } catch (error) {
-    if (error.name === 'NotFoundError') {
-      throw new Error('No compatible Razer HyperPolling dongle found');
-    }
-    throw error;
-  }
-}
-
-async function prepareDongle(dongle) {
-  await dongle.open();
-  if (dongle.configuration === null) {
-    await dongle.selectConfiguration(1);
-  }
-
-  const targetIndex = currentModel.interfaceIndex !== undefined ? currentModel.interfaceIndex : 0x00;
-  const targetInterface = dongle.configuration.interfaces.find((item) => item.interfaceNumber === targetIndex)
-    || dongle.configuration.interfaces[0];
-
-  await dongle.claimInterface(targetInterface.interfaceNumber);
-  return targetInterface.interfaceNumber;
-}
-
-async function cleanupDongle(dongle, claimedInterfaceNumber) {
-  if (!dongle) {
-    return;
-  }
-
-  if (claimedInterfaceNumber !== null && claimedInterfaceNumber !== undefined) {
-    try {
-      await dongle.releaseInterface(claimedInterfaceNumber);
-    } catch (error) {
-      log(`releaseInterface failed: ${error.message}`, true);
-    }
-  }
-
-  try {
-    await dongle.close();
-  } catch (error) {
-    log(`close failed: ${error.message}`, true);
-  }
-}
-
-async function getPollingRateOnce(dongle) {
-  const targetIndex = currentModel.interfaceIndex !== undefined ? currentModel.interfaceIndex : 0x00;
-
-  await dongle.controlTransferOut({
-    requestType: 'class',
-    recipient: 'interface',
-    request: 0x09,
-    value: 0x300,
-    index: targetIndex,
-  }, getRazerReport(0x1F, 0x00, 0xC0, 0x01, 0x00, 0x00));
-
-  await new Promise((resolve) => setTimeout(resolve, 100));
-
-  const reply = await dongle.controlTransferIn({
-    requestType: 'class',
-    recipient: 'interface',
-    request: 0x01,
-    value: 0x300,
-    index: targetIndex,
-  }, 90);
-
-  const responseLength = reply && reply.data ? reply.data.byteLength : 0;
-  if (!reply || !reply.data || responseLength <= 9) {
-    throw new Error(`Dongle returned a short polling-rate response (${responseLength} bytes)`);
-  }
-
-  const responseByte = reply.data.getUint8(9);
-  const pollingRate = getRateForReportByte(responseByte);
-  if (!pollingRate) {
-    throw new Error(
-      `Dongle returned an unknown polling-rate response (byte 0x${responseByte.toString(16).padStart(2, '0')}, length ${responseLength})`,
-    );
-  }
-
-  return pollingRate;
-}
-
-async function getPollingRate(dongle) {
-  return retryImmediately(() => getPollingRateOnce(dongle), {
-    attempts: 3,
-    onFailure: (error, attempt, attempts) => {
-      recordDiagnosticEvent('polling_rate_query_attempt_failed', {
-        attempt,
-        attempts,
-        error: error.message,
-      }, { verbose: true });
-    },
-  });
-}
-
-async function setPollingRate(dongle, pollingRate) {
-  const resolved = resolveSupportedPollingRate(pollingRate, { is8kCompatible: is8kCompatible() });
-  if (!resolved.rate) {
-    throw new Error(resolved.warning);
-  }
-
-  if (resolved.warning) {
-    log(resolved.warning, true);
-  }
-
-  const rate = getReportByteForRate(resolved.rate);
-  const targetIndex = currentModel.interfaceIndex !== undefined ? currentModel.interfaceIndex : 0x00;
-
-  await dongle.controlTransferOut({
-    requestType: 'class',
-    recipient: 'interface',
-    request: 0x09,
-    value: 0x300,
-    index: targetIndex,
-  }, getRazerReport(0x1F, 0x00, 0x40, 0x02, 0x00, rate));
-
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  await dongle.controlTransferIn({
-    requestType: 'class',
-    recipient: 'interface',
-    request: 0x01,
-    value: 0x300,
-    index: targetIndex,
-  }, 90);
-
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  await dongle.controlTransferOut({
-    requestType: 'class',
-    recipient: 'interface',
-    request: 0x09,
-    value: 0x300,
-    index: targetIndex,
-  }, getRazerReport(is8kCompatible() ? 0x1F : 0xFF, 0x00, 0x40, 0x02, 0x01, rate));
-
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  await dongle.controlTransferIn({
-    requestType: 'class',
-    recipient: 'interface',
-    request: 0x01,
-    value: 0x300,
-    index: targetIndex,
-  }, 90);
-
-  await new Promise((resolve) => setTimeout(resolve, 100));
-  return getPollingRate(dongle);
-}
-
 async function guardedCheckPollingRate(firstRun) {
   const result = await checkGuard.run(() => checkPollingRate(firstRun));
   if (result.skipped) {
@@ -1203,8 +1039,7 @@ function updateRuntimeSelection(selected, foregroundProcess, requestedTarget) {
 }
 
 async function checkPollingRate(firstRun) {
-  let dongle;
-  let claimedInterfaceNumber = null;
+  let backend;
 
   try {
     const {
@@ -1279,6 +1114,8 @@ async function checkPollingRate(firstRun) {
 
     if (!detectionEnabled) {
       runtimeStatus.currentRate = null;
+      runtimeStatus.backend = null;
+      runtimeStatus.deviceName = null;
       recordDiagnosticEvent('usb_access_decision', {
         access: false,
         reason: 'disabled',
@@ -1287,11 +1124,21 @@ async function checkPollingRate(firstRun) {
       return;
     }
 
-    dongle = await getDongle();
-    claimedInterfaceNumber = await prepareDongle(dongle);
+    const backendSelection = createPreferredMouseBackend({
+      log,
+      onDiagnostic: (event, details) => recordDiagnosticEvent(event, details, { verbose: true }),
+    });
+    backend = backendSelection.backend;
+    await backend.discover();
+    await backend.open();
 
-    let pollingRate = await getPollingRate(dongle);
-    const resolvedTarget = resolveSupportedPollingRate(requestedTarget, { is8kCompatible: is8kCompatible() });
+    let pollingRate = await backend.getPollingRate();
+    const backendSupports8k = typeof backend.is8kCompatible === 'function'
+      ? backend.is8kCompatible()
+      : Array.isArray(backend.supportedRates) && backend.supportedRates.includes(8000);
+    const resolvedTarget = resolveSupportedPollingRate(requestedTarget, {
+      is8kCompatible: backendSupports8k,
+    });
     if (!resolvedTarget.rate) {
       throw new Error(resolvedTarget.warning);
     }
@@ -1302,6 +1149,8 @@ async function checkPollingRate(firstRun) {
     const targetRate = resolvedTarget.rate;
     runtimeStatus.targetRate = targetRate;
     runtimeStatus.currentRate = pollingRate;
+    runtimeStatus.backend = backend.id;
+    runtimeStatus.deviceName = backend.name;
 
     const matchedText = selected.matchedProcess
       ? (selected.game ? `game ${selected.game.name}` : `matched ${selected.matchedProcess}`)
@@ -1321,6 +1170,7 @@ async function checkPollingRate(firstRun) {
       requestedTarget,
       rules: activeEntries.length,
       libraries: gameLibraries.length,
+      backend: backend.id,
     }, { verbose: true });
 
     if (firstRun) {
@@ -1336,12 +1186,14 @@ async function checkPollingRate(firstRun) {
         from: pollingRate,
         to: targetRate,
         matchedProcess: selected.matchedProcess || 'inactive',
+        backend: backend.id,
       });
-      pollingRate = await setPollingRate(dongle, targetRate);
+      pollingRate = await backend.setPollingRate(targetRate);
       runtimeStatus.currentRate = pollingRate;
       recordDiagnosticEvent('polling_rate_change_result', {
         currentRate: pollingRate,
         targetRate,
+        backend: backend.id,
       });
     }
 
@@ -1380,6 +1232,8 @@ async function checkPollingRate(firstRun) {
       lastPollingError = errorMessage;
     }
   } finally {
-    await cleanupDongle(dongle, claimedInterfaceNumber);
+    if (backend) {
+      await backend.close();
+    }
   }
 }
