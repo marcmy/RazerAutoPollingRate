@@ -139,9 +139,9 @@ test('Windows HID output bridge server keeps one native session and reads report
 
   assert.match(source, /\[switch\]\$Server/);
   assert.match(source, /class CrazyLightHidSession\s*:\s*IDisposable/);
-  assert.match(source, /Console\.In\.ReadLine\(\)/);
-  assert.match(source, /Console\.Out\.WriteLine\("READY"\)/);
-  assert.match(source, /Console\.Out\.WriteLine\("OK"\)/);
+  assert.match(source, /\[Console\]::In\.ReadLine\(\)/);
+  assert.match(source, /\[Console\]::Out\.WriteLine\("READY"\)/);
+  assert.match(source, /\[Console\]::Out\.WriteLine\("OK"\)/);
 });
 
 test('Windows HID output bridge queries HID caps before calling HidD_SetOutputReport', () => {
