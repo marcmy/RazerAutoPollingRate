@@ -597,10 +597,24 @@ jobs:
         run: |
           gh release edit $env:RELEASE_TAG `
             --repo $env:GITHUB_REPOSITORY `
-            --draft=false `
-            --latest
+            --draft=false
           if ($LASTEXITCODE -ne 0) {
             throw "Unable to publish release"
+          }
+
+          $releaseId = gh release view $env:RELEASE_TAG `
+            --repo $env:GITHUB_REPOSITORY `
+            --json databaseId `
+            --jq .databaseId
+          if ($LASTEXITCODE -ne 0 -or -not $releaseId) {
+            throw "Unable to resolve published release ID"
+          }
+
+          gh api --method PATCH `
+            "repos/$env:GITHUB_REPOSITORY/releases/$releaseId" `
+            -f make_latest=false *> $null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to keep milestone release from replacing the rolling Latest release"
           }
 
           $releaseUrl = gh release view $env:RELEASE_TAG `

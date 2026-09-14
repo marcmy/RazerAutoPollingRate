@@ -39,11 +39,64 @@ jobs:
     runs-on: windows-2022
     timeout-minutes: 30
     needs: test
+    outputs:
+      rolling_release: ${{ steps.rolling.outputs.rolling_release }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Classify rolling release change
+        id: rolling
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          $before = $env:BEFORE_SHA
+          $zeroSha = '0000000000000000000000000000000000000000'
+
+          if ([string]::IsNullOrWhiteSpace($before) -or $before -eq $zeroSha) {
+            $changedFiles = @(git show --format= --name-only $env:GITHUB_SHA)
+          }
+          else {
+            $changedFiles = @(git diff --name-only "$before..$env:GITHUB_SHA")
+          }
+
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to classify files changed by the main push'
+          }
+
+          $changedFiles = @($changedFiles | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+          $ignoredPatterns = @(
+            '^\.github/',
+            '^docs/',
+            '^test/',
+            '^(README|CHANGELOG|CONTRIBUTING|SECURITY|RELEASING)(?:\.[^/]+)?$',
+            '^LICENSE(?:\.[^/]+)?$',
+            '^\.git(?:ignore|attributes)$',
+            '^\.editorconfig$',
+            '^AGENTS\.md$'
+          )
+
+          $releaseFiles = @(
+            $changedFiles | Where-Object {
+              $path = $_
+              -not ($ignoredPatterns | Where-Object { $path -match $_ })
+            }
+          )
+
+          $rollingRelease = $releaseFiles.Count -gt 0
+          "rolling_release=$($rollingRelease.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+          if ($rollingRelease) {
+            "Rolling release enabled. Application-affecting files: $($releaseFiles -join ', ')" >> $env:GITHUB_STEP_SUMMARY
+          }
+          else {
+            "Rolling release skipped. This main push changed only workflows, docs, or repository metadata." >> $env:GITHUB_STEP_SUMMARY
+          }
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -107,7 +160,7 @@ jobs:
           retention-days: 14
 
       - name: Upload Scoop package
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rolling.outputs.rolling_release == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: RazerAutoPollingRate-Scoop-main-${{ github.sha }}
@@ -115,8 +168,8 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-  sync-release-assets:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  publish-rolling-release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.build-windows.outputs.rolling_release == 'true'
     runs-on: windows-2022
     timeout-minutes: 10
     needs: build-windows
@@ -124,38 +177,74 @@ jobs:
       actions: read
       contents: write
     steps:
-      - name: Check out source
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
       - name: Download Windows build artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: RazerAutoPollingRate-Windows-${{ github.sha }}
           path: windows-artifact
 
-      - name: Sync assets to current published release
+      - name: Resolve rolling CalVer
+        id: rolling-version
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $package = Get-Content -LiteralPath 'package.json' -Raw | ConvertFrom-Json
-          $tag = "v$($package.version)"
-
-          $releaseJson = gh release view $tag `
-            --repo $env:GITHUB_REPOSITORY `
-            --json tagName,isDraft,publishedAt 2>$null
-
+          $artifactName = "RazerAutoPollingRate-Scoop-main-$env:GITHUB_SHA"
+          $response = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/artifacts?per_page=100" | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) {
-            "No existing $tag release yet; the release workflow will publish it." >> $env:GITHUB_STEP_SUMMARY
-            exit 0
+            throw 'Unable to query artifacts for this CI run'
           }
 
-          $release = $releaseJson | ConvertFrom-Json
-          if ($release.isDraft) {
-            "$tag is still a draft; the release workflow owns its assets." >> $env:GITHUB_STEP_SUMMARY
-            exit 0
+          $matches = @(
+            $response.artifacts | Where-Object {
+              $_.name -eq $artifactName -and -not $_.expired
+            }
+          )
+
+          if ($matches.Count -ne 1) {
+            throw "Expected exactly one live Scoop artifact named $artifactName; found $($matches.Count)"
+          }
+
+          $rollingVersion = ([DateTimeOffset]$matches[0].created_at).UtcDateTime.ToString('yyyyMMdd.HHmm')
+          "version=$rollingVersion" >> $env:GITHUB_OUTPUT
+          "tag=$rollingVersion" >> $env:GITHUB_OUTPUT
+          "Rolling version: $rollingVersion" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Create rolling release and upload assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ROLLING_VERSION: ${{ steps.rolling-version.outputs.version }}
+          ROLLING_TAG: ${{ steps.rolling-version.outputs.tag }}
+        run: |
+          $existingJson = gh release view $env:ROLLING_TAG `
+            --repo $env:GITHUB_REPOSITORY `
+            --json tagName,targetCommitish,isDraft 2>$null
+
+          if ($LASTEXITCODE -eq 0) {
+            $existing = $existingJson | ConvertFrom-Json
+            if ($existing.targetCommitish -ne $env:GITHUB_SHA) {
+              throw "Rolling tag $env:ROLLING_TAG already belongs to $($existing.targetCommitish), not $env:GITHUB_SHA"
+            }
+          }
+          else {
+            $notes = @(
+              "Rolling build $env:ROLLING_VERSION from main.",
+              '',
+              "Commit: $env:GITHUB_SHA",
+              "Scoop version: $env:ROLLING_VERSION"
+            )
+            [IO.File]::WriteAllLines('ROLLING_RELEASE_NOTES.md', $notes, [Text.UTF8Encoding]::new($false))
+
+            gh release create $env:ROLLING_TAG `
+              --repo $env:GITHUB_REPOSITORY `
+              --target $env:GITHUB_SHA `
+              --title "Razer Auto Polling Rate $env:ROLLING_VERSION" `
+              --notes-file ROLLING_RELEASE_NOTES.md `
+              --draft
+            if ($LASTEXITCODE -ne 0) {
+              throw "Unable to create rolling release $env:ROLLING_TAG"
+            }
           }
 
           $assets = @(
@@ -175,7 +264,7 @@ jobs:
           $arguments = @(
             'release',
             'upload',
-            $tag,
+            $env:ROLLING_TAG,
             '--repo',
             $env:GITHUB_REPOSITORY,
             '--clobber'
@@ -183,7 +272,15 @@ jobs:
 
           & gh @arguments
           if ($LASTEXITCODE -ne 0) {
-            throw "Unable to sync main build assets to $tag"
+            throw "Unable to upload rolling release assets to $env:ROLLING_TAG"
           }
 
-          "Updated $tag assets from main commit $env:GITHUB_SHA." >> $env:GITHUB_STEP_SUMMARY
+          gh release edit $env:ROLLING_TAG `
+            --repo $env:GITHUB_REPOSITORY `
+            --draft=false `
+            --latest
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to publish rolling release $env:ROLLING_TAG as Latest"
+          }
+
+          "Published $env:ROLLING_TAG from main commit $env:GITHUB_SHA and marked it Latest." >> $env:GITHUB_STEP_SUMMARY
