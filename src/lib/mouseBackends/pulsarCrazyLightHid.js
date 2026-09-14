@@ -8,6 +8,8 @@ const CRAZYLIGHT_PRODUCT_ID = 0x5406;
 const CRAZYLIGHT_INTERFACE = 0x01;
 const REPORT_SIZE = 17;
 const READ_TIMEOUT_MS = 2000;
+const DISCOVERY_CACHE_KEY = `${CRAZYLIGHT_VENDOR_ID}:${CRAZYLIGHT_PRODUCT_ID}:${CRAZYLIGHT_INTERFACE}`;
+const sharedDiscoveryCache = new Map();
 
 function loadNodeHid() {
   // Lazy-load so hardware-independent tests can inject a fake HID API.
@@ -79,10 +81,32 @@ function createCrazyLightHidTransport(options = {}) {
   const log = options.log || (() => {});
   const inspectHidCaps = options.inspectHidCaps || inspectWindowsHidCaps;
   const sendOutputReport = options.sendOutputReport || sendWindowsHidOutputReport;
+  // Production backend instances are short-lived (one per polling check), so
+  // share the validated collection across instances. Injected test transports
+  // get an isolated cache unless a test explicitly supplies one.
+  const discoveryCache = options.discoveryCache
+    || ((options.hidApi || options.inspectHidCaps) ? new Map() : sharedDiscoveryCache);
 
   let selected = null;
   let selectedCaps = null;
   let handle = null;
+
+  function clearCachedSelection() {
+    const cached = discoveryCache.get(DISCOVERY_CACHE_KEY);
+    if (!cached || !selected || cached.path === selected.path) {
+      discoveryCache.delete(DISCOVERY_CACHE_KEY);
+    }
+  }
+
+  function logSelectedCollection(cached = false) {
+    log(
+      `CrazyLight HID selected ${selected.path} `
+      + `(UsagePage=${hex16(selectedCaps.usagePage)}, Usage=${hex16(selectedCaps.usage)}, `
+      + `Input=${selectedCaps.inputReportByteLength}, Output=${selectedCaps.outputReportByteLength}, `
+      + `Feature=${selectedCaps.featureReportByteLength}${cached ? ', cached' : ''})`,
+      true,
+    );
+  }
 
   async function enumerate() {
     if (typeof hidApi.devicesAsync === 'function') {
@@ -104,7 +128,22 @@ function createCrazyLightHidTransport(options = {}) {
         && isInterfaceOne(device));
 
     if (candidates.length === 0) {
+      discoveryCache.delete(DISCOVERY_CACHE_KEY);
       throw new Error('Pulsar X2 CrazyLight HID interface 1 was not found');
+    }
+
+    const cached = discoveryCache.get(DISCOVERY_CACHE_KEY);
+    if (cached && isProtocolCapable(cached.caps)) {
+      const currentDevice = candidates.find((device) => device.path === cached.path);
+      if (currentDevice) {
+        selected = currentDevice;
+        selectedCaps = cached.caps;
+        logSelectedCollection(true);
+        return normalizeInfo(selected, selectedCaps);
+      }
+      // Unplug/replug or USB topology change: discard the stale path and do a
+      // full caps-driven discovery below.
+      discoveryCache.delete(DISCOVERY_CACHE_KEY);
     }
 
     // A composite HID interface can expose several top-level collections. The
@@ -127,6 +166,7 @@ function createCrazyLightHidTransport(options = {}) {
         - candidateScore(left.device, left.caps));
 
     if (usable.length === 0) {
+      discoveryCache.delete(DISCOVERY_CACHE_KEY);
       const details = inspected.map(describeCandidate).join('; ');
       throw new Error(
         `No interface 1 HID collection supports 17-byte input/output reports. Candidates: ${details}`,
@@ -135,13 +175,11 @@ function createCrazyLightHidTransport(options = {}) {
 
     selected = usable[0].device;
     selectedCaps = usable[0].caps;
-    log(
-      `CrazyLight HID selected ${selected.path} `
-      + `(UsagePage=${hex16(selectedCaps.usagePage)}, Usage=${hex16(selectedCaps.usage)}, `
-      + `Input=${selectedCaps.inputReportByteLength}, Output=${selectedCaps.outputReportByteLength}, `
-      + `Feature=${selectedCaps.featureReportByteLength})`,
-      true,
-    );
+    discoveryCache.set(DISCOVERY_CACHE_KEY, {
+      path: selected.path,
+      caps: selectedCaps,
+    });
+    logSelectedCollection(false);
     return normalizeInfo(selected, selectedCaps);
   }
 
@@ -150,14 +188,19 @@ function createCrazyLightHidTransport(options = {}) {
       await discover();
     }
 
-    if (hidApi.HIDAsync && typeof hidApi.HIDAsync.open === 'function') {
-      handle = await hidApi.HIDAsync.open(selected.path, { nonExclusive: true });
-      return;
-    }
+    try {
+      if (hidApi.HIDAsync && typeof hidApi.HIDAsync.open === 'function') {
+        handle = await hidApi.HIDAsync.open(selected.path, { nonExclusive: true });
+        return;
+      }
 
-    if (typeof hidApi.HID === 'function') {
-      handle = new hidApi.HID(selected.path, { nonExclusive: true });
-      return;
+      if (typeof hidApi.HID === 'function') {
+        handle = new hidApi.HID(selected.path, { nonExclusive: true });
+        return;
+      }
+    } catch (error) {
+      clearCachedSelection();
+      throw error;
     }
 
     throw new Error('node-hid does not expose HIDAsync.open or HID');
@@ -177,7 +220,12 @@ function createCrazyLightHidTransport(options = {}) {
     // HID SET_REPORT(Output) control path. node-hid.write() maps to hid_write()
     // / WriteFile on Windows, which fails because interface 1 has no interrupt
     // OUT endpoint. Use HidD_SetOutputReport on the caps-validated collection.
-    await sendOutputReport(selected.path, report);
+    try {
+      await sendOutputReport(selected.path, report);
+    } catch (error) {
+      clearCachedSelection();
+      throw error;
+    }
   }
 
   async function readReport() {
