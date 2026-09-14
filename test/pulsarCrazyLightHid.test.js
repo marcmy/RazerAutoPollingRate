@@ -188,3 +188,34 @@ test('Windows HID transport rejects missing interface 1 HID collection', async (
 
   await assert.rejects(() => transport.discover(), /interface 1/i);
 });
+
+test('Windows HID transport reuses validated collection caps across backend instances', async () => {
+  const hidApi = createFakeHidApi();
+  const discoveryCache = new Map();
+  const baseInspector = createCapsInspector();
+  let inspections = 0;
+  const inspectHidCaps = async (devicePath) => {
+    inspections += 1;
+    return baseInspector(devicePath);
+  };
+
+  const first = createCrazyLightHidTransport({
+    hidApi,
+    inspectHidCaps,
+    discoveryCache,
+  });
+  const firstInfo = await first.discover();
+  const inspectionsAfterFirstDiscovery = inspections;
+
+  const second = createCrazyLightHidTransport({
+    hidApi,
+    inspectHidCaps,
+    discoveryCache,
+  });
+  const secondInfo = await second.discover();
+
+  assert.equal(firstInfo.path, 'consumer-collection');
+  assert.equal(secondInfo.path, 'consumer-collection');
+  assert.equal(inspectionsAfterFirstDiscovery, 2);
+  assert.equal(inspections, inspectionsAfterFirstDiscovery);
+});
