@@ -114,3 +114,76 @@ jobs:
           path: out/scoop-package/**
           if-no-files-found: error
           retention-days: 90
+
+  sync-release-assets:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: windows-2022
+    timeout-minutes: 10
+    needs: build-windows
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download Windows build artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: RazerAutoPollingRate-Windows-${{ github.sha }}
+          path: windows-artifact
+
+      - name: Sync assets to current published release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $package = Get-Content -LiteralPath 'package.json' -Raw | ConvertFrom-Json
+          $tag = "v$($package.version)"
+
+          $releaseJson = gh release view $tag `
+            --repo $env:GITHUB_REPOSITORY `
+            --json tagName,isDraft,publishedAt 2>$null
+
+          if ($LASTEXITCODE -ne 0) {
+            "No existing $tag release yet; the release workflow will publish it." >> $env:GITHUB_STEP_SUMMARY
+            exit 0
+          }
+
+          $release = $releaseJson | ConvertFrom-Json
+          if ($release.isDraft) {
+            "$tag is still a draft; the release workflow owns its assets." >> $env:GITHUB_STEP_SUMMARY
+            exit 0
+          }
+
+          $assets = @(
+            Get-ChildItem -LiteralPath 'windows-artifact' -Recurse -File |
+              Sort-Object FullName |
+              ForEach-Object { $_.FullName }
+          )
+
+          if ($assets.Count -eq 0) {
+            throw 'Downloaded Windows build artifact is empty'
+          }
+
+          if (@($assets | Where-Object { [IO.Path]::GetFileName($_) -eq 'SHA256SUMS.txt' }).Count -ne 1) {
+            throw 'Downloaded Windows build artifact must contain exactly one SHA256SUMS.txt'
+          }
+
+          $arguments = @(
+            'release',
+            'upload',
+            $tag,
+            '--repo',
+            $env:GITHUB_REPOSITORY,
+            '--clobber'
+          ) + $assets
+
+          & gh @arguments
+          if ($LASTEXITCODE -ne 0) {
+            throw "Unable to sync main build assets to $tag"
+          }
+
+          "Updated $tag assets from main commit $env:GITHUB_SHA." >> $env:GITHUB_STEP_SUMMARY
