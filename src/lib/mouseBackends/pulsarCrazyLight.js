@@ -232,6 +232,35 @@ function createPulsarCrazyLightBackend(options = {}) {
     return readback;
   }
 
+  // Capture-backed X2 CrazyLight register; applies to the active onboard profile.
+  async function getTurboMode() {
+    const bytes = await readMemory(0x00b5, 2);
+    if (![0, 1].includes(bytes[0]) || bytes[1] !== ((0x55 - bytes[0]) & 0xff)) {
+      throw new Error('CrazyLight returned an unsupported Turbo Mode value or checksum');
+    }
+    return bytes[0] === 1;
+  }
+
+  async function setTurboMode(enabled, expectedProfile) {
+    if (!allowHardwareValidationWrites) {
+      throw new Error('CrazyLight Turbo Mode writes require explicit hardware-validation mode');
+    }
+    if (typeof enabled !== 'boolean' || !Number.isInteger(expectedProfile)
+      || expectedProfile < 1 || expectedProfile > 4) {
+      throw new Error('Turbo Mode requires a boolean and an active profile from 1 to 4');
+    }
+    if (await getActiveProfile() !== expectedProfile) {
+      throw new Error('CrazyLight profile changed before Turbo Mode write');
+    }
+    const value = enabled ? 1 : 0;
+    await writeMemory(0x00b5, Buffer.from([value, 0x55 - value]));
+    const actual = await getTurboMode();
+    if (await getActiveProfile() !== expectedProfile || actual !== enabled) {
+      throw new Error('CrazyLight Turbo Mode verification failed (value or profile changed)');
+    }
+    return actual;
+  }
+
   async function close() {
     if (!device) return;
 
@@ -295,6 +324,9 @@ function createPulsarCrazyLightBackend(options = {}) {
     open,
     getActiveProfile,
     getPollingRate,
+    getTurboMode,
+    setTurboMode,
+    capabilities: { turboMode: true },
     probe,
     setPollingRate,
     close,

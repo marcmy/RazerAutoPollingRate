@@ -31,6 +31,7 @@ const {
   fetchJson,
   verifyFileDigest,
 } = require('./lib/githubReleaseClient');
+const { supportsTurboMode, applyTurboMode } = require('./lib/mouseBackends/turboAutomation');
 const { createPreferredMouseBackend } = require('./lib/mouseBackends/runtime');
 const {
   closeAllWindowsHidOutputBridges,
@@ -100,6 +101,7 @@ let diagnosticLoggingEnabled = false;
 let verboseDiagnosticLoggingEnabled = false;
 let pollingCheckIntervalMs = DEFAULT_SETTINGS.pollingCheckIntervalMs;
 let detectionEnabled = true;
+let turboAutomationUsed = false;
 let pickingWindow = false;
 let hasStopped = false;
 let stop = false;
@@ -558,6 +560,7 @@ function editorRulesFromEntries(entries) {
     target: entry.rawTarget || entry.executablePath || entry.rawProcessName || entry.processName,
     pollingRate: entry.usesDefaultPollingRate ? null : entry.pollingRate,
     detectionMode: entry.detectionMode || 'default',
+    turboMode: entry.turboMode === true,
     isPathRule: Boolean(entry.executablePath),
   }));
 }
@@ -579,7 +582,7 @@ function buildEditorConfigText(rules) {
       throw new Error('Each game override needs an executable and polling rate');
     }
 
-    return `${formatRuleTarget(target)} ${pollingRate}${mode === 'default' ? '' : ` ${mode}`}`;
+    return `${formatRuleTarget(target)} ${pollingRate}${mode === 'default' ? '' : ` ${mode}`}${rule.turboMode === true ? ' turbo=on' : ''}`;
   }).join('\n');
 }
 
@@ -787,6 +790,7 @@ async function buildGameCards(entries, gameMetadata = []) {
       customized: hasRuleOverride || Boolean(customName) || hidden,
       hasRuleOverride,
       pollingRate: override ? override.pollingRate : null,
+      turboMode: Boolean(override && override.turboMode),
       detectionMode: override ? override.detectionMode : 'default',
       overrideTarget: override ? override.target : null,
       iconDataUrl: await getExecutableIconDataUrl(cardExecutablePath),
@@ -813,6 +817,7 @@ async function buildGameCards(entries, gameMetadata = []) {
       kind: 'manual',
       hasRuleOverride: true,
       pollingRate: rule.pollingRate,
+      turboMode: rule.turboMode === true,
       detectionMode: rule.detectionMode || 'default',
       overrideTarget: rule.target,
     };
@@ -1049,6 +1054,11 @@ async function quit() {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
+  if (turboAutomationUsed) {
+    detectionEnabled = false;
+    // The polling loop has stopped, so cleanup cannot race a game transition.
+    await checkPollingRate(false);
+  }
   await closeAllWindowsHidOutputBridges();
 
   if (process.platform !== 'darwin') {
@@ -1390,10 +1400,12 @@ async function checkPollingRate(firstRun) {
       ].join('|'),
     });
 
-    if (!detectionEnabled) {
+    const manageTurbo = turboAutomationUsed || entries.some((entry) => entry.turboMode === true);
+    if (!detectionEnabled && !manageTurbo) {
       runtimeStatus.currentRate = null;
       runtimeStatus.backend = null;
       runtimeStatus.deviceName = null;
+      runtimeStatus.turboSupported = false;
       recordDiagnosticEvent('usb_access_decision', {
         access: false,
         reason: 'disabled',
@@ -1407,9 +1419,32 @@ async function checkPollingRate(firstRun) {
       onDiagnostic: (event, details) => recordDiagnosticEvent(event, details, { verbose: true }),
     });
     backend = backendSelection.backend;
+    if (!detectionEnabled && backend.id !== 'pulsar-x2-crazylight') return;
     await backend.discover();
     await backend.open();
 
+    runtimeStatus.backend = backend.id;
+    runtimeStatus.deviceName = backend.deviceInfo.productName || backend.name;
+    runtimeStatus.turboSupported = false;
+    runtimeStatus.turboMode = null;
+    runtimeStatus.turboError = null;
+    if (supportsTurboMode(backend) && (manageTurbo || (settingsWindow && !settingsWindow.isDestroyed()))) {
+      try {
+        // A model match alone is insufficient: require a valid device read.
+        runtimeStatus.turboMode = await backend.getTurboMode();
+        runtimeStatus.turboSupported = true;
+        if (manageTurbo) {
+          turboAutomationUsed = true;
+          runtimeStatus.turboMode = await applyTurboMode(backend, selected, detectionEnabled);
+        }
+      } catch (error) {
+        runtimeStatus.turboSupported = false;
+        runtimeStatus.turboMode = null;
+        runtimeStatus.turboError = error.message;
+        recordDiagnosticEvent('turbo_mode_error', { error: error.message });
+      }
+    }
+    if (!detectionEnabled) return;
     let pollingRate = await backend.getPollingRate();
     const backendSupports8k = typeof backend.is8kCompatible === 'function'
       ? backend.is8kCompatible()
@@ -1428,7 +1463,7 @@ async function checkPollingRate(firstRun) {
     runtimeStatus.targetRate = targetRate;
     runtimeStatus.currentRate = pollingRate;
     runtimeStatus.backend = backend.id;
-    runtimeStatus.deviceName = backend.name;
+    runtimeStatus.deviceName = backend.deviceInfo.productName || backend.name;
 
     const matchedText = selected.matchedProcess
       ? (selected.game ? `game ${selected.game.name}` : `matched ${selected.matchedProcess}`)
@@ -1498,6 +1533,8 @@ async function checkPollingRate(firstRun) {
     const errorMessage = error && error.message ? error.message : String(error);
     setRate = [0, false];
     runtimeStatus.error = errorMessage;
+    runtimeStatus.deviceName = null;
+    runtimeStatus.turboSupported = false;
 
     if (lastPollingError !== errorMessage) {
       recordDiagnosticEvent('polling_check_error', { error: errorMessage });

@@ -48,6 +48,8 @@ function parseRuleLine(line) {
   }
 
   const parts = remainder.split(/\s+/);
+  const turboMode = parts[parts.length - 1] === 'turbo=on';
+  if (turboMode) parts.pop();
   if (parts.length < 1 || parts.length > 2) {
     return null;
   }
@@ -57,6 +59,7 @@ function parseRuleLine(line) {
     rateValue: parts[0],
     detectionMode: parts[1] || 'default',
     wasQuoted,
+    turboMode,
   };
 }
 
@@ -127,6 +130,7 @@ function parseProcessConfig(contents, options = {}) {
       executablePath: normalizedPath,
       isPathRule: isPath,
       pollingRate,
+      ...(parsedLine.turboMode ? { turboMode: true } : {}),
       usesDefaultPollingRate,
       detectionMode: normalizedDetectionMode,
       lineNumber,
@@ -155,7 +159,7 @@ function serializeProcessConfig(entries) {
         ? entry.detectionMode
         : 'default';
       const rate = entry.usesDefaultPollingRate || entry.pollingRate === null ? 'default' : entry.pollingRate;
-      return `${target} ${rate}${mode === 'default' ? '' : ` ${mode}`}`;
+      return `${target} ${rate}${mode === 'default' ? '' : ` ${mode}`}${entry.turboMode === true ? ' turbo=on' : ''}`;
     })
     .join('\n');
 }
