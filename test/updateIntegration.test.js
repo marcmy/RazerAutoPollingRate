@@ -42,6 +42,14 @@ test('runtime updater is self-contained and hands the verified installer to Squi
   assert.match(installer, /--processStart/);
 });
 
+test('updater destroys its non-closable progress window before quitting the Electron app', () => {
+  const main = source(mainPath);
+  assert.match(
+    main,
+    /async function launchDetachedUpdate\(command\)[\s\S]{0,1400}child\.unref\(\);[\s\S]{0,240}closeUpdateProgressWindow\(\);[\s\S]{0,120}app\.quit\(\);/,
+  );
+});
+
 test('runtime transitions give the updater a chance to notify only after game detection updates', () => {
   const main = source(mainPath);
   assert.match(

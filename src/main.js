@@ -342,6 +342,7 @@ async function launchDetachedUpdate(command) {
       resolve();
     });
   });
+  closeUpdateProgressWindow();
   app.quit();
 }
 
