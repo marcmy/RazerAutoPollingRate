@@ -10,6 +10,7 @@ const DEFAULT_SETTINGS = {
   detectionMode: 'foreground',
   autoDetectGames: true,
   autostart: true,
+  automaticUpdateChecks: true,
   diagnosticLogging: false,
   verboseDiagnosticLogging: false,
   pollingCheckIntervalMs: 1500,
@@ -94,6 +95,10 @@ function normalizeSettings(rawSettings = {}) {
     detectionMode,
     autoDetectGames: parseBoolean(rawSettings.auto_detect_games, DEFAULT_SETTINGS.autoDetectGames),
     autostart: parseBoolean(rawSettings.autostart, DEFAULT_SETTINGS.autostart),
+    automaticUpdateChecks: parseBoolean(
+      rawSettings.auto_check_updates,
+      DEFAULT_SETTINGS.automaticUpdateChecks,
+    ),
     diagnosticLogging: parseBoolean(rawSettings.diagnostic_logging, DEFAULT_SETTINGS.diagnosticLogging),
     verboseDiagnosticLogging: parseBoolean(
       rawSettings.verbose_diagnostic_logging,
@@ -171,6 +176,7 @@ function serializeAppConfig(settings, entries, gameFolders = [], gameMetadata = 
     `detection_mode=${normalizedSettings.detectionMode === 'running' ? 'running' : 'foreground'}`,
     `auto_detect_games=${normalizedSettings.autoDetectGames ? 'true' : 'false'}`,
     `autostart=${normalizedSettings.autostart ? 'true' : 'false'}`,
+    `auto_check_updates=${normalizedSettings.automaticUpdateChecks ? 'true' : 'false'}`,
     `diagnostic_logging=${normalizedSettings.diagnosticLogging ? 'true' : 'false'}`,
     `verbose_diagnostic_logging=${normalizedSettings.verboseDiagnosticLogging ? 'true' : 'false'}`,
     '# Debug only: default 1500 ms; accepted range 200-60000 ms.',

@@ -11,12 +11,16 @@ if (!acquireSingleInstanceLock(app)) return;
 
 installPollingRateIconColorizer(nativeImage);
 
-const settingsUrl = pathToFileURL(path.join(__dirname, 'settings.html')).href;
+const allowedPageUrls = new Set([
+  'settings.html',
+  'updateProgress.html',
+  'updateChangelog.html',
+].map((fileName) => pathToFileURL(path.join(__dirname, fileName)).href));
 
 app.on('web-contents-created', (_event, webContents) => {
   webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   webContents.on('will-navigate', (event, navigationUrl) => {
-    if (navigationUrl !== settingsUrl) {
+    if (!allowedPageUrls.has(navigationUrl)) {
       event.preventDefault();
     }
   });

@@ -23,6 +23,7 @@ require('./runtimeGameMatching.test');
 require('./singleInstance.test');
 require('./trayIcons.test');
 require('./updateCoordinator.test');
+require('./updateInstaller.test');
 require('./updateIntegration.test');
 require('./windowsHidOutputReport.test');
 require('./rollingBuildVersion.test');

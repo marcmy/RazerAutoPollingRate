@@ -247,8 +247,7 @@ jobs:
             $notes = @(
               "Rolling build $env:ROLLING_VERSION from main.",
               '',
-              "Commit: $env:GITHUB_SHA",
-              "Scoop version: $env:ROLLING_VERSION"
+              "Commit: $env:GITHUB_SHA"
             )
             [IO.File]::WriteAllLines('ROLLING_RELEASE_NOTES.md', $notes, [Text.UTF8Encoding]::new($false))
 

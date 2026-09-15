@@ -54,18 +54,33 @@ test('rolling release selects the exact CalVer Setup asset', () => {
   assert.deepEqual(appUpdates.selectSetupAsset(release), release.assets[1]);
 });
 
-test('Scoop installations are detected from the executable path', () => {
-  assert.equal(typeof appUpdates.isScoopInstallPath, 'function');
-  assert.equal(
-    appUpdates.isScoopInstallPath('C:\\Users\\marcm\\scoop\\apps\\razerautopollingrate\\current\\razerautopollingrate.exe'),
-    true,
-  );
-  assert.equal(
-    appUpdates.isScoopInstallPath('D:\\Apps\\apps\\razerautopollingrate\\current\\razerautopollingrate.exe'),
-    true,
-  );
-  assert.equal(
-    appUpdates.isScoopInstallPath('C:\\Users\\marcm\\AppData\\Local\\razerautopollingrate\\app-2026.914.900\\razerautopollingrate.exe'),
-    false,
-  );
+test('in-app release notes remove package-manager-specific sections and formatting noise', () => {
+  assert.equal(typeof appUpdates.releaseNotesToPlainText, 'function');
+  const notes = appUpdates.releaseNotesToPlainText([
+    '## Highlights',
+    '- **Faster** device detection',
+    '',
+    '## Scoop',
+    '- Manifest refreshed',
+    '- scoop update example',
+    '',
+    '## Fixes',
+    '- Fixed `startup` handling',
+  ].join('\n'));
+
+  assert.equal(notes.includes('Scoop'), false);
+  assert.equal(notes.includes('scoop'), false);
+  assert.match(notes, /Highlights/);
+  assert.match(notes, /Faster device detection/);
+  assert.match(notes, /Fixes/);
+  assert.match(notes, /Fixed startup handling/);
+  assert.equal(notes.includes('Manifest refreshed'), false);
+});
+
+test('post-update changelog is shown only after the target build is actually running', () => {
+  assert.equal(typeof appUpdates.shouldShowInstalledChangelog, 'function');
+  const pending = { tag_name: '20260915.1830' };
+  assert.equal(appUpdates.shouldShowInstalledChangelog(pending, '20260915.1830'), true);
+  assert.equal(appUpdates.shouldShowInstalledChangelog(pending, '20260915.1829'), false);
+  assert.equal(appUpdates.shouldShowInstalledChangelog(null, '20260915.1830'), false);
 });

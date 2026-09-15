@@ -29,6 +29,7 @@ test('GitHub release client reads JSON and downloads redirected assets', async (
       response.end();
       return;
     }
+    response.setHeader('content-length', payload.length);
     response.end(payload);
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -41,8 +42,16 @@ test('GitHub release client reads JSON and downloads redirected assets', async (
 
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'rapr-update-'));
   const destination = path.join(directory, 'setup.exe');
-  await githubReleaseClient.downloadFile(`${base}/asset`, destination);
+  const progress = [];
+  await githubReleaseClient.downloadFile(`${base}/asset`, destination, {
+    expectedBytes: payload.length,
+    onProgress: (state) => progress.push(state),
+  });
   assert.deepEqual(fs.readFileSync(destination), payload);
+  assert.equal(progress[0].downloadedBytes, 0);
+  assert.equal(progress.at(-1).downloadedBytes, payload.length);
+  assert.equal(progress.at(-1).totalBytes, payload.length);
+  assert.equal(progress.at(-1).fraction, 1);
 });
 
 test('downloaded asset digest is verified when GitHub supplies sha256 metadata', () => {

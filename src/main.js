@@ -23,8 +23,9 @@ const { DiagnosticLogger } = require('./lib/diagnosticLogger');
 const {
   getDisplayVersion,
   isGameActive,
-  isScoopInstallPath,
+  releaseNotesToPlainText,
   selectSetupAsset,
+  shouldShowInstalledChangelog,
 } = require('./lib/appUpdates');
 const {
   downloadFile,
@@ -78,6 +79,7 @@ const {
   resolveSupportedPollingRate,
 } = require('./lib/rates');
 const { createUpdateCoordinator } = require('./lib/updateCoordinator');
+const { buildSquirrelInstallScript } = require('./lib/updateInstaller');
 
 const appPath = app.getAppPath();
 const legacyStore = new Store();
@@ -113,6 +115,9 @@ let updateCoordinator = null;
 let updateStartupTimer = null;
 let updateCheckTimer = null;
 let updateOperation = 'idle';
+let updateProgressWindow = null;
+let updateChangelogWindow = null;
+let automaticUpdateChecks = true;
 let runtimeStatus = {
   enabled: true,
   processName: null,
@@ -213,6 +218,7 @@ function compactPendingRelease(release) {
   return {
     tag_name: release.tag_name,
     html_url: release.html_url || null,
+    body: release.body || '',
     assets: Array.isArray(release.assets)
       ? release.assets.map((asset) => ({
         name: asset.name,
@@ -239,8 +245,71 @@ function getUpdateMenuLabel() {
   return pending ? `Update Available: ${pending.tag_name}` : 'Check for Updates';
 }
 
-function quotePowerShellLiteral(value) {
-  return `'${String(value).replace(/'/g, "''")}'`;
+function formatByteCount(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value < 0) {
+    return '';
+  }
+  if (value < 1024 * 1024) {
+    return `${Math.max(1, Math.round(value / 1024))} KB`;
+  }
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function createUpdateProgressWindow(version) {
+  if (updateProgressWindow && !updateProgressWindow.isDestroyed()) {
+    return updateProgressWindow;
+  }
+
+  updateProgressWindow = new BrowserWindow({
+    width: 420,
+    height: 176,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    closable: false,
+    show: false,
+    title: 'Razer Auto Polling Rate Update',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  updateProgressWindow.setMenu(null);
+  updateProgressWindow.once('ready-to-show', () => updateProgressWindow.show());
+  updateProgressWindow.on('closed', () => {
+    updateProgressWindow = null;
+  });
+  updateProgressWindow.loadFile(path.join(__dirname, 'updateProgress.html'));
+  updateProgressWindow.webContents.once('did-finish-load', () => {
+    setUpdateProgress({ version, status: 'Preparing download…', fraction: 0 });
+  });
+  return updateProgressWindow;
+}
+
+function setUpdateProgress({ version, status, downloadedBytes, totalBytes, fraction }) {
+  if (!updateProgressWindow || updateProgressWindow.isDestroyed()) {
+    return;
+  }
+
+  const detail = downloadedBytes !== undefined && totalBytes
+    ? `${formatByteCount(downloadedBytes)} of ${formatByteCount(totalBytes)}`
+    : '';
+  const payload = { version, status, detail, fraction };
+  updateProgressWindow.setProgressBar(Number.isFinite(fraction) ? fraction : -1);
+  if (!updateProgressWindow.webContents.isLoading()) {
+    updateProgressWindow.webContents
+      .executeJavaScript(`window.setUpdateProgress(${JSON.stringify(payload)})`)
+      .catch(() => {});
+  }
+}
+
+function closeUpdateProgressWindow() {
+  if (updateProgressWindow && !updateProgressWindow.isDestroyed()) {
+    updateProgressWindow.destroy();
+  }
+  updateProgressWindow = null;
 }
 
 async function launchDetachedUpdate(command) {
@@ -250,12 +319,7 @@ async function launchDetachedUpdate(command) {
   }
 
   await closeAllWindowsHidOutputBridges();
-  const waitForParent = [
-    `$parentId = ${process.pid}`,
-    'while (Get-Process -Id $parentId -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 250 }',
-    command,
-  ].join('; ');
-  const encodedCommand = Buffer.from(waitForParent, 'utf16le').toString('base64');
+  const encodedCommand = Buffer.from(command, 'utf16le').toString('base64');
 
   await new Promise((resolve, reject) => {
     const child = spawn('powershell.exe', [
@@ -280,13 +344,6 @@ async function launchDetachedUpdate(command) {
 }
 
 async function downloadAndInstallUpdate(release) {
-  if (isScoopInstallPath(process.execPath)) {
-    updateOperation = 'installing';
-    updateTrayMenu();
-    await launchDetachedUpdate('& scoop update razerautopollingrate');
-    return;
-  }
-
   const asset = selectSetupAsset(release);
   if (!asset || !asset.browser_download_url) {
     throw new Error(`Release ${release.tag_name} does not contain its CalVer Setup installer`);
@@ -294,12 +351,33 @@ async function downloadAndInstallUpdate(release) {
 
   updateOperation = 'downloading';
   updateTrayMenu();
+  createUpdateProgressWindow(release.tag_name);
   const updateDirectory = path.join(app.getPath('temp'), 'RazerAutoPollingRate', 'updates', release.tag_name);
   fs.rmSync(updateDirectory, { recursive: true, force: true });
   fs.mkdirSync(updateDirectory, { recursive: true });
   const installerPath = path.join(updateDirectory, asset.name);
-  await downloadFile(asset.browser_download_url, installerPath);
+  let lastProgressUpdateAt = 0;
+  await downloadFile(asset.browser_download_url, installerPath, {
+    expectedBytes: asset.size,
+    onProgress: ({ downloadedBytes, totalBytes, fraction }) => {
+      const now = Date.now();
+      const isInitial = downloadedBytes === 0;
+      const isComplete = fraction === 1;
+      if (!isInitial && !isComplete && now - lastProgressUpdateAt < 100) {
+        return;
+      }
+      lastProgressUpdateAt = now;
+      setUpdateProgress({
+        version: release.tag_name,
+        status: 'Downloading update…',
+        downloadedBytes,
+        totalBytes,
+        fraction,
+      });
+    },
+  });
 
+  setUpdateProgress({ version: release.tag_name, status: 'Verifying installer…', fraction: 1 });
   if (!asset.digest) {
     fs.rmSync(installerPath, { force: true });
     throw new Error('GitHub did not provide a SHA256 digest for the update installer');
@@ -312,7 +390,32 @@ async function downloadAndInstallUpdate(release) {
 
   updateOperation = 'installing';
   updateTrayMenu();
-  await launchDetachedUpdate(`Start-Process -FilePath ${quotePowerShellLiteral(installerPath)}`);
+  setUpdateProgress({ version: release.tag_name, status: 'Starting installer…', fraction: 1 });
+
+  const localAppData = process.env.LOCALAPPDATA;
+  if (!localAppData) {
+    throw new Error('Windows local application data directory is unavailable');
+  }
+
+  legacyStore.set('updates.pendingChangelog', {
+    tag_name: release.tag_name,
+    body: release.body || '',
+  });
+
+  const installScript = buildSquirrelInstallScript({
+    parentPid: process.pid,
+    installerPath,
+    localAppData,
+    packageName: packageMetadata.name,
+    executableName: `${packageMetadata.name}.exe`,
+  });
+
+  try {
+    await launchDetachedUpdate(installScript);
+  } catch (error) {
+    legacyStore.delete('updates.pendingChangelog');
+    throw error;
+  }
 }
 
 async function notifyUpdateAvailable(release, canProceed) {
@@ -326,13 +429,12 @@ async function notifyUpdateAvailable(release, canProceed) {
     return true;
   }
 
-  const scoopInstall = isScoopInstallPath(process.execPath);
   const result = await dialog.showMessageBox({
     type: 'info',
     title: 'Razer Auto Polling Rate Update',
     message: `Razer Auto Polling Rate ${release.tag_name} is available.`,
     detail: `Current version: ${appDisplayVersion}`,
-    buttons: [scoopInstall ? 'Update with Scoop' : 'Download & Install', 'Later'],
+    buttons: ['Download & Install', 'Later'],
     defaultId: 0,
     cancelId: 1,
     noLink: true,
@@ -350,6 +452,7 @@ async function notifyUpdateAvailable(release, canProceed) {
     await downloadAndInstallUpdate(release);
   } catch (error) {
     updateOperation = 'idle';
+    closeUpdateProgressWindow();
     updateTrayMenu();
     log(`update install failed: ${error.message}`, true);
     await dialog.showMessageBox({
@@ -438,7 +541,12 @@ async function handleCheckForUpdates() {
 }
 
 function scheduleUpdateChecks() {
-  if (!app.isPackaged) {
+  clearTimeout(updateStartupTimer);
+  clearInterval(updateCheckTimer);
+  updateStartupTimer = null;
+  updateCheckTimer = null;
+
+  if (!app.isPackaged || !automaticUpdateChecks) {
     return;
   }
 
@@ -457,6 +565,7 @@ function getCurrentSettings() {
     detectionMode: getDetectionMode(),
     autoDetectGames: Boolean(autoDetectGames),
     autostart: Boolean(autostartEnabled),
+    automaticUpdateChecks: Boolean(automaticUpdateChecks),
     diagnosticLogging: Boolean(diagnosticLoggingEnabled),
     verboseDiagnosticLogging: Boolean(verboseDiagnosticLoggingEnabled),
     pollingCheckIntervalMs,
@@ -469,6 +578,7 @@ function applySettings(settings) {
   detectionMode = settings.detectionMode === 'running' ? 'running' : 'foreground';
   autoDetectGames = settings.autoDetectGames !== false;
   autostartEnabled = Boolean(settings.autostart);
+  automaticUpdateChecks = settings.automaticUpdateChecks !== false;
   diagnosticLoggingEnabled = Boolean(settings.diagnosticLogging);
   verboseDiagnosticLoggingEnabled = Boolean(settings.verboseDiagnosticLogging);
   pollingCheckIntervalMs = settings.pollingCheckIntervalMs || DEFAULT_SETTINGS.pollingCheckIntervalMs;
@@ -874,6 +984,7 @@ function setupSettingsIpc() {
         detectionMode: payload.settings.detectionMode === 'running' ? 'running' : 'foreground',
         autoDetectGames: payload.settings.autoDetectGames !== false,
         autostart: Boolean(payload.settings.autostart),
+        automaticUpdateChecks: payload.settings.automaticUpdateChecks !== false,
         diagnosticLogging: Boolean(payload.settings.diagnosticLogging),
         verboseDiagnosticLogging: Boolean(payload.settings.verboseDiagnosticLogging),
         pollingCheckIntervalMs: normalizePollingCheckIntervalMs(payload.settings.pollingCheckIntervalMs),
@@ -897,6 +1008,7 @@ function setupSettingsIpc() {
       applySettings(settings);
       saveConfig(getCurrentSettings(), entries, gameFolders, gameMetadata);
       syncGameLibraries(settings, gameFolders, true);
+      scheduleUpdateChecks();
 
       if (autostartChanged) {
         updateAutostart();
@@ -1008,6 +1120,7 @@ app.whenReady().then(() => {
   setupUpdateCoordinator();
   updateTrayMenu();
   scheduleUpdateChecks();
+  showPendingUpdateChangelog();
   runLoop();
 });
 
@@ -1084,6 +1197,48 @@ function openSettingsWindow() {
     settingsWindow = null;
   });
   settingsWindow.loadFile(path.join(__dirname, 'settings.html'));
+}
+
+function showPendingUpdateChangelog() {
+  const pending = legacyStore.get('updates.pendingChangelog', null);
+  if (!shouldShowInstalledChangelog(pending, appDisplayVersion)) {
+    return;
+  }
+  if (updateChangelogWindow && !updateChangelogWindow.isDestroyed()) {
+    updateChangelogWindow.focus();
+    return;
+  }
+
+  const notes = releaseNotesToPlainText(pending.body)
+    || 'This update installed successfully. No release notes were provided.';
+  updateChangelogWindow = new BrowserWindow({
+    width: 540,
+    height: 440,
+    minWidth: 460,
+    minHeight: 320,
+    show: false,
+    title: `What's New - ${appDisplayVersion}`,
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  updateChangelogWindow.setMenu(null);
+  updateChangelogWindow.webContents.once('did-finish-load', () => {
+    const payload = { version: appDisplayVersion, notes };
+    updateChangelogWindow.webContents
+      .executeJavaScript(`window.setReleaseNotes(${JSON.stringify(payload)})`)
+      .catch(() => {});
+  });
+  updateChangelogWindow.once('ready-to-show', () => {
+    legacyStore.delete('updates.pendingChangelog');
+    updateChangelogWindow.show();
+  });
+  updateChangelogWindow.on('closed', () => {
+    updateChangelogWindow = null;
+  });
+  updateChangelogWindow.loadFile(path.join(__dirname, 'updateChangelog.html'));
 }
 
 function updateAutostart() {
