@@ -701,6 +701,7 @@
         <div class="brand-copy">
           <div class="brand-title">Auto Polling Rate</div>
           <div id="app-version" class="brand-version"></div>
+          <div id="detected-mouse" class="brand-version">Detecting mouse…</div>
         </div>
       </div>
 
@@ -897,6 +898,10 @@
         <div class="field-help">Full paths are preferred. Running-process mode can fall back to the executable name when Windows hides the path.</div>
       </div>
 
+      <div id="modal-turbo-row" class="field hidden">
+        <label class="toggle-row"><input id="modal-turbo" type="checkbox"><span>Turbo Mode for this game</span></label>
+        <p class="setting-description">Pulsar X2 CrazyLight only. Automatically turns off when this game no longer matches. Uses this game's detection mode.</p>
+      </div>
       <div class="modal-grid">
         <div class="field">
           <label for="modal-rate">Polling rate</label>
@@ -1356,6 +1361,8 @@
       fillRateSelect(byId('modal-rate'), validRates, card.pollingRate, true);
       byId('modal-detection').value = card.detectionMode || 'default';
       byId('modal-hidden').checked = Boolean(card.hidden);
+      byId('modal-turbo').checked = card.turboMode === true;
+      byId('modal-turbo-row').classList.toggle('hidden', !state.runtime?.turboSupported);
       byId('modal-remove').classList.toggle('hidden', card.kind !== 'auto' || !card.hasRuleOverride);
       byId('modal-delete').classList.toggle('hidden', card.kind !== 'manual');
       gameDialog.showModal();
@@ -1393,10 +1400,10 @@
       }
     }
 
-    function upsertRule(target, pollingRate, detectionMode) {
+    function upsertRule(target, pollingRate, detectionMode, turboMode) {
       const card = state.modalCard;
       const index = card ? findRuleIndexForCard(card) : -1;
-      const rule = { target, pollingRate, detectionMode };
+      const rule = { target, pollingRate, detectionMode, turboMode };
       if (index >= 0) {
         state.rules[index] = rule;
       } else {
@@ -1428,19 +1435,22 @@
       const pollingRate = rateValue === 'default' ? null : Number(rateValue);
       const detectionMode = byId('modal-detection').value;
       const hidden = byId('modal-hidden').checked;
+      const turboMode = state.runtime?.turboSupported ? byId('modal-turbo').checked : card.turboMode === true;
       const defaultName = card.defaultName || card.name || card.processName || 'Game';
       const customName = displayName && displayName !== defaultName ? displayName : null;
       const previousMetadataId = metadataIdForCard(card);
 
-      if (card.kind === 'auto' && pollingRate === null && detectionMode === 'default'
+      if (card.kind === 'auto' && !turboMode && pollingRate === null && detectionMode === 'default'
         && normalizedPath(target) === normalizedPath(card.executablePath)) {
         removeRuleForCard(card);
         card.pollingRate = null;
+        card.turboMode = false;
         card.detectionMode = 'default';
         card.overrideTarget = null;
         card.hasRuleOverride = false;
       } else {
-        upsertRule(target, pollingRate, detectionMode);
+        upsertRule(target, pollingRate, detectionMode, turboMode);
+        card.turboMode = turboMode;
         card.pollingRate = pollingRate;
         card.detectionMode = detectionMode;
         card.overrideTarget = target;
@@ -1547,9 +1557,20 @@
       }
     }
 
+    function renderMouse() {
+      const runtime = state.runtime;
+      byId('detected-mouse').textContent = runtime?.deviceName
+        ? `Mouse: ${runtime.deviceName}${runtime.turboSupported && runtime.turboMode != null ? (runtime.turboMode ? ' · Turbo on' : ' · Turbo off') : ''}`
+        : (runtime?.enabled === false ? 'Mouse detection paused' : 'No supported mouse connected');
+      if (runtime?.backend === 'pulsar-x2-crazylight' && runtime.turboError) byId('detected-mouse').textContent += ' · Turbo unavailable';
+      byId('detected-mouse').title = runtime?.turboError || runtime?.error || '';
+      if (state.modalCard) byId('modal-turbo-row').classList.toggle('hidden', !runtime?.turboSupported);
+    }
+
     async function refreshRuntime() {
       try {
         state.runtime = await window.settingsApi.getRuntimeStatus();
+        renderMouse();
         renderGames();
       } catch {
         // Settings may be closing; no action required.
@@ -1565,6 +1586,7 @@
       state.libraries = result.libraries || [];
       state.games = result.games || [];
       state.runtime = result.runtime || null;
+      renderMouse();
       byId('app-version').textContent = result.appVersion ? `v${result.appVersion}` : '';
 
       applySettingsToForm();
@@ -1621,6 +1643,7 @@
       removeRuleForCard(card);
       card.hasRuleOverride = false;
       card.pollingRate = null;
+      card.turboMode = false;
       card.detectionMode = 'default';
       card.overrideTarget = null;
       card.customized = Boolean(card.customName || card.hidden);

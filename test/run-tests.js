@@ -26,3 +26,5 @@ require('./updateCoordinator.test');
 require('./updateIntegration.test');
 require('./windowsHidOutputReport.test');
 require('./rollingBuildVersion.test');
+
+require('./turboAutomation.test');
