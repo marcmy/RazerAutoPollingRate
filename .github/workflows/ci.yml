@@ -13,7 +13,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   test:
@@ -41,6 +41,7 @@ jobs:
     needs: test
     outputs:
       rolling_release: ${{ steps.rolling.outputs.rolling_release }}
+      rolling_version: ${{ steps.rolling.outputs.rolling_version }}
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -54,6 +55,7 @@ jobs:
         shell: pwsh
         env:
           BEFORE_SHA: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           $before = $env:BEFORE_SHA
           $zeroSha = '0000000000000000000000000000000000000000'
@@ -92,9 +94,46 @@ jobs:
           "rolling_release=$($rollingRelease.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
           if ($rollingRelease) {
-            "Rolling release enabled. Application-affecting files: $($releaseFiles -join ', ')" >> $env:GITHUB_STEP_SUMMARY
+            $commitIso = git show -s --format=%cI $env:GITHUB_SHA
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commitIso)) {
+              throw 'Unable to read the main commit timestamp for rolling CalVer'
+            }
+
+            $rollingMinute = ([DateTimeOffset]::Parse($commitIso)).UtcDateTime
+            $tagLines = @(
+              gh api "repos/$env:GITHUB_REPOSITORY/git/matching-refs/tags" `
+                --paginate `
+                --jq '.[] | [.ref, .object.sha] | @tsv'
+            )
+            if ($LASTEXITCODE -ne 0) {
+              throw 'Unable to query existing tags while resolving rolling CalVer'
+            }
+
+            $tagTargets = @{}
+            foreach ($line in $tagLines) {
+              if ([string]::IsNullOrWhiteSpace($line)) {
+                continue
+              }
+              $parts = $line -split "`t", 2
+              if ($parts.Count -eq 2) {
+                $tagTargets[$parts[0]] = $parts[1]
+              }
+            }
+
+            while ($true) {
+              $rollingVersion = $rollingMinute.ToString('yyyyMMdd.HHmm')
+              $tagRef = "refs/tags/$rollingVersion"
+              if (-not $tagTargets.ContainsKey($tagRef) -or $tagTargets[$tagRef] -eq $env:GITHUB_SHA) {
+                break
+              }
+              $rollingMinute = $rollingMinute.AddMinutes(1)
+            }
+
+            "rolling_version=$rollingVersion" >> $env:GITHUB_OUTPUT
+            "Rolling release $rollingVersion enabled. Application-affecting files: $($releaseFiles -join ', ')" >> $env:GITHUB_STEP_SUMMARY
           }
           else {
+            "rolling_version=" >> $env:GITHUB_OUTPUT
             "Rolling release skipped. This main push changed only workflows, docs, or repository metadata." >> $env:GITHUB_STEP_SUMMARY
           }
 
@@ -109,6 +148,10 @@ jobs:
 
       - name: Audit dependencies
         run: npm audit --audit-level=high
+
+      - name: Stamp rolling build version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rolling.outputs.rolling_release == 'true'
+        run: node scripts/stamp-rolling-build.js "${{ steps.rolling.outputs.rolling_version }}"
 
       - name: Build Windows installer
         run: npm run make
@@ -163,7 +206,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rolling.outputs.rolling_release == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: RazerAutoPollingRate-Scoop-main-${{ github.sha }}
+          name: RazerAutoPollingRate-Scoop-main-${{ steps.rolling.outputs.rolling_version }}-${{ github.sha }}
           path: out/scoop-package/**
           if-no-files-found: error
           retention-days: 90
@@ -183,39 +226,12 @@ jobs:
           name: RazerAutoPollingRate-Windows-${{ github.sha }}
           path: windows-artifact
 
-      - name: Resolve rolling CalVer
-        id: rolling-version
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $artifactName = "RazerAutoPollingRate-Scoop-main-$env:GITHUB_SHA"
-          $response = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID/artifacts?per_page=100" | ConvertFrom-Json
-          if ($LASTEXITCODE -ne 0) {
-            throw 'Unable to query artifacts for this CI run'
-          }
-
-          $matches = @(
-            $response.artifacts | Where-Object {
-              $_.name -eq $artifactName -and -not $_.expired
-            }
-          )
-
-          if ($matches.Count -ne 1) {
-            throw "Expected exactly one live Scoop artifact named $artifactName; found $($matches.Count)"
-          }
-
-          $rollingVersion = ([DateTimeOffset]$matches[0].created_at).UtcDateTime.ToString('yyyyMMdd.HHmm')
-          "version=$rollingVersion" >> $env:GITHUB_OUTPUT
-          "tag=$rollingVersion" >> $env:GITHUB_OUTPUT
-          "Rolling version: $rollingVersion" >> $env:GITHUB_STEP_SUMMARY
-
       - name: Create rolling release and upload assets
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          ROLLING_VERSION: ${{ steps.rolling-version.outputs.version }}
-          ROLLING_TAG: ${{ steps.rolling-version.outputs.tag }}
+          ROLLING_VERSION: ${{ needs.build-windows.outputs.rolling_version }}
+          ROLLING_TAG: ${{ needs.build-windows.outputs.rolling_version }}
         run: |
           $existingJson = gh release view $env:ROLLING_TAG `
             --repo $env:GITHUB_REPOSITORY `
@@ -247,19 +263,33 @@ jobs:
             }
           }
 
+          $setupFiles = @(Get-ChildItem -LiteralPath 'windows-artifact' -Recurse -File | Where-Object { $_.Name -like '*Setup.exe' })
+          $nupkgFiles = @(Get-ChildItem -LiteralPath 'windows-artifact' -Recurse -File | Where-Object { $_.Name -like '*-full.nupkg' })
+          $releasesFiles = @(Get-ChildItem -LiteralPath 'windows-artifact' -Recurse -File | Where-Object { $_.Name -eq 'RELEASES' })
+
+          if ($setupFiles.Count -ne 1 -or $nupkgFiles.Count -ne 1 -or $releasesFiles.Count -ne 1) {
+            throw "Expected exactly one Setup.exe, full.nupkg, and RELEASES file in the Windows artifact"
+          }
+
+          $releaseRoot = Join-Path $PWD 'release-assets'
+          New-Item -ItemType Directory -Path $releaseRoot -Force | Out-Null
+          $setupName = "RazerAutoPollingRate-$env:ROLLING_VERSION.Setup.exe"
+          Copy-Item -LiteralPath $setupFiles[0].FullName -Destination (Join-Path $releaseRoot $setupName)
+          Copy-Item -LiteralPath $nupkgFiles[0].FullName -Destination (Join-Path $releaseRoot $nupkgFiles[0].Name)
+          Copy-Item -LiteralPath $releasesFiles[0].FullName -Destination (Join-Path $releaseRoot 'RELEASES')
+
+          Get-ChildItem -LiteralPath $releaseRoot -File |
+            Sort-Object Name |
+            ForEach-Object {
+              $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName
+              "$($hash.Hash.ToLower())  $($_.Name)"
+            } | Set-Content -Encoding ASCII (Join-Path $releaseRoot 'SHA256SUMS.txt')
+
           $assets = @(
-            Get-ChildItem -LiteralPath 'windows-artifact' -Recurse -File |
-              Sort-Object FullName |
+            Get-ChildItem -LiteralPath $releaseRoot -File |
+              Sort-Object Name |
               ForEach-Object { $_.FullName }
           )
-
-          if ($assets.Count -eq 0) {
-            throw 'Downloaded Windows build artifact is empty'
-          }
-
-          if (@($assets | Where-Object { [IO.Path]::GetFileName($_) -eq 'SHA256SUMS.txt' }).Count -ne 1) {
-            throw 'Downloaded Windows build artifact must contain exactly one SHA256SUMS.txt'
-          }
 
           $arguments = @(
             'release',

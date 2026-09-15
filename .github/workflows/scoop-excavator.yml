@@ -28,7 +28,8 @@ jobs:
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
           SOURCE_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          $expected = "RazerAutoPollingRate-Scoop-main-$env:SOURCE_HEAD_SHA"
+          $escapedSha = [regex]::Escape($env:SOURCE_HEAD_SHA)
+          $expectedPattern = "^RazerAutoPollingRate-Scoop-main-\d{8}\.\d{4}-$escapedSha$"
           $response = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN_ID/artifacts?per_page=100" | ConvertFrom-Json
           if ($LASTEXITCODE -ne 0) {
             throw 'Unable to query source CI artifacts'
@@ -36,19 +37,19 @@ jobs:
 
           $artifact = @(
             $response.artifacts | Where-Object {
-              $_.name -eq $expected -and -not $_.expired
+              $_.name -match $expectedPattern -and -not $_.expired
             }
           )
 
           if ($artifact.Count -gt 1) {
-            throw "Found multiple live artifacts named $expected"
+            throw "Found multiple live rolling Scoop artifacts for $env:SOURCE_HEAD_SHA"
           }
 
           $shouldDispatch = $artifact.Count -eq 1
           "should_dispatch=$($shouldDispatch.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
           if ($shouldDispatch) {
-            "Found $expected; dispatching the Scoop Excavator." >> $env:GITHUB_STEP_SUMMARY
+            "Found $($artifact[0].name); dispatching the Scoop Excavator." >> $env:GITHUB_STEP_SUMMARY
           }
           else {
             "No rolling Scoop artifact was produced for this CI run; skipping Excavator dispatch." >> $env:GITHUB_STEP_SUMMARY
