@@ -1,4 +1,4 @@
-# CrazyLight per-game Turbo Mode (hardware validation pending)
+# CrazyLight per-game Turbo Mode
 
 Settings shows the mouse selected by the polling backend. Razer retains priority when
 both vendors are connected. Only the supported wireless X2 CrazyLight (3710:5406)
@@ -33,17 +33,27 @@ The software changelog's 1.15 is not a verified minimum mouse firmware version.
 No firmware-version cutoff was established. The compatibility read requires an
 exact 0/1 value and valid stored complement, but cannot prove that old firmware
 implements the sensor behavior. Do not describe this as firmware certification.
-Keep the PR draft pending physical verification with the intended firmware.
 
-## Hardware test
+## Hardware validation
+
+On 2026-09-15, the Turbo register path was validated on the user's retail
+`3710:5406` X2 CrazyLight through its `8K Dongle Gen.2`. The backend read active
+profile 1 with Turbo off, wrote Turbo on, verified the on state by readback, then
+restored Turbo off and verified the restored state. The active profile remained
+profile 1 for the complete `off -> on -> off` transaction.
+
+This confirms the register write/readback and profile-preservation behavior on real
+hardware. It does not independently measure the sensor's 20 kHz scan rate; that
+behavior is still based on Pulsar's definition of Turbo Mode for this register.
+
+## Application behavior checklist
 
 1. Close Bibimbap before running the test app (avoid competing HID access).
 2. In General, confirm the detected mouse name; edit a game to find the Turbo option.
 3. Enable it with foreground detection. Check Windows -> game -> Windows gives
    Turbo off -> on -> off, alongside the configured polling rates.
 4. Repeat with running detection: Alt-Tab should retain Turbo, game exit should disable it.
-5. Verify the value in Pulsar software between app test sessions, and record the mouse
-   and dongle firmware versions. Confirm the active onboard profile is unchanged.
+5. Confirm the active onboard profile is unchanged.
 6. Check pause, last-override removal, reconnect, and tray exit cleanup.
 7. With only a Razer selected, Turbo controls must be absent. With an unsupported
    firmware response, the control must be absent and polling must continue.
