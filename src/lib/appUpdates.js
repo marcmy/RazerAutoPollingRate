@@ -1,0 +1,93 @@
+const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
+function parseRollingVersion(value) {
+  const match = /^(\d{4})(\d{2})(\d{2})\.(\d{2})(\d{2})$/.exec(String(value || '').trim());
+  if (!match) {
+    return null;
+  }
+
+  const [, yearText, monthText, dayText, hourText, minuteText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const timestamp = Date.UTC(year, month - 1, day, hour, minute);
+  const date = new Date(timestamp);
+
+  if (
+    date.getUTCFullYear() !== year
+    || date.getUTCMonth() !== month - 1
+    || date.getUTCDate() !== day
+    || date.getUTCHours() !== hour
+    || date.getUTCMinutes() !== minute
+  ) {
+    return null;
+  }
+
+  return {
+    value: `${yearText}${monthText}${dayText}.${hourText}${minuteText}`,
+    timestamp,
+    year,
+    month,
+    day,
+    hour,
+    minute,
+  };
+}
+
+function getDisplayVersion(packageMetadata, appVersion) {
+  const rolling = parseRollingVersion(packageMetadata && packageMetadata.buildDisplayVersion);
+  return rolling ? rolling.value : appVersion;
+}
+
+function isNewerRollingVersion(latestVersion, currentVersion) {
+  const latest = parseRollingVersion(latestVersion);
+  if (!latest) {
+    return false;
+  }
+
+  const current = parseRollingVersion(currentVersion);
+  return !current || latest.timestamp > current.timestamp;
+}
+
+function shouldCheckForUpdates(lastCheckedAt, now = Date.now()) {
+  const last = Number(lastCheckedAt);
+  if (!Number.isFinite(last) || last <= 0) {
+    return true;
+  }
+  return now - last >= UPDATE_CHECK_INTERVAL_MS;
+}
+
+function isGameActive(runtimeStatus) {
+  if (!runtimeStatus) {
+    return false;
+  }
+  return runtimeStatus.source !== 'inactive' && runtimeStatus.source !== 'disabled';
+}
+
+function isScoopInstallPath(executablePath) {
+  const normalized = String(executablePath || '').replace(/\//g, '\\').toLowerCase();
+  return /\\apps\\razerautopollingrate\\[^\\]+\\razerautopollingrate\.exe$/.test(normalized);
+}
+
+function selectSetupAsset(release) {
+  const version = parseRollingVersion(release && release.tag_name);
+  if (!version || !Array.isArray(release.assets)) {
+    return null;
+  }
+
+  const expectedName = `RazerAutoPollingRate-${version.value}.Setup.exe`;
+  return release.assets.find((asset) => asset && asset.name === expectedName) || null;
+}
+
+module.exports = {
+  UPDATE_CHECK_INTERVAL_MS,
+  getDisplayVersion,
+  isGameActive,
+  isNewerRollingVersion,
+  isScoopInstallPath,
+  parseRollingVersion,
+  selectSetupAsset,
+  shouldCheckForUpdates,
+};

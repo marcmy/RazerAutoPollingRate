@@ -15,10 +15,22 @@ const fs = require('fs');
 const Store = require('electron-store');
 const path = require('path');
 const AutoLaunch = require('auto-launch');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
+const packageMetadata = require('../package.json');
 
 const { createCheckGuard } = require('./lib/checkGuard');
 const { DiagnosticLogger } = require('./lib/diagnosticLogger');
+const {
+  getDisplayVersion,
+  isGameActive,
+  isScoopInstallPath,
+  selectSetupAsset,
+} = require('./lib/appUpdates');
+const {
+  downloadFile,
+  fetchJson,
+  verifyFileDigest,
+} = require('./lib/githubReleaseClient');
 const { createPreferredMouseBackend } = require('./lib/mouseBackends/runtime');
 const {
   closeAllWindowsHidOutputBridges,
@@ -65,11 +77,15 @@ const {
   parsePollingRate,
   resolveSupportedPollingRate,
 } = require('./lib/rates');
+const { createUpdateCoordinator } = require('./lib/updateCoordinator');
 
 const appPath = app.getAppPath();
 const legacyStore = new Store();
 const assetsFolder = 'src/assets/';
 const checkGuard = createCheckGuard();
+const appDisplayVersion = getDisplayVersion(packageMetadata, app.getVersion());
+const UPDATE_API_URL = 'https://api.github.com/repos/marcmy/RazerAutoPollingRate/releases/latest';
+const UPDATE_POLL_INTERVAL_MS = 60 * 60 * 1000;
 
 let tray;
 let autostartEnabled;
@@ -93,6 +109,10 @@ let lastPollingError = null;
 let gameLibraries = [];
 let scannedGames = [];
 let libraryConfigurationKey = '';
+let updateCoordinator = null;
+let updateStartupTimer = null;
+let updateCheckTimer = null;
+let updateOperation = 'idle';
 let runtimeStatus = {
   enabled: true,
   processName: null,
@@ -183,6 +203,251 @@ function getDetectionMode() {
 
 function getDetectionModeLabel(mode = getDetectionMode()) {
   return mode === 'running' ? 'running processes' : 'foreground window';
+}
+
+function compactPendingRelease(release) {
+  if (!release) {
+    return null;
+  }
+
+  return {
+    tag_name: release.tag_name,
+    html_url: release.html_url || null,
+    assets: Array.isArray(release.assets)
+      ? release.assets.map((asset) => ({
+        name: asset.name,
+        browser_download_url: asset.browser_download_url,
+        digest: asset.digest || null,
+        size: asset.size || null,
+      }))
+      : [],
+  };
+}
+
+function getUpdateMenuLabel() {
+  if (updateOperation === 'checking') {
+    return 'Checking for Updates...';
+  }
+  if (updateOperation === 'downloading') {
+    return 'Downloading Update...';
+  }
+  if (updateOperation === 'installing') {
+    return 'Installing Update...';
+  }
+
+  const pending = updateCoordinator ? updateCoordinator.getPendingRelease() : null;
+  return pending ? `Update Available: ${pending.tag_name}` : 'Check for Updates';
+}
+
+function quotePowerShellLiteral(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+async function launchDetachedUpdate(command) {
+  stop = true;
+  while (!hasStopped) {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  await closeAllWindowsHidOutputBridges();
+  const waitForParent = [
+    `$parentId = ${process.pid}`,
+    'while (Get-Process -Id $parentId -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 250 }',
+    command,
+  ].join('; ');
+  const encodedCommand = Buffer.from(waitForParent, 'utf16le').toString('base64');
+
+  await new Promise((resolve, reject) => {
+    const child = spawn('powershell.exe', [
+      '-NoLogo',
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-EncodedCommand',
+      encodedCommand,
+    ], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: false,
+    });
+    child.once('error', reject);
+    child.once('spawn', () => {
+      child.unref();
+      resolve();
+    });
+  });
+  app.quit();
+}
+
+async function downloadAndInstallUpdate(release) {
+  if (isScoopInstallPath(process.execPath)) {
+    updateOperation = 'installing';
+    updateTrayMenu();
+    await launchDetachedUpdate('& scoop update razerautopollingrate');
+    return;
+  }
+
+  const asset = selectSetupAsset(release);
+  if (!asset || !asset.browser_download_url) {
+    throw new Error(`Release ${release.tag_name} does not contain its CalVer Setup installer`);
+  }
+
+  updateOperation = 'downloading';
+  updateTrayMenu();
+  const updateDirectory = path.join(app.getPath('temp'), 'RazerAutoPollingRate', 'updates', release.tag_name);
+  fs.rmSync(updateDirectory, { recursive: true, force: true });
+  fs.mkdirSync(updateDirectory, { recursive: true });
+  const installerPath = path.join(updateDirectory, asset.name);
+  await downloadFile(asset.browser_download_url, installerPath);
+
+  if (!asset.digest) {
+    fs.rmSync(installerPath, { force: true });
+    throw new Error('GitHub did not provide a SHA256 digest for the update installer');
+  }
+
+  if (!verifyFileDigest(installerPath, asset.digest)) {
+    fs.rmSync(installerPath, { force: true });
+    throw new Error('Downloaded update failed SHA256 verification');
+  }
+
+  updateOperation = 'installing';
+  updateTrayMenu();
+  await launchDetachedUpdate(`Start-Process -FilePath ${quotePowerShellLiteral(installerPath)}`);
+}
+
+async function notifyUpdateAvailable(release, canProceed) {
+  if (!canProceed()) {
+    return false;
+  }
+
+  const asset = selectSetupAsset(release);
+  if (!asset) {
+    log(`update ${release.tag_name} is missing its CalVer Setup asset`, true);
+    return true;
+  }
+
+  const scoopInstall = isScoopInstallPath(process.execPath);
+  const result = await dialog.showMessageBox({
+    type: 'info',
+    title: 'Razer Auto Polling Rate Update',
+    message: `Razer Auto Polling Rate ${release.tag_name} is available.`,
+    detail: `Current version: ${appDisplayVersion}`,
+    buttons: [scoopInstall ? 'Update with Scoop' : 'Download & Install', 'Later'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  });
+
+  if (result.response !== 0) {
+    return true;
+  }
+
+  if (!canProceed()) {
+    return false;
+  }
+
+  try {
+    await downloadAndInstallUpdate(release);
+  } catch (error) {
+    updateOperation = 'idle';
+    updateTrayMenu();
+    log(`update install failed: ${error.message}`, true);
+    await dialog.showMessageBox({
+      type: 'error',
+      title: 'Update Failed',
+      message: 'Razer Auto Polling Rate could not install the update.',
+      detail: error.message,
+      buttons: ['OK'],
+      noLink: true,
+    });
+  }
+
+  return true;
+}
+
+function setupUpdateCoordinator() {
+  const storedPending = legacyStore.get('updates.pendingRelease', null);
+  updateCoordinator = createUpdateCoordinator({
+    currentVersion: appDisplayVersion,
+    initialPendingRelease: storedPending,
+    getRuntimeStatus: () => runtimeStatus,
+    getLastCheckedAt: () => legacyStore.get('updates.lastCheckedAt', 0),
+    setLastCheckedAt: (timestamp) => legacyStore.set('updates.lastCheckedAt', timestamp),
+    fetchLatestRelease: () => fetchJson(UPDATE_API_URL),
+    onPendingChange: (release) => {
+      if (release) {
+        legacyStore.set('updates.pendingRelease', compactPendingRelease(release));
+      } else {
+        legacyStore.delete('updates.pendingRelease');
+      }
+      updateTrayMenu();
+    },
+    onNotify: notifyUpdateAvailable,
+  });
+
+  if (!updateCoordinator.getPendingRelease() && storedPending) {
+    legacyStore.delete('updates.pendingRelease');
+  }
+}
+
+async function checkForAppUpdates(options = {}) {
+  if (!app.isPackaged || !updateCoordinator) {
+    return { status: 'unavailable' };
+  }
+
+  return updateCoordinator.check(options);
+}
+
+async function handleCheckForUpdates() {
+  if (!app.isPackaged) {
+    return;
+  }
+
+  updateOperation = 'checking';
+  updateTrayMenu();
+  try {
+    const result = await checkForAppUpdates({ manual: true });
+    if (result.status === 'current' && !isGameActive(runtimeStatus)) {
+      await dialog.showMessageBox({
+        type: 'info',
+        title: 'Razer Auto Polling Rate Update',
+        message: 'You are up to date.',
+        detail: `Version ${appDisplayVersion}`,
+        buttons: ['OK'],
+        noLink: true,
+      });
+    }
+  } catch (error) {
+    log(`manual update check failed: ${error.message}`, true);
+    if (!isGameActive(runtimeStatus)) {
+      await dialog.showMessageBox({
+        type: 'error',
+        title: 'Update Check Failed',
+        message: 'Could not check for updates.',
+        detail: error.message,
+        buttons: ['OK'],
+        noLink: true,
+      });
+    }
+  } finally {
+    if (updateOperation === 'checking') {
+      updateOperation = 'idle';
+    }
+    updateTrayMenu();
+  }
+}
+
+function scheduleUpdateChecks() {
+  if (!app.isPackaged) {
+    return;
+  }
+
+  const checkQuietly = () => {
+    checkForAppUpdates().catch((error) => log(`automatic update check failed: ${error.message}`, true));
+  };
+
+  updateStartupTimer = setTimeout(checkQuietly, 10 * 1000);
+  updateCheckTimer = setInterval(checkQuietly, UPDATE_POLL_INTERVAL_MS);
 }
 
 function getCurrentSettings() {
@@ -276,6 +541,12 @@ function updateTrayMenu() {
       type: 'normal',
       click: startPickWindow,
       enabled: !pickingWindow,
+    },
+    {
+      label: getUpdateMenuLabel(),
+      type: 'normal',
+      click: handleCheckForUpdates,
+      enabled: app.isPackaged && updateOperation === 'idle',
     },
     { label: 'Exit', type: 'normal', click: quit },
   ]);
@@ -583,7 +854,7 @@ function setupSettingsIpc() {
     rescanGames(settings, gameFolders);
 
     return {
-      appVersion: app.getVersion(),
+      appVersion: appDisplayVersion,
       settings: getCurrentSettings(),
       rules: editorRulesFromEntries(entries),
       gameFolders,
@@ -734,7 +1005,9 @@ app.whenReady().then(() => {
   tray.on('click', () => tray.popUpContextMenu());
   tray.setToolTip('Searching for supported polling-rate mouse');
   tray.setTitle('Razer auto polling rate');
+  setupUpdateCoordinator();
   updateTrayMenu();
+  scheduleUpdateChecks();
   runLoop();
 });
 
@@ -745,6 +1018,8 @@ app.on('window-all-closed', (event) => {
 });
 
 app.on('will-quit', () => {
+  clearTimeout(updateStartupTimer);
+  clearInterval(updateCheckTimer);
   globalShortcut.unregister('F3');
   stopForegroundProcessWatcher();
   closeAllWindowsHidOutputBridges().catch(() => {});
@@ -1091,6 +1366,9 @@ async function checkPollingRate(firstRun) {
 
     const requestedTarget = selected.targetRate;
     updateRuntimeSelection(selected, foregroundProcess, requestedTarget);
+    if (updateCoordinator) {
+      updateCoordinator.runtimeChanged().catch((error) => log(`update notification failed: ${error.message}`, true));
+    }
 
     recordDiagnosticEvent('detection_selection', {
       detectionEnabled,
