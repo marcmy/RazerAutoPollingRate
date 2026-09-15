@@ -26,7 +26,7 @@ Default behavior for new installs:
 
 Razer Synapse does **not** need to be running. Synapse may show stale polling-rate information while this app controls the dongle.
 
-The app does not include telemetry, analytics, auto-update networking, or remote calls.
+The app does not include telemetry or analytics. Automatic update checks contact GitHub once per day by default and can be disabled in Settings; downloads start only after you choose to install an update.
 
 ## Supported Hardware
 

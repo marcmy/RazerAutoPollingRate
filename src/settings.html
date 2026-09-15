@@ -775,6 +775,15 @@
                 </label>
               </div>
 
+              <div class="setting-card">
+                <div class="setting-title">Updates</div>
+                <div class="setting-description">Check GitHub once a day for a newer app build. Manual checks remain available from the tray menu.</div>
+                <label class="toggle-row">
+                  <input id="auto-check-updates" type="checkbox">
+                  <span>Automatically check for updates</span>
+                </label>
+              </div>
+
               <div class="setting-card wide">
                 <div class="setting-title">Automatic game detection</div>
                 <div class="setting-description">Discover common Steam, Xbox, Epic, EA, GOG, Ubisoft, Riot, Rockstar, Amazon Games, itch.io and HoYoPlay library locations. Custom folders are always honored.</div>
@@ -997,6 +1006,7 @@
         detectionMode: byId('detection-mode').value,
         autoDetectGames: byId('auto-detect-games').checked,
         autostart: byId('autostart').checked,
+        automaticUpdateChecks: byId('auto-check-updates').checked,
         diagnosticLogging: byId('diagnostic-logging').checked,
         verboseDiagnosticLogging: byId('verbose-diagnostic-logging').checked,
         pollingCheckIntervalMs: Number(byId('polling-interval').value) || 1500,
@@ -1009,6 +1019,7 @@
       byId('detection-mode').value = state.settings.detectionMode;
       byId('auto-detect-games').checked = Boolean(state.settings.autoDetectGames);
       byId('autostart').checked = Boolean(state.settings.autostart);
+      byId('auto-check-updates').checked = state.settings.automaticUpdateChecks !== false;
       byId('diagnostic-logging').checked = Boolean(state.settings.diagnosticLogging);
       byId('verbose-diagnostic-logging').checked = Boolean(state.settings.verboseDiagnosticLogging);
       byId('polling-interval').value = state.settings.pollingCheckIntervalMs || 1500;
@@ -1609,7 +1620,7 @@
       });
     });
 
-    ['inactive-rate', 'default-game-rate', 'detection-mode', 'autostart',
+    ['inactive-rate', 'default-game-rate', 'detection-mode', 'autostart', 'auto-check-updates',
       'auto-detect-games', 'diagnostic-logging', 'verbose-diagnostic-logging', 'polling-interval']
       .forEach((id) => byId(id).addEventListener('change', async () => {
         if (id === 'diagnostic-logging') {

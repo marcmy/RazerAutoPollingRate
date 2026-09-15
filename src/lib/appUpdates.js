@@ -66,11 +66,6 @@ function isGameActive(runtimeStatus) {
   return runtimeStatus.source !== 'inactive' && runtimeStatus.source !== 'disabled';
 }
 
-function isScoopInstallPath(executablePath) {
-  const normalized = String(executablePath || '').replace(/\//g, '\\').toLowerCase();
-  return /\\apps\\razerautopollingrate\\[^\\]+\\razerautopollingrate\.exe$/.test(normalized);
-}
-
 function selectSetupAsset(release) {
   const version = parseRollingVersion(release && release.tag_name);
   if (!version || !Array.isArray(release.assets)) {
@@ -81,13 +76,62 @@ function selectSetupAsset(release) {
   return release.assets.find((asset) => asset && asset.name === expectedName) || null;
 }
 
+function sanitizeReleaseNotes(value) {
+  const lines = String(value || '').replace(/\r\n/g, '\n').split('\n');
+  const kept = [];
+  let skippedHeadingLevel = null;
+
+  for (const line of lines) {
+    const heading = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (skippedHeadingLevel !== null) {
+      if (!heading || heading[1].length > skippedHeadingLevel) {
+        continue;
+      }
+      skippedHeadingLevel = null;
+    }
+
+    if (heading && /\bscoop\b/i.test(heading[2])) {
+      skippedHeadingLevel = heading[1].length;
+      continue;
+    }
+
+    if (/\bscoop\b/i.test(line)) {
+      continue;
+    }
+
+    kept.push(line);
+  }
+
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function releaseNotesToPlainText(value) {
+  return sanitizeReleaseNotes(value)
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*(.*?)\*\*/g, '$1')
+    .replace(/__(.*?)__/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1')
+    .trim();
+}
+
+function shouldShowInstalledChangelog(pendingRelease, currentVersion) {
+  return Boolean(
+    pendingRelease
+    && pendingRelease.tag_name
+    && String(pendingRelease.tag_name) === String(currentVersion),
+  );
+}
+
 module.exports = {
   UPDATE_CHECK_INTERVAL_MS,
   getDisplayVersion,
   isGameActive,
   isNewerRollingVersion,
-  isScoopInstallPath,
   parseRollingVersion,
+  releaseNotesToPlainText,
+  sanitizeReleaseNotes,
   selectSetupAsset,
+  shouldShowInstalledChangelog,
   shouldCheckForUpdates,
 };

@@ -24,6 +24,7 @@ test('config.ini serializes settings, game folders and ordered rules', () => {
     detectionMode: 'running',
     autoDetectGames: false,
     autostart: false,
+    automaticUpdateChecks: false,
     diagnosticLogging: true,
     verboseDiagnosticLogging: true,
     pollingCheckIntervalMs: 500,
@@ -35,6 +36,7 @@ test('config.ini serializes settings, game folders and ordered rules', () => {
   assert.match(contents, /detection_mode=running/);
   assert.match(contents, /auto_detect_games=false/);
   assert.match(contents, /autostart=false/);
+  assert.match(contents, /auto_check_updates=false/);
   assert.match(contents, /diagnostic_logging=true/);
   assert.match(contents, /verbose_diagnostic_logging=true/);
   assert.match(contents, /polling_check_interval_ms=500/);
@@ -57,6 +59,7 @@ test('config.ini reads settings, folders and rules back', () => {
     'detection_mode=foreground',
     'auto_detect_games=true',
     'autostart=true',
+    'auto_check_updates=false',
     'diagnostic_logging=true',
     'verbose_diagnostic_logging=false',
     'polling_check_interval_ms=200',
@@ -84,6 +87,7 @@ test('config.ini reads settings, folders and rules back', () => {
     detectionMode: 'foreground',
     autoDetectGames: true,
     autostart: true,
+    automaticUpdateChecks: false,
     diagnosticLogging: true,
     verboseDiagnosticLogging: false,
     pollingCheckIntervalMs: 200,
@@ -138,6 +142,7 @@ test('writeAppConfig writes a readable config.ini', () => {
     detectionMode: 'foreground',
     autoDetectGames: true,
     autostart: true,
+    automaticUpdateChecks: true,
     diagnosticLogging: false,
     verboseDiagnosticLogging: false,
   }, entries, ['D:\\Games']);
