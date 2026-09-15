@@ -280,3 +280,51 @@ test('CrazyLight backend uses HID transport on Windows instead of WebUSB', async
   assert.equal(calls.filter(([name]) => name === 'write').length, 0);
   assert.ok(calls.some(([name]) => name === 'close'));
 });
+
+function turboReply(value, checksum = 0x55 - value) {
+  return buildCommandPacket(CMD_READ_MEMORY, { 4: 0xb5, 5: 2, 6: value, 7: checksum });
+}
+
+test('CrazyLight Turbo writes only B5/B6 and verifies value and profile', async () => {
+  const profile = buildCommandPacket(CMD_GET_ACTIVE_PROFILE, { 6: 0 });
+  const device = createFakeDevice([profile, buildCommandPacket(CMD_WRITE_MEMORY), turboReply(1), profile]);
+  const backend = createBackendForDevice(device, [], { allowHardwareValidationWrites: true });
+  await backend.discover();
+  await backend.open();
+  assert.equal(await backend.setTurboMode(true, 1), true);
+  const packets = device.calls.filter(([name]) => name === 'controlTransferOut').map((call) => call[2]);
+  const writes = packets.filter((packet) => packet[1] === CMD_WRITE_MEMORY);
+  assert.equal(writes.length, 1);
+  assert.deepEqual([...writes[0].subarray(3, 8)], [0, 0xb5, 2, 1, 0x54]);
+  await backend.close();
+});
+
+test('CrazyLight Turbo rejects unknown values and corrupt stored pairs', async () => {
+  for (const reply of [turboReply(6), turboReply(1, 0)]) {
+    const backend = createBackendForDevice(createFakeDevice([reply]));
+    await backend.discover();
+    await backend.open();
+    await assert.rejects(() => backend.getTurboMode(), /unsupported/);
+    await backend.close();
+  }
+});
+
+test('CrazyLight Turbo aborts profile drift before writing', async () => {
+  const device = createFakeDevice([buildCommandPacket(CMD_GET_ACTIVE_PROFILE, { 6: 1 })]);
+  const backend = createBackendForDevice(device, [], { allowHardwareValidationWrites: true });
+  await backend.discover();
+  await backend.open();
+  await assert.rejects(() => backend.setTurboMode(true, 1), /profile changed/);
+  assert.equal(device.calls.filter((call) => call[0] === 'controlTransferOut' && call[2][1] === CMD_WRITE_MEMORY).length, 0);
+  await backend.close();
+});
+
+test('CrazyLight Turbo rejects readback mismatch and read-only writes', async () => {
+  await assert.rejects(() => createBackendForDevice(createFakeDevice()).setTurboMode(true, 1), /hardware-validation/);
+  const profile = buildCommandPacket(CMD_GET_ACTIVE_PROFILE, { 6: 0 });
+  const backend = createBackendForDevice(createFakeDevice([profile, buildCommandPacket(CMD_WRITE_MEMORY), turboReply(0), profile]), [], { allowHardwareValidationWrites: true });
+  await backend.discover();
+  await backend.open();
+  await assert.rejects(() => backend.setTurboMode(true, 1), /verification failed/);
+  await backend.close();
+});
