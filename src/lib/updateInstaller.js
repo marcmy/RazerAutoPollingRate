@@ -87,7 +87,7 @@ function buildInPlaceInstallScript({
   executablePath,
   logPath,
 }) {
-  // Preserve the current install location so portable and package-manager installs stay in place.
+  // Preserve the current install location so fixed, portable, and package-manager installs update in place.
   requireValidParentPid(parentPid);
   if (!stagedAppDirectory || !installDirectory || !executablePath || !logPath) {
     throw new Error('Staged app directory, install directory, executable path, and log path are required');
