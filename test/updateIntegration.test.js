@@ -71,6 +71,19 @@ test('updater destroys its non-closable progress window before quitting the Elec
   assert.ok(quit > closeProgress);
 });
 
+test('Windows updater uses a cmd start trampoline instead of detached PowerShell', () => {
+  const main = source(mainPath);
+  const start = main.indexOf('async function launchDetachedUpdate(command, updateDirectory)');
+  const end = main.indexOf('async function stageInPlaceUpdatePackage', start);
+  assert.ok(start >= 0 && end > start);
+  const launch = main.slice(start, end);
+
+  assert.doesNotMatch(launch, /spawn\('powershell\.exe'[\s\S]{0,800}detached:\s*true/);
+  assert.match(launch, /process\.env\.ComSpec\s*\|\|\s*'cmd\.exe'/);
+  assert.match(launch, /'start',\s*'',\s*'\/b',\s*'powershell\.exe'/);
+  assert.match(launch, /stdio:\s*'ignore'/);
+});
+
 test('manual update checks clear the checking state before showing an available-update prompt', () => {
   const main = source(mainPath);
   assert.match(main, /checkForAppUpdates\(\{ manual: true, notify: false \}\)/);
