@@ -476,8 +476,8 @@ async function launchDetachedUpdate(command, updateDirectory) {
     child.once('error', (error) => finish(error));
     child.once('exit', (code, signal) => {
       if (settled || fs.existsSync(readyPath)) return;
-      // `cmd /c start` is only the bootstrap. A clean exit means it handed the
-      // updater off successfully, so keep waiting for updater.ready.
+      // `cmd /c start` is only the bootstrap trampoline. A clean exit means it
+      // handed the updater off successfully, so updater.ready remains authoritative.
       if (code === 0) return;
       const details = readStartupLog();
       finish(new Error(
