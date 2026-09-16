@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Razer Auto Polling Rate Update</title>
+  <style>
+    :root { color-scheme: light dark; font-family: "Segoe UI", sans-serif; }
+    body { margin: 0; padding: 24px 26px; background: Canvas; color: CanvasText; }
+    h1 { margin: 0 0 8px; font-size: 18px; font-weight: 600; }
+    #message { margin: 0 0 5px; font-size: 13px; }
+    #current { margin: 0; opacity: .68; font-size: 12px; }
+    #actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 30px; }
+    button { min-width: 92px; padding: 6px 14px; font: 13px "Segoe UI", sans-serif; }
+    #install { min-width: 132px; }
+  </style>
+</head>
+<body>
+  <h1>Update available</h1>
+  <p id="message">A new version of Razer Auto Polling Rate is available.</p>
+  <p id="current"></p>
+  <div id="actions">
+    <button id="later" type="button">Later</button>
+    <button id="install" type="button" autofocus>Download &amp; Install</button>
+  </div>
+  <script>
+    window.setUpdatePrompt = ({ version, currentVersion }) => {
+      document.getElementById('message').textContent = `Razer Auto Polling Rate ${version} is available.`;
+      document.getElementById('current').textContent = `Current version: ${currentVersion}`;
+    };
+    document.getElementById('install').addEventListener('click', () => window.updatePrompt.choose('install'));
+    document.getElementById('later').addEventListener('click', () => window.updatePrompt.choose('later'));
+  </script>
+</body>
+</html>

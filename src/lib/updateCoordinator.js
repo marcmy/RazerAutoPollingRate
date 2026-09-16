@@ -53,7 +53,7 @@ function createUpdateCoordinator(options) {
     }
   }
 
-  async function runCheck({ manual = false, now = Date.now() } = {}) {
+  async function runCheck({ manual = false, notify = true, now = Date.now() } = {}) {
     if (!manual && !shouldCheckForUpdates(getLastCheckedAt(), now)) {
       await maybeNotify();
       return { status: 'not-due', release: pendingRelease };
@@ -67,7 +67,9 @@ function createUpdateCoordinator(options) {
       notifiedVersion = null;
       notifyingVersion = null;
       onPendingChange(pendingRelease);
-      await maybeNotify();
+      if (notify) {
+        await maybeNotify();
+      }
       return { status: 'available', release: pendingRelease };
     }
 
@@ -92,6 +94,7 @@ function createUpdateCoordinator(options) {
   return {
     check,
     getPendingRelease: () => pendingRelease,
+    notifyPending: maybeNotify,
     runtimeChanged: maybeNotify,
   };
 }
