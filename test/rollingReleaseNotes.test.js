@@ -74,4 +74,3 @@ test('rolling release notes fall back to meaningful main commit subjects when ch
   assert.doesNotMatch(notes, /release workflow/);
   assert.doesNotMatch(notes, /README/);
 });
-
