@@ -7,20 +7,38 @@
   <style>
     :root { color-scheme: light dark; font-family: "Segoe UI", sans-serif; }
     body { margin: 0; padding: 24px 26px 28px; background: Canvas; color: CanvasText; }
-    h1 { margin: 0 0 4px; font-size: 20px; font-weight: 600; }
-    #version { opacity: .65; font-size: 12px; margin-bottom: 18px; }
-    #notes { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 "Segoe UI", sans-serif; }
+    h1 { margin: 0 0 18px; font-size: 20px; font-weight: 600; }
+    .release { padding: 0 0 18px; margin: 0 0 18px; border-bottom: 1px solid color-mix(in srgb, CanvasText 14%, transparent); }
+    .release:last-child { margin-bottom: 12px; }
+    h2 { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+    .notes { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.5 "Segoe UI", sans-serif; }
+    #more { display: inline-block; margin-top: 2px; font-size: 13px; color: LinkText; }
   </style>
 </head>
 <body>
   <h1>What's new</h1>
-  <div id="version"></div>
-  <pre id="notes"></pre>
+  <div id="releases"></div>
+  <a id="more" href="#">View full changelog</a>
   <script>
-    window.setReleaseNotes = ({ version, notes }) => {
-      document.getElementById('version').textContent = version ? `Version ${version}` : '';
-      document.getElementById('notes').textContent = notes || '';
+    window.setReleaseNotes = ({ releases = [] }) => {
+      const root = document.getElementById('releases');
+      root.replaceChildren();
+      releases.forEach(({ version, notes }) => {
+        const section = document.createElement('section');
+        section.className = 'release';
+        const heading = document.createElement('h2');
+        heading.textContent = `Version ${version}`;
+        const body = document.createElement('pre');
+        body.className = 'notes';
+        body.textContent = notes || '';
+        section.append(heading, body);
+        root.append(section);
+      });
     };
+    document.getElementById('more').addEventListener('click', (event) => {
+      event.preventDefault();
+      window.updateChangelog.openFullChangelog();
+    });
   </script>
 </body>
 </html>

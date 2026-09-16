@@ -66,6 +66,8 @@ test('in-app release notes remove package-manager-specific sections and formatti
     '',
     '## Fixes',
     '- Fixed `startup` handling',
+    '',
+    '**Full Changelog**: https://github.com/marcmy/RazerAutoPollingRate/compare/old...new',
   ].join('\n'));
 
   assert.equal(notes.includes('Scoop'), false);
@@ -75,6 +77,8 @@ test('in-app release notes remove package-manager-specific sections and formatti
   assert.match(notes, /Fixes/);
   assert.match(notes, /Fixed startup handling/);
   assert.equal(notes.includes('Manifest refreshed'), false);
+  assert.equal(notes.includes('Full Changelog'), false);
+  assert.equal(notes.includes('/compare/old...new'), false);
 });
 
 test('post-update changelog is shown only after the target build is actually running', () => {
@@ -83,6 +87,33 @@ test('post-update changelog is shown only after the target build is actually run
   assert.equal(appUpdates.shouldShowInstalledChangelog(pending, '20260915.1830'), true);
   assert.equal(appUpdates.shouldShowInstalledChangelog(pending, '20260915.1829'), false);
   assert.equal(appUpdates.shouldShowInstalledChangelog(null, '20260915.1830'), false);
+});
+
+test('post-update changelog keeps the installed release first and shows at most five unique versions', () => {
+  assert.equal(typeof appUpdates.buildRecentChangelogEntries, 'function');
+  const pending = {
+    tag_name: '20260916.0259',
+    body: '## Fixed\n\n- Fixed the updater.',
+  };
+  const releases = [
+    { tag_name: '20260916.0259', body: 'stale duplicate body' },
+    { tag_name: '20260916.0220', body: 'Second' },
+    { tag_name: '20260916.0054', body: 'Third' },
+    { tag_name: '20260916.0045', body: 'Fourth' },
+    { tag_name: '20260916.0017', body: 'Fifth' },
+    { tag_name: '20260916.0006', body: 'Sixth' },
+  ];
+
+  assert.deepEqual(
+    appUpdates.buildRecentChangelogEntries(releases, pending, 5),
+    [
+      { version: '20260916.0259', notes: 'Fixed\n\n- Fixed the updater.' },
+      { version: '20260916.0220', notes: 'Second' },
+      { version: '20260916.0054', notes: 'Third' },
+      { version: '20260916.0045', notes: 'Fourth' },
+      { version: '20260916.0017', notes: 'Fifth' },
+    ],
+  );
 });
 test('rolling release selects the exact full package asset for in-place installs', () => {
   assert.equal(typeof appUpdates.selectFullPackageAsset, 'function');

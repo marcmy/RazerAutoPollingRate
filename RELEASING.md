@@ -24,6 +24,8 @@ That is the entire release process. The workflow automatically:
 - uploads every installer artifact and publishes the release;
 - dispatches the Scoop bucket update workflow; if the optional cross-repo token is unavailable or invalid, the scheduled Excavator in `marcmy/scoop-bucket` picks up the release automatically.
 
+Rolling CalVer builds published from `main` also use `CHANGELOG.md`. Add user-visible changes under `## Unreleased`; the rolling-release job includes only entries added since the previous rolling tag. If a change reaches `main` without a new changelog entry, the job falls back to meaningful first-parent commit subjects instead of publishing a generic rolling-build message.
+
 Choose `minor` or `major` only when intentionally changing that part of the version.
 
 If a run fails after creating the release branch or pull request, rerun the workflow. It reuses the existing release state instead of creating a conflicting branch. If only the publish job fails, rerunning the failed job retries packaging/publication without needing a separate publishing workflow.

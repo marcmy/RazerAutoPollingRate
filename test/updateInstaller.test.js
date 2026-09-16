@@ -27,13 +27,17 @@ test('installer handoff waits for the app, installs silently, then relaunches th
   assert.match(script, /--processStart/);
   assert.match(script, /razerautopollingrate\.exe/);
 });
-test('Squirrel install detection requires an app-version directory with a parent Update.exe', () => {
+test('Squirrel install detection distinguishes normal installer, Scoop, and standalone layouts', () => {
   const squirrelExe = 'C:\\Users\\marcm\\AppData\\Local\\razerautopollingrate\\app-2026.916.17\\razerautopollingrate.exe';
-  const portableExe = 'C:\\Users\\marcm\\scoop\\fixed\\razerautopollingrate\\razerautopollingrate.exe';
+  const scoopExe = 'C:\\Users\\marcm\\scoop\\fixed\\razerautopollingrate\\razerautopollingrate.exe';
+  const portableExe = 'D:\\Apps\\RazerAutoPollingRate\\razerautopollingrate.exe';
+  const standaloneLocalExe = 'C:\\Users\\marcm\\AppData\\Local\\Programs\\RazerAutoPollingRate\\razerautopollingrate.exe';
   const exists = (candidate) => candidate.endsWith('\\Update.exe');
 
   assert.equal(isSquirrelInstall(squirrelExe, exists), true);
+  assert.equal(isSquirrelInstall(scoopExe, exists), false);
   assert.equal(isSquirrelInstall(portableExe, exists), false);
+  assert.equal(isSquirrelInstall(standaloneLocalExe, exists), false);
 });
 
 test('in-place updater waits for exit, replaces the current app payload, and relaunches the same executable', () => {

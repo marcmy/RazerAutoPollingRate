@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Changed
+
+- The post-update What's New window now shows the latest five release versions and provides a link to the full changelog.
+
+### Fixed
+
+- Rolling CalVer releases now publish real changelog entries added since the previous build, with meaningful commit subjects only as a fallback when no changelog entry was added.
+
+## 20260916.0259
+
+### Added
+
+- Added hardware-validated Pulsar X2 CrazyLight polling-rate control for VID/PID `3710:5406` on interface 1 / Col05 using its 17-byte Nordic HID protocol, while keeping Razer preferred when both supported vendors are connected.
+- Added per-game CrazyLight Turbo Mode automation with firmware/capability detection, plus automatic Turbo disable when no matching game is active.
+- Added detected-mouse and CrazyLight Turbo state to the Settings runtime status.
+- Added CalVer rolling builds and in-app update checks with a once-daily default, a Settings toggle, deferred notifications while a game is active, app-owned download/install progress, automatic relaunch, and a post-update changelog.
+
+### Changed
+
+- Cached CrazyLight HID path/capability discovery and reused a persistent PowerShell/native HID output-report helper instead of starting a helper process for every command.
+- Kept unknown Pulsar product IDs diagnostics-only until their protocol identity is explicitly validated.
+
+### Fixed
+
+- Fixed in-app updates for fixed, portable, and package-manager installs so the current installation directory is replaced in place and the same executable path is relaunched.
+- Fixed updater handoff reliability by waiting for an explicit updater-ready marker and launching the detached Windows updater through a `cmd /c start /b` trampoline.
+- Fixed update prompts/check state so manual checks surface the available update reliably and do not leave the tray stuck on "Checking for Updates...".
+
 ## v1.3.6
 
 ### Added
