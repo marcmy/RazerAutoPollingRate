@@ -42,6 +42,16 @@ test('runtime updater is self-contained and hands the verified installer to Squi
   assert.match(installer, /--processStart/);
 });
 
+
+test('runtime updater preserves the current install directory outside Squirrel', () => {
+  const main = source(mainPath);
+  assert.match(main, /isSquirrelInstall\(process\.execPath\)/);
+  assert.match(main, /selectFullPackageAsset\(release\)/);
+  assert.match(main, /buildInPlaceInstallScript/);
+  assert.match(main, /path\.dirname\(process\.execPath\)/);
+  assert.match(main, /Expand-Archive/);
+  assert.match(main, /validateStagedAppPackage/);
+});
 test('updater destroys its non-closable progress window before quitting the Electron app', () => {
   const main = source(mainPath);
   assert.match(
