@@ -9,6 +9,8 @@ const appUpdatesPath = path.join(__dirname, '..', 'src', 'lib', 'appUpdates.js')
 const updateInstallerPath = path.join(__dirname, '..', 'src', 'lib', 'updateInstaller.js');
 const updatePromptPath = path.join(__dirname, '..', 'src', 'updatePrompt.html');
 const updatePromptPreloadPath = path.join(__dirname, '..', 'src', 'updatePromptPreload.js');
+const updateChangelogPath = path.join(__dirname, '..', 'src', 'updateChangelog.html');
+const updateChangelogPreloadPath = path.join(__dirname, '..', 'src', 'updateChangelogPreload.js');
 const ciPath = path.join(__dirname, '..', '.github', 'workflows', 'ci.yml');
 const scoopBridgePath = path.join(__dirname, '..', '.github', 'workflows', 'scoop-excavator.yml');
 
@@ -114,6 +116,22 @@ test('runtime transitions give the updater a chance to notify only after game de
     main,
     /updateRuntimeSelection\(selected, foregroundProcess, requestedTarget\);[\s\S]{0,300}updateCoordinator\.runtimeChanged\(\)/,
   );
+});
+
+test('post-update changelog shows five recent releases and opens the full changelog through main process IPC', () => {
+  const main = source(mainPath);
+  const changelog = source(updateChangelogPath);
+  const preload = source(updateChangelogPreloadPath);
+
+  assert.match(main, /releases\?per_page=5/);
+  assert.match(main, /buildRecentChangelogEntries/);
+  assert.match(main, /preload:\s*path\.join\(__dirname, 'updateChangelogPreload\.js'\)/);
+  assert.match(main, /ipcMain\.on\('update-changelog-open-full'/);
+  assert.match(main, /shell\.openExternal\(FULL_CHANGELOG_URL\)/);
+  assert.match(changelog, /id="releases"/);
+  assert.match(changelog, /View full changelog/);
+  assert.match(changelog, /window\.updateChangelog\.openFullChangelog\(\)/);
+  assert.match(preload, /ipcRenderer\.send\('update-changelog-open-full'\)/);
 });
 
 test('rolling CI stamps the packaged app and names Scoop and Setup artifacts with one CalVer', () => {

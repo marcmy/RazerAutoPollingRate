@@ -9,6 +9,7 @@ const {
   Tray,
   Menu,
   nativeImage,
+  shell,
 } = require('electron');
 
 const fs = require('fs');
@@ -21,9 +22,9 @@ const packageMetadata = require('../package.json');
 const { createCheckGuard } = require('./lib/checkGuard');
 const { DiagnosticLogger } = require('./lib/diagnosticLogger');
 const {
+  buildRecentChangelogEntries,
   getDisplayVersion,
   isGameActive,
-  releaseNotesToPlainText,
   selectFullPackageAsset,
   selectSetupAsset,
   shouldShowInstalledChangelog,
@@ -95,6 +96,8 @@ const assetsFolder = 'src/assets/';
 const checkGuard = createCheckGuard();
 const appDisplayVersion = getDisplayVersion(packageMetadata, app.getVersion());
 const UPDATE_API_URL = 'https://api.github.com/repos/marcmy/RazerAutoPollingRate/releases/latest';
+const UPDATE_RELEASES_URL = 'https://api.github.com/repos/marcmy/RazerAutoPollingRate/releases?per_page=5';
+const FULL_CHANGELOG_URL = 'https://github.com/marcmy/RazerAutoPollingRate/blob/main/CHANGELOG.md';
 const UPDATE_POLL_INTERVAL_MS = 60 * 60 * 1000;
 
 let tray;
@@ -1343,7 +1346,7 @@ app.whenReady().then(() => {
   setupUpdateCoordinator();
   updateTrayMenu();
   scheduleUpdateChecks();
-  showPendingUpdateChangelog();
+  showPendingUpdateChangelog().catch((error) => log(`failed to show update changelog: ${error.message}`, true));
   runLoop();
 });
 
@@ -1357,6 +1360,17 @@ ipcMain.on('update-prompt-action', (event, action) => {
     return;
   }
   closeUpdatePromptWindow(action === 'install' ? 0 : 1);
+});
+
+ipcMain.on('update-changelog-open-full', (event) => {
+  if (!updateChangelogWindow || updateChangelogWindow.isDestroyed()) {
+    return;
+  }
+  if (event.sender !== updateChangelogWindow.webContents) {
+    return;
+  }
+  shell.openExternal(FULL_CHANGELOG_URL)
+    .catch((error) => log(`failed to open full changelog: ${error.message}`, true));
 });
 
 app.on('window-all-closed', (event) => {
@@ -1437,7 +1451,7 @@ function openSettingsWindow() {
   settingsWindow.loadFile(path.join(__dirname, 'settings.html'));
 }
 
-function showPendingUpdateChangelog() {
+async function showPendingUpdateChangelog() {
   const pending = legacyStore.get('updates.pendingChangelog', null);
   if (!shouldShowInstalledChangelog(pending, appDisplayVersion)) {
     return;
@@ -1447,16 +1461,26 @@ function showPendingUpdateChangelog() {
     return;
   }
 
-  const notes = releaseNotesToPlainText(pending.body)
-    || 'This update installed successfully. No release notes were provided.';
+  let recentReleases = [];
+  try {
+    const fetched = await fetchJson(UPDATE_RELEASES_URL);
+    if (Array.isArray(fetched)) {
+      recentReleases = fetched;
+    }
+  } catch (error) {
+    log(`failed to load recent release history: ${error.message}`, true);
+  }
+  const releases = buildRecentChangelogEntries(recentReleases, pending, 5);
+
   updateChangelogWindow = new BrowserWindow({
-    width: 540,
-    height: 440,
+    width: 580,
+    height: 620,
     minWidth: 460,
     minHeight: 320,
     show: false,
     title: `What's New - ${appDisplayVersion}`,
     webPreferences: {
+      preload: path.join(__dirname, 'updateChangelogPreload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -1464,7 +1488,7 @@ function showPendingUpdateChangelog() {
   });
   updateChangelogWindow.setMenu(null);
   updateChangelogWindow.webContents.once('did-finish-load', () => {
-    const payload = { version: appDisplayVersion, notes };
+    const payload = { releases };
     updateChangelogWindow.webContents
       .executeJavaScript(`window.setReleaseNotes(${JSON.stringify(payload)})`)
       .catch(() => {});

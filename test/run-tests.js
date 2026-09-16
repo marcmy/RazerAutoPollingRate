@@ -27,5 +27,6 @@ require('./updateInstaller.test');
 require('./updateIntegration.test');
 require('./windowsHidOutputReport.test');
 require('./rollingBuildVersion.test');
+require('./rollingReleaseNotes.test');
 
 require('./turboAutomation.test');

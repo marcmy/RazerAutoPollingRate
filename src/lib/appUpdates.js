@@ -126,6 +126,35 @@ function releaseNotesToPlainText(value) {
     .trim();
 }
 
+function buildRecentChangelogEntries(releases, pendingRelease, limit = 5) {
+  const maximum = Number.isInteger(limit) && limit > 0 ? limit : 5;
+  const candidates = [
+    pendingRelease,
+    ...(Array.isArray(releases) ? releases : []),
+  ];
+  const seen = new Set();
+  const entries = [];
+
+  for (const release of candidates) {
+    const version = String(release && release.tag_name || '').trim();
+    if (!version || seen.has(version)) {
+      continue;
+    }
+
+    seen.add(version);
+    entries.push({
+      version,
+      notes: releaseNotesToPlainText(release.body)
+        || 'No release notes were provided for this version.',
+    });
+    if (entries.length >= maximum) {
+      break;
+    }
+  }
+
+  return entries;
+}
+
 function shouldShowInstalledChangelog(pendingRelease, currentVersion) {
   return Boolean(
     pendingRelease
@@ -136,6 +165,7 @@ function shouldShowInstalledChangelog(pendingRelease, currentVersion) {
 
 module.exports = {
   UPDATE_CHECK_INTERVAL_MS,
+  buildRecentChangelogEntries,
   getDisplayVersion,
   isGameActive,
   isNewerRollingVersion,
