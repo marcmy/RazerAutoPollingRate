@@ -342,6 +342,7 @@ async function launchDetachedUpdate(command) {
       resolve();
     });
   });
+  // This window is intentionally non-closable; destroy it so app.quit() can terminate the PID the updater is waiting on.
   closeUpdateProgressWindow();
   app.quit();
 }
