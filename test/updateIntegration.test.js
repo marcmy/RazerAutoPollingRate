@@ -7,6 +7,8 @@ const mainPath = path.join(__dirname, '..', 'src', 'main.js');
 const settingsPath = path.join(__dirname, '..', 'src', 'settings.html');
 const appUpdatesPath = path.join(__dirname, '..', 'src', 'lib', 'appUpdates.js');
 const updateInstallerPath = path.join(__dirname, '..', 'src', 'lib', 'updateInstaller.js');
+const updatePromptPath = path.join(__dirname, '..', 'src', 'updatePrompt.html');
+const updatePromptPreloadPath = path.join(__dirname, '..', 'src', 'updatePromptPreload.js');
 const ciPath = path.join(__dirname, '..', '.github', 'workflows', 'ci.yml');
 const scoopBridgePath = path.join(__dirname, '..', '.github', 'workflows', 'scoop-excavator.yml');
 
@@ -30,9 +32,10 @@ test('runtime updater is self-contained and hands the verified installer to Squi
   const runtime = `${source(mainPath)}\n${source(appUpdatesPath)}`;
   const settings = source(settingsPath);
   const installer = source(updateInstallerPath);
+  const prompt = source(updatePromptPath);
 
   assert.doesNotMatch(runtime, /\bscoop\b/i);
-  assert.match(runtime, /Download & Install/);
+  assert.match(prompt, /Download &amp; Install/);
   assert.match(runtime, /updates\.pendingChangelog/);
   assert.match(runtime, /createUpdateProgressWindow/);
   assert.match(runtime, /automaticUpdateChecks/);
@@ -54,10 +57,42 @@ test('runtime updater preserves the current install directory outside Squirrel',
 });
 test('updater destroys its non-closable progress window before quitting the Electron app', () => {
   const main = source(mainPath);
+  const start = main.indexOf('async function launchDetachedUpdate(command, updateDirectory)');
+  const end = main.indexOf('async function stageInPlaceUpdatePackage', start);
+  assert.ok(start >= 0 && end > start);
+  const launch = main.slice(start, end);
+  const readyMarker = launch.indexOf('updater.ready');
+  const detach = launch.lastIndexOf('child.unref();');
+  const closeProgress = launch.indexOf('closeUpdateProgressWindow();');
+  const quit = launch.indexOf('app.quit();');
+  assert.ok(readyMarker >= 0);
+  assert.ok(detach > readyMarker);
+  assert.ok(closeProgress > detach);
+  assert.ok(quit > closeProgress);
+});
+
+test('manual update checks clear the checking state before showing an available-update prompt', () => {
+  const main = source(mainPath);
+  assert.match(main, /checkForAppUpdates\(\{ manual: true, notify: false \}\)/);
   assert.match(
     main,
-    /async function launchDetachedUpdate\(command\)[\s\S]{0,1400}child\.unref\(\);[\s\S]{0,240}closeUpdateProgressWindow\(\);[\s\S]{0,120}app\.quit\(\);/,
+    /finally \{[\s\S]{0,260}updateOperation = 'idle';[\s\S]{0,180}updateTrayMenu\(\);[\s\S]{0,900}updateCoordinator\.notifyPending\(\)/,
   );
+});
+
+test('available updates use a focused app-owned prompt instead of a parentless native dialog', () => {
+  const main = source(mainPath);
+  const prompt = source(updatePromptPath);
+  const preload = source(updatePromptPreloadPath);
+  assert.match(main, /function showUpdatePrompt\(release\)/);
+  assert.match(main, /alwaysOnTop:\s*true/);
+  assert.match(main, /updatePromptWindow\.moveTop\(\)/);
+  assert.match(main, /updatePromptWindow\.focus\(\)/);
+  assert.match(main, /const result = await showUpdatePrompt\(release\)/);
+  assert.match(main, /ipcMain\.on\('update-prompt-action'/);
+  assert.match(prompt, /Download &amp; Install/);
+  assert.match(prompt, /window\.updatePrompt\.choose\('install'\)/);
+  assert.match(preload, /ipcRenderer\.send\('update-prompt-action', action\)/);
 });
 
 test('runtime transitions give the updater a chance to notify only after game detection updates', () => {

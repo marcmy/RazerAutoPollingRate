@@ -60,6 +60,28 @@ test('automatic check respects the 24 hour cadence while manual check bypasses i
   assert.equal(fetchCount, 1);
 });
 
+test('manual check can persist an available update without blocking on its notification', async () => {
+  assert.equal(typeof updateCoordinator.createUpdateCoordinator, 'function');
+  let notifications = 0;
+  const coordinator = updateCoordinator.createUpdateCoordinator({
+    currentVersion: '20260914.0818',
+    getRuntimeStatus: () => ({ source: 'inactive' }),
+    getLastCheckedAt: () => 0,
+    setLastCheckedAt: () => {},
+    fetchLatestRelease: async () => ({ tag_name: '20260914.0900', assets: [] }),
+    onPendingChange: () => {},
+    onNotify: async () => { notifications += 1; },
+  });
+
+  const result = await coordinator.check({ manual: true, notify: false });
+  assert.equal(result.status, 'available');
+  assert.equal(notifications, 0);
+  assert.equal(coordinator.getPendingRelease().tag_name, '20260914.0900');
+
+  await coordinator.notifyPending();
+  assert.equal(notifications, 1);
+});
+
 test('failed automatic checks still count as the daily attempt', async () => {
   assert.equal(typeof updateCoordinator.createUpdateCoordinator, 'function');
   const now = Date.parse('2026-09-14T12:00:00Z');

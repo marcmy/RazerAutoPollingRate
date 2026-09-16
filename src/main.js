@@ -124,6 +124,9 @@ let updateCoordinator = null;
 let updateStartupTimer = null;
 let updateCheckTimer = null;
 let updateOperation = 'idle';
+let updatePromptWindow = null;
+let updatePromptResolver = null;
+let updatePromptPromise = null;
 let updateProgressWindow = null;
 let updateChangelogWindow = null;
 let automaticUpdateChecks = true;
@@ -265,6 +268,75 @@ function formatByteCount(bytes) {
   return `${(value / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function closeUpdatePromptWindow(response = 1) {
+  const resolver = updatePromptResolver;
+  updatePromptResolver = null;
+  updatePromptPromise = null;
+  if (updatePromptWindow && !updatePromptWindow.isDestroyed()) {
+    updatePromptWindow.destroy();
+  }
+  updatePromptWindow = null;
+  if (resolver) {
+    resolver({ response });
+  }
+}
+
+function showUpdatePrompt(release) {
+  if (updatePromptWindow && !updatePromptWindow.isDestroyed()) {
+    updatePromptWindow.show();
+    updatePromptWindow.setAlwaysOnTop(true);
+    updatePromptWindow.moveTop();
+    updatePromptWindow.focus();
+    return updatePromptPromise;
+  }
+
+  updatePromptPromise = new Promise((resolve) => {
+    updatePromptResolver = resolve;
+    updatePromptWindow = new BrowserWindow({
+      width: 440,
+      height: 230,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      show: false,
+      alwaysOnTop: true,
+      title: 'Razer Auto Polling Rate Update',
+      webPreferences: {
+        preload: path.join(__dirname, 'updatePromptPreload.js'),
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+    updatePromptWindow.setMenu(null);
+    updatePromptWindow.webContents.once('did-finish-load', () => {
+      const payload = {
+        version: release.tag_name,
+        currentVersion: appDisplayVersion,
+      };
+      updatePromptWindow.webContents
+        .executeJavaScript(`window.setUpdatePrompt(${JSON.stringify(payload)})`)
+        .catch(() => {});
+    });
+    updatePromptWindow.once('ready-to-show', () => {
+      updatePromptWindow.show();
+      updatePromptWindow.moveTop();
+      updatePromptWindow.focus();
+    });
+    updatePromptWindow.on('closed', () => {
+      updatePromptWindow = null;
+      const resolver = updatePromptResolver;
+      updatePromptResolver = null;
+      updatePromptPromise = null;
+      if (resolver) {
+        resolver({ response: 1 });
+      }
+    });
+    updatePromptWindow.loadFile(path.join(__dirname, 'updatePrompt.html'));
+  });
+  return updatePromptPromise;
+}
+
 function createUpdateProgressWindow(version) {
   if (updateProgressWindow && !updateProgressWindow.isDestroyed()) {
     return updateProgressWindow;
@@ -321,32 +393,109 @@ function closeUpdateProgressWindow() {
   updateProgressWindow = null;
 }
 
-async function launchDetachedUpdate(command) {
+async function launchDetachedUpdate(command, updateDirectory) {
   stop = true;
   while (!hasStopped) {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
 
   await closeAllWindowsHidOutputBridges();
-  const encodedCommand = Buffer.from(command, 'utf16le').toString('base64');
+  const scriptPath = path.join(updateDirectory, 'updater.ps1');
+  const readyPath = path.join(updateDirectory, 'updater.ready');
+  const startupLogPath = path.join(updateDirectory, 'updater-startup.log');
+  fs.rmSync(readyPath, { force: true });
+  fs.rmSync(startupLogPath, { force: true });
+
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    `$readyPath = ${quotePowerShellLiteral(readyPath)}`,
+    "Set-Content -LiteralPath $readyPath -Value ([DateTimeOffset]::UtcNow.ToString('o')) -Encoding UTF8",
+    command,
+  ].join('\r\n');
+  fs.writeFileSync(scriptPath, `\uFEFF${script}`, 'utf8');
 
   await new Promise((resolve, reject) => {
+    const stdoutFd = fs.openSync(startupLogPath, 'a');
+    const stderrFd = fs.openSync(startupLogPath, 'a');
     const child = spawn('powershell.exe', [
       '-NoLogo',
       '-NoProfile',
+      '-NonInteractive',
       '-ExecutionPolicy',
       'Bypass',
-      '-EncodedCommand',
-      encodedCommand,
+      '-File',
+      scriptPath,
     ], {
       detached: true,
-      stdio: 'ignore',
-      windowsHide: false,
+      stdio: ['ignore', stdoutFd, stderrFd],
+      windowsHide: true,
     });
-    child.once('error', reject);
+
+    let settled = false;
+    let pollTimer = null;
+    let deadlineTimer = null;
+    let readyObservedAt = 0;
+    let startupFdsClosed = false;
+    const closeStartupFds = () => {
+      if (startupFdsClosed) return;
+      startupFdsClosed = true;
+      try { fs.closeSync(stdoutFd); } catch { /* best effort */ }
+      try { fs.closeSync(stderrFd); } catch { /* best effort */ }
+    };
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(pollTimer);
+      clearTimeout(deadlineTimer);
+      closeStartupFds();
+      if (error) {
+        reject(error);
+      } else {
+        resolve();
+      }
+    };
+    const readStartupLog = () => {
+      try {
+        return fs.readFileSync(startupLogPath, 'utf8').trim();
+      } catch {
+        return '';
+      }
+    };
+    const waitForReady = () => {
+      if (fs.existsSync(readyPath)) {
+        if (!readyObservedAt) {
+          readyObservedAt = Date.now();
+        }
+        if (Date.now() - readyObservedAt >= 250) {
+          child.unref();
+          finish();
+          return;
+        }
+      }
+      pollTimer = setTimeout(waitForReady, 50);
+    };
+
+    child.once('error', (error) => finish(error));
+    child.once('exit', (code, signal) => {
+      if (settled || fs.existsSync(readyPath)) return;
+      const details = readStartupLog();
+      finish(new Error(
+        `Updater process exited before initialization (code ${code ?? 'unknown'}, signal ${signal || 'none'})${details ? `: ${details}` : ''}`,
+      ));
+    });
     child.once('spawn', () => {
-      child.unref();
-      resolve();
+      closeStartupFds();
+      deadlineTimer = setTimeout(() => {
+        if (fs.existsSync(readyPath)) {
+          child.unref();
+          finish();
+          return;
+        }
+        try { child.kill(); } catch { /* best effort */ }
+        const details = readStartupLog();
+        finish(new Error(`Updater process did not initialize within 10 seconds${details ? `: ${details}` : ''}`));
+      }, 10_000);
+      waitForReady();
     });
   });
   // This window is intentionally non-closable; destroy it so app.quit() can terminate the PID the updater is waiting on.
@@ -476,7 +625,7 @@ async function downloadAndInstallUpdate(release) {
   });
 
   try {
-    await launchDetachedUpdate(installScript);
+    await launchDetachedUpdate(installScript, updateDirectory);
   } catch (error) {
     legacyStore.delete('updates.pendingChangelog');
     throw error;
@@ -496,16 +645,7 @@ async function notifyUpdateAvailable(release, canProceed) {
     return true;
   }
 
-  const result = await dialog.showMessageBox({
-    type: 'info',
-    title: 'Razer Auto Polling Rate Update',
-    message: `Razer Auto Polling Rate ${release.tag_name} is available.`,
-    detail: `Current version: ${appDisplayVersion}`,
-    buttons: ['Download & Install', 'Later'],
-    defaultId: 0,
-    cancelId: 1,
-    noLink: true,
-  });
+  const result = await showUpdatePrompt(release);
 
   if (result.response !== 0) {
     return true;
@@ -575,35 +715,48 @@ async function handleCheckForUpdates() {
 
   updateOperation = 'checking';
   updateTrayMenu();
+  let result = null;
+  let checkError = null;
   try {
-    const result = await checkForAppUpdates({ manual: true });
-    if (result.status === 'current' && !isGameActive(runtimeStatus)) {
-      await dialog.showMessageBox({
-        type: 'info',
-        title: 'Razer Auto Polling Rate Update',
-        message: 'You are up to date.',
-        detail: `Version ${appDisplayVersion}`,
-        buttons: ['OK'],
-        noLink: true,
-      });
-    }
+    result = await checkForAppUpdates({ manual: true, notify: false });
   } catch (error) {
     log(`manual update check failed: ${error.message}`, true);
-    if (!isGameActive(runtimeStatus)) {
-      await dialog.showMessageBox({
-        type: 'error',
-        title: 'Update Check Failed',
-        message: 'Could not check for updates.',
-        detail: error.message,
-        buttons: ['OK'],
-        noLink: true,
-      });
-    }
+    checkError = error;
   } finally {
     if (updateOperation === 'checking') {
       updateOperation = 'idle';
     }
     updateTrayMenu();
+  }
+
+  if (checkError) {
+    if (!isGameActive(runtimeStatus)) {
+      await dialog.showMessageBox({
+        type: 'error',
+        title: 'Update Check Failed',
+        message: 'Could not check for updates.',
+        detail: checkError.message,
+        buttons: ['OK'],
+        noLink: true,
+      });
+    }
+    return;
+  }
+
+  if (result && result.status === 'available') {
+    await updateCoordinator.notifyPending();
+    return;
+  }
+
+  if (result && result.status === 'current' && !isGameActive(runtimeStatus)) {
+    await dialog.showMessageBox({
+      type: 'info',
+      title: 'Razer Auto Polling Rate Update',
+      message: 'You are up to date.',
+      detail: `Version ${appDisplayVersion}`,
+      buttons: ['OK'],
+      noLink: true,
+    });
   }
 }
 
@@ -1195,6 +1348,16 @@ app.whenReady().then(() => {
 });
 
 setupSettingsIpc();
+
+ipcMain.on('update-prompt-action', (event, action) => {
+  if (!updatePromptWindow || updatePromptWindow.isDestroyed()) {
+    return;
+  }
+  if (event.sender !== updatePromptWindow.webContents) {
+    return;
+  }
+  closeUpdatePromptWindow(action === 'install' ? 0 : 1);
+});
 
 app.on('window-all-closed', (event) => {
   event.preventDefault();
