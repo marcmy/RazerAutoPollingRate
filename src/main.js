@@ -24,6 +24,7 @@ const {
   getDisplayVersion,
   isGameActive,
   releaseNotesToPlainText,
+  selectFullPackageAsset,
   selectSetupAsset,
   shouldShowInstalledChangelog,
 } = require('./lib/appUpdates');
@@ -80,7 +81,13 @@ const {
   resolveSupportedPollingRate,
 } = require('./lib/rates');
 const { createUpdateCoordinator } = require('./lib/updateCoordinator');
-const { buildSquirrelInstallScript } = require('./lib/updateInstaller');
+const {
+  buildInPlaceInstallScript,
+  buildSquirrelInstallScript,
+  isSquirrelInstall,
+  quotePowerShellLiteral,
+  validateStagedAppPackage,
+} = require('./lib/updateInstaller');
 
 const appPath = app.getAppPath();
 const legacyStore = new Store();
@@ -347,10 +354,49 @@ async function launchDetachedUpdate(command) {
   app.quit();
 }
 
+async function stageInPlaceUpdatePackage(packagePath, updateDirectory, targetVersion) {
+  const archivePath = path.join(updateDirectory, 'package.zip');
+  const stagingRoot = path.join(updateDirectory, 'stage');
+  fs.copyFileSync(packagePath, archivePath);
+  fs.rmSync(stagingRoot, { recursive: true, force: true });
+  fs.mkdirSync(stagingRoot, { recursive: true });
+
+  const command = [
+    'Expand-Archive',
+    '-LiteralPath',
+    quotePowerShellLiteral(archivePath),
+    '-DestinationPath',
+    quotePowerShellLiteral(stagingRoot),
+    '-Force',
+  ].join(' ');
+  await execFileText('powershell.exe', [
+    '-NoLogo',
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-Command',
+    command,
+  ]);
+
+  const stagedAppDirectory = path.join(stagingRoot, 'lib', 'net45');
+  validateStagedAppPackage(stagedAppDirectory, targetVersion, path.basename(process.execPath));
+  return stagedAppDirectory;
+}
+
+function verifyInstallDirectoryWritable(installDirectory) {
+  const probePath = path.join(installDirectory, `.rapr-update-write-${process.pid}.tmp`);
+  try {
+    fs.writeFileSync(probePath, 'update-write-check', { flag: 'wx' });
+  } finally {
+    fs.rmSync(probePath, { force: true });
+  }
+}
+
 async function downloadAndInstallUpdate(release) {
-  const asset = selectSetupAsset(release);
+  const squirrelInstall = isSquirrelInstall(process.execPath);
+  const asset = squirrelInstall ? selectSetupAsset(release) : selectFullPackageAsset(release);
   if (!asset || !asset.browser_download_url) {
-    throw new Error(`Release ${release.tag_name} does not contain its CalVer Setup installer`);
+    throw new Error(`Release ${release.tag_name} does not contain the required Windows update package`);
   }
 
   updateOperation = 'downloading';
@@ -359,9 +405,9 @@ async function downloadAndInstallUpdate(release) {
   const updateDirectory = path.join(app.getPath('temp'), 'RazerAutoPollingRate', 'updates', release.tag_name);
   fs.rmSync(updateDirectory, { recursive: true, force: true });
   fs.mkdirSync(updateDirectory, { recursive: true });
-  const installerPath = path.join(updateDirectory, asset.name);
+  const packagePath = path.join(updateDirectory, asset.name);
   let lastProgressUpdateAt = 0;
-  await downloadFile(asset.browser_download_url, installerPath, {
+  await downloadFile(asset.browser_download_url, packagePath, {
     expectedBytes: asset.size,
     onProgress: ({ downloadedBytes, totalBytes, fraction }) => {
       const now = Date.now();
@@ -381,37 +427,52 @@ async function downloadAndInstallUpdate(release) {
     },
   });
 
-  setUpdateProgress({ version: release.tag_name, status: 'Verifying installer…', fraction: 1 });
+  setUpdateProgress({ version: release.tag_name, status: 'Verifying update…', fraction: 1 });
   if (!asset.digest) {
-    fs.rmSync(installerPath, { force: true });
-    throw new Error('GitHub did not provide a SHA256 digest for the update installer');
+    fs.rmSync(packagePath, { force: true });
+    throw new Error('GitHub did not provide a SHA256 digest for the update package');
   }
 
-  if (!verifyFileDigest(installerPath, asset.digest)) {
-    fs.rmSync(installerPath, { force: true });
+  if (!verifyFileDigest(packagePath, asset.digest)) {
+    fs.rmSync(packagePath, { force: true });
     throw new Error('Downloaded update failed SHA256 verification');
   }
 
   updateOperation = 'installing';
   updateTrayMenu();
-  setUpdateProgress({ version: release.tag_name, status: 'Starting installer…', fraction: 1 });
 
-  const localAppData = process.env.LOCALAPPDATA;
-  if (!localAppData) {
-    throw new Error('Windows local application data directory is unavailable');
+  let installScript;
+  if (squirrelInstall) {
+    const localAppData = process.env.LOCALAPPDATA;
+    if (!localAppData) {
+      throw new Error('Windows local application data directory is unavailable');
+    }
+    setUpdateProgress({ version: release.tag_name, status: 'Starting installer…', fraction: 1 });
+    installScript = buildSquirrelInstallScript({
+      parentPid: process.pid,
+      installerPath: packagePath,
+      localAppData,
+      packageName: packageMetadata.name,
+      executableName: `${packageMetadata.name}.exe`,
+    });
+  } else {
+    const installDirectory = path.dirname(process.execPath);
+    verifyInstallDirectoryWritable(installDirectory);
+    setUpdateProgress({ version: release.tag_name, status: 'Preparing update…', fraction: 1 });
+    const stagedAppDirectory = await stageInPlaceUpdatePackage(packagePath, updateDirectory, release.tag_name);
+    setUpdateProgress({ version: release.tag_name, status: 'Restarting to apply update…', fraction: 1 });
+    installScript = buildInPlaceInstallScript({
+      parentPid: process.pid,
+      stagedAppDirectory,
+      installDirectory,
+      executablePath: process.execPath,
+      logPath: path.join(updateDirectory, 'updater.log'),
+    });
   }
 
   legacyStore.set('updates.pendingChangelog', {
     tag_name: release.tag_name,
     body: release.body || '',
-  });
-
-  const installScript = buildSquirrelInstallScript({
-    parentPid: process.pid,
-    installerPath,
-    localAppData,
-    packageName: packageMetadata.name,
-    executableName: `${packageMetadata.name}.exe`,
   });
 
   try {
@@ -427,9 +488,11 @@ async function notifyUpdateAvailable(release, canProceed) {
     return false;
   }
 
-  const asset = selectSetupAsset(release);
+  const asset = isSquirrelInstall(process.execPath)
+    ? selectSetupAsset(release)
+    : selectFullPackageAsset(release);
   if (!asset) {
-    log(`update ${release.tag_name} is missing its CalVer Setup asset`, true);
+    log(`update ${release.tag_name} is missing its required Windows update asset`, true);
     return true;
   }
 

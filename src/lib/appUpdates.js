@@ -75,6 +75,17 @@ function selectSetupAsset(release) {
   const expectedName = `RazerAutoPollingRate-${version.value}.Setup.exe`;
   return release.assets.find((asset) => asset && asset.name === expectedName) || null;
 }
+function selectFullPackageAsset(release) {
+  const version = parseRollingVersion(release && release.tag_name);
+  if (!version || !Array.isArray(release.assets)) {
+    return null;
+  }
+
+  const monthDay = (version.month * 100) + version.day;
+  const hourMinute = (version.hour * 100) + version.minute;
+  const expectedName = `razerautopollingrate-${version.year}.${monthDay}.${hourMinute}-full.nupkg`;
+  return release.assets.find((asset) => asset && asset.name === expectedName) || null;
+}
 
 function sanitizeReleaseNotes(value) {
   const lines = String(value || '').replace(/\r\n/g, '\n').split('\n');
@@ -131,6 +142,7 @@ module.exports = {
   parseRollingVersion,
   releaseNotesToPlainText,
   sanitizeReleaseNotes,
+  selectFullPackageAsset,
   selectSetupAsset,
   shouldShowInstalledChangelog,
   shouldCheckForUpdates,

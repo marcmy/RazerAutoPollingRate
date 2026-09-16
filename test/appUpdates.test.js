@@ -84,3 +84,15 @@ test('post-update changelog is shown only after the target build is actually run
   assert.equal(appUpdates.shouldShowInstalledChangelog(pending, '20260915.1829'), false);
   assert.equal(appUpdates.shouldShowInstalledChangelog(null, '20260915.1830'), false);
 });
+test('rolling release selects the exact full package asset for in-place installs', () => {
+  assert.equal(typeof appUpdates.selectFullPackageAsset, 'function');
+  const release = {
+    tag_name: '20260916.0017',
+    assets: [
+      { name: 'RazerAutoPollingRate-20260916.0017.Setup.exe', browser_download_url: 'setup' },
+      { name: 'razerautopollingrate-2026.916.17-full.nupkg', browser_download_url: 'nupkg' },
+    ],
+  };
+
+  assert.deepEqual(appUpdates.selectFullPackageAsset(release), release.assets[1]);
+});
