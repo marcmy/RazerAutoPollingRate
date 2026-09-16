@@ -408,6 +408,8 @@ async function launchDetachedUpdate(command, updateDirectory) {
 
   const script = [
     "$ErrorActionPreference = 'Stop'",
+    `$startupLogPath = ${quotePowerShellLiteral(startupLogPath)}`,
+    "Set-Content -LiteralPath $startupLogPath -Value (([DateTimeOffset]::UtcNow.ToString('o')) + ' PowerShell updater started.') -Encoding UTF8",
     `$readyPath = ${quotePowerShellLiteral(readyPath)}`,
     "Set-Content -LiteralPath $readyPath -Value ([DateTimeOffset]::UtcNow.ToString('o')) -Encoding UTF8",
     command,
@@ -415,9 +417,14 @@ async function launchDetachedUpdate(command, updateDirectory) {
   fs.writeFileSync(scriptPath, `\uFEFF${script}`, 'utf8');
 
   await new Promise((resolve, reject) => {
-    const stdoutFd = fs.openSync(startupLogPath, 'a');
-    const stderrFd = fs.openSync(startupLogPath, 'a');
-    const child = spawn('powershell.exe', [
+    const child = spawn(process.env.ComSpec || 'cmd.exe', [
+      '/d',
+      '/s',
+      '/c',
+      'start',
+      '',
+      '/b',
+      'powershell.exe',
       '-NoLogo',
       '-NoProfile',
       '-NonInteractive',
@@ -426,8 +433,7 @@ async function launchDetachedUpdate(command, updateDirectory) {
       '-File',
       scriptPath,
     ], {
-      detached: true,
-      stdio: ['ignore', stdoutFd, stderrFd],
+      stdio: 'ignore',
       windowsHide: true,
     });
 
@@ -435,19 +441,11 @@ async function launchDetachedUpdate(command, updateDirectory) {
     let pollTimer = null;
     let deadlineTimer = null;
     let readyObservedAt = 0;
-    let startupFdsClosed = false;
-    const closeStartupFds = () => {
-      if (startupFdsClosed) return;
-      startupFdsClosed = true;
-      try { fs.closeSync(stdoutFd); } catch { /* best effort */ }
-      try { fs.closeSync(stderrFd); } catch { /* best effort */ }
-    };
     const finish = (error) => {
       if (settled) return;
       settled = true;
       clearTimeout(pollTimer);
       clearTimeout(deadlineTimer);
-      closeStartupFds();
       if (error) {
         reject(error);
       } else {
@@ -478,13 +476,15 @@ async function launchDetachedUpdate(command, updateDirectory) {
     child.once('error', (error) => finish(error));
     child.once('exit', (code, signal) => {
       if (settled || fs.existsSync(readyPath)) return;
+      // `cmd /c start` is only the bootstrap. A clean exit means it handed the
+      // updater off successfully, so keep waiting for updater.ready.
+      if (code === 0) return;
       const details = readStartupLog();
       finish(new Error(
-        `Updater process exited before initialization (code ${code ?? 'unknown'}, signal ${signal || 'none'})${details ? `: ${details}` : ''}`,
+        `Updater bootstrap exited before initialization (code ${code ?? 'unknown'}, signal ${signal || 'none'})${details ? `: ${details}` : ''}`,
       ));
     });
     child.once('spawn', () => {
-      closeStartupFds();
       deadlineTimer = setTimeout(() => {
         if (fs.existsSync(readyPath)) {
           child.unref();
