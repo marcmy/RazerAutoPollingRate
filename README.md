@@ -1,8 +1,8 @@
 # Razer Auto Polling Rate
 
-A Windows tray app for automatically switching a Razer HyperPolling dongle's polling rate based on the app or game you are using.
+A Windows tray app for automatically switching polling rates on supported Razer and Pulsar gaming mice based on the app or game you are using.
 
-This maintained fork adds foreground-window switching, full executable path rules, a tray settings GUI, safer config parsing, tests, CI, and Windows release packaging.
+This maintained fork adds foreground-window switching, full executable path rules, a tray settings GUI, validated Pulsar X2 CrazyLight support, per-game CrazyLight Turbo Mode automation, safer config parsing, tests, CI, and Windows release packaging.
 
 Original project credit is preserved for Philip B and the upstream fork by Neil C / nchaudhury.
 
@@ -14,7 +14,7 @@ The Windows build is unsigned, so SmartScreen may warn on first run.
 
 ## What It Does
 
-Razer Synapse can switch polling rates by app profile, but profiles can sometimes get stuck at high polling rates after a game closes or loses focus. This app gives you a small tray-based controller that can automatically move the dongle between a low inactive rate and higher per-game rates.
+On supported Razer hardware, this app provides tray-based polling-rate control without relying on Synapse profiles. On the validated Pulsar X2 CrazyLight path, it can switch polling rates directly and optionally enable Turbo Mode per game, returning Turbo Mode to off when no matching game is active.
 
 Default behavior for new installs:
 
@@ -26,13 +26,16 @@ Default behavior for new installs:
 
 Razer Synapse does **not** need to be running. Synapse may show stale polling-rate information while this app controls the dongle.
 
-The app does not include telemetry or analytics. Automatic update checks contact GitHub once per day by default and can be disabled in Settings; downloads start only after you choose to install an update.
+The app does not include telemetry or analytics. Automatic update checks contact GitHub once per day by default and can be disabled in Settings. Downloads start only after you choose to install an update; the app verifies the installer digest, runs the installer, relaunches itself, and shows the new release notes after the update completes.
 
 ## Supported Hardware
 
-This app is intended for Razer HyperPolling dongle-style devices supported by the included USB report logic. It has been tested with a Razer HyperPolling Wireless Dongle.
+The automatic backend currently supports:
 
-Other brands are not supported.
+- **Razer:** HyperPolling devices handled by the included USB report logic. Razer remains the preferred backend when both supported vendors are connected.
+- **Pulsar X2 CrazyLight (VID `3710`, PID `5406`):** hardware-validated polling-rate control on interface 1 / Col05 using the 17-byte Nordic HID protocol. Turbo Mode is exposed only after the app successfully reads the setting from the detected CrazyLight, so firmware without that capability does not show the per-game Turbo option.
+
+Unknown Pulsar product IDs are diagnostics-only and never receive protocol traffic.
 
 ## Tray Menu
 
@@ -159,9 +162,9 @@ If Windows exposes the full executable path, the picked rule uses the full path.
 
 ## Troubleshooting
 
-### Dongle not found
+### Supported mouse not found
 
-Make sure the Razer HyperPolling Wireless Dongle is connected and not blocked by another process. The tray tooltip should show an error instead of crashing the app.
+Make sure a supported Razer device or the validated Pulsar X2 CrazyLight is connected and not blocked by another process. The tray tooltip should show an error instead of crashing the app.
 
 ### Synapse shows the wrong rate
 
@@ -179,7 +182,7 @@ Check the tray tooltip and the app log:
 %APPDATA%\RazerAutoPollingRate\error.log
 ```
 
-Invalid config entries, dongle access failures, and USB cleanup warnings are logged there.
+Invalid config entries, device access failures, and USB/HID cleanup warnings are logged there.
 
 ### Mouse stutters or unexpected polling-rate changes
 
@@ -204,16 +207,16 @@ npm run package
 npm run make
 ```
 
-The project includes Node test coverage for config parsing, process/path matching, foreground-process lookup behavior, rate mapping, 8 kHz compatibility fallback, and polling-check overlap protection.
+The project includes Node test coverage for config parsing, process/path matching, foreground-process lookup behavior, Razer and CrazyLight protocol handling, Turbo Mode automation, updater behavior, rate mapping, 8 kHz compatibility fallback, and polling-check overlap protection.
 
-CI runs the automated test suite on pushes and pull requests. Official Windows installers are built only by the manual `Draft Windows Release` workflow, which creates a draft release, release tag, artifacts, and `SHA256SUMS.txt`.
+CI runs the automated test suite on pushes and pull requests. Application-affecting commits merged to `main` are stamped with a `YYYYMMDD.HHMM` CalVer, built into Windows installers, published as the latest rolling GitHub release, and mirrored to the Scoop bucket. Workflow, docs, tests, and repository-metadata-only changes do not create rolling releases.
 
 ## Manual Hardware Test Checklist
 
-Automated tests mock parsing, matching, rate-selection, and compatibility logic. Real dongle behavior still needs manual hardware verification:
+Automated tests mock parsing, matching, rate selection, protocol, updater, and compatibility logic. Real hardware behavior still needs manual verification:
 
-- Start the app with the dongle unplugged and confirm it stays running with a useful tray error.
-- Plug in a supported dongle and confirm the tray shows current and target polling rate.
+- Start the app with the supported mouse disconnected and confirm it stays running with a useful tray error.
+- Connect a supported Razer device or the validated CrazyLight and confirm the tray/settings UI shows the detected mouse plus current and target polling rate.
 - Add a foreground-window rule for a game in Settings and confirm focusing the game switches to the configured rate.
 - Use Pick Window, focus a game, press F3, and confirm a rule is added at the default game polling rate.
 - Alt-tab away and confirm the app returns to the inactive polling rate.
@@ -221,7 +224,7 @@ Automated tests mock parsing, matching, rate-selection, and compatibility logic.
 - Save rules in Settings and confirm the settings window stays usable without exiting the tray app.
 - Add an invalid config line and confirm it is ignored and logged.
 - Request 8000 Hz on unsupported hardware, if available, and confirm it falls back safely.
-- Run with Razer Synapse open and confirm any conflict is understandable from tray/log status.
+- On Razer hardware, run with Synapse open and confirm any conflict is understandable from tray/log status. On CrazyLight, verify Turbo Mode appears only when the device read succeeds and resets to off after leaving the matching game.
 
 ## License
 
