@@ -110,6 +110,10 @@ function sanitizeReleaseNotes(value) {
       continue;
     }
 
+    if (/^\s*(?:\*\*|__)?Full Changelog(?:\*\*|__)?\s*:/i.test(line)) {
+      continue;
+    }
+
     kept.push(line);
   }
 

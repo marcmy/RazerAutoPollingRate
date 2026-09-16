@@ -66,6 +66,8 @@ test('in-app release notes remove package-manager-specific sections and formatti
     '',
     '## Fixes',
     '- Fixed `startup` handling',
+    '',
+    '**Full Changelog**: https://github.com/marcmy/RazerAutoPollingRate/compare/old...new',
   ].join('\n'));
 
   assert.equal(notes.includes('Scoop'), false);
@@ -75,6 +77,8 @@ test('in-app release notes remove package-manager-specific sections and formatti
   assert.match(notes, /Fixes/);
   assert.match(notes, /Fixed startup handling/);
   assert.equal(notes.includes('Manifest refreshed'), false);
+  assert.equal(notes.includes('Full Changelog'), false);
+  assert.equal(notes.includes('/compare/old...new'), false);
 });
 
 test('post-update changelog is shown only after the target build is actually running', () => {
