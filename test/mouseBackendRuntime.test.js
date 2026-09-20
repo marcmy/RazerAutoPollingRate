@@ -1,7 +1,10 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { createPreferredMouseBackend } = require('../src/lib/mouseBackends/runtime');
+const {
+  createPreferredMouseBackend,
+  createPresentationAwareBackend,
+} = require('../src/lib/mouseBackends/runtime');
 
 function rawUsb(vendorId, productId, serialNumber = null) {
   return {
@@ -147,4 +150,81 @@ test('runtime never constructs a protocol backend for an unknown Pulsar PID', ()
   assert.ok(diagnostics.some(([event, details]) => event === 'pulsar_usb_detected'
     && details.vendorId === 0x3710 && details.productId === 0x9999
     && details.supported === false));
+});
+
+test('presentation-aware backend keeps probing but hides identity after a failed probe', async () => {
+  let suppressed = false;
+  let probeCalls = 0;
+  const selectedMouse = {
+    backend: 'pulsar',
+    vendorId: 0x3710,
+    productId: 0x5406,
+    serialNumber: null,
+  };
+  const tracker = {
+    isPresentationSuppressed: () => suppressed,
+    suppressPresentation: () => {
+      suppressed = true;
+    },
+  };
+  const backend = createPresentationAwareBackend({
+    id: 'pulsar-x2-crazylight',
+    name: 'Pulsar X2 CrazyLight',
+    capabilities: { turboMode: true },
+    get deviceInfo() {
+      return {
+        vendorId: 0x3710,
+        productId: 0x5406,
+        productName: '8K Dongle Gen.2',
+      };
+    },
+    async discover() {
+      probeCalls += 1;
+      if (probeCalls === 1) throw new Error('device sleeping');
+      return true;
+    },
+  }, tracker, selectedMouse);
+
+  await assert.rejects(() => backend.discover(), /device sleeping/);
+  assert.equal(suppressed, true);
+  assert.equal(backend.name, null);
+  assert.equal(backend.deviceInfo.productName, null);
+  assert.equal(backend.capabilities.turboMode, false);
+
+  // Background probing continues even while presentation remains latched off.
+  assert.equal(await backend.discover(), true);
+  assert.equal(probeCalls, 2);
+  assert.equal(backend.deviceInfo.productName, null);
+});
+
+test('presentation-aware backend becomes visible again only after activity clears the latch', () => {
+  let suppressed = true;
+  const selectedMouse = {
+    backend: 'razer',
+    vendorId: 0x1532,
+    productId: 0x00e5,
+    serialNumber: null,
+  };
+  const tracker = {
+    isPresentationSuppressed: () => suppressed,
+    suppressPresentation: () => {
+      suppressed = true;
+    },
+  };
+  const backend = createPresentationAwareBackend({
+    id: 'razer',
+    name: 'Razer HyperPolling',
+    get deviceInfo() {
+      return {
+        vendorId: 0x1532,
+        productId: 0x00e5,
+        productName: 'Razer Viper V4 Pro',
+      };
+    },
+  }, tracker, selectedMouse);
+
+  assert.equal(backend.deviceInfo.productName, null);
+  suppressed = false;
+  assert.equal(backend.deviceInfo.productName, 'Razer Viper V4 Pro');
+  assert.equal(backend.name, 'Razer HyperPolling');
 });

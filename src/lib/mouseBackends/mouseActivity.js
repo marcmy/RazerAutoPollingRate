@@ -120,6 +120,7 @@ function createMouseActivityTracker(options = {}) {
 
   const handles = new Map();
   const lastActivity = new Map();
+  const presentationSuppressed = new Set();
   const lastReports = new Map();
   let rawMouseMonitor = null;
   let selectedMouse = null;
@@ -137,6 +138,7 @@ function createMouseActivityTracker(options = {}) {
     const previousKey = mouseKey(previousSelected);
 
     lastActivity.set(currentKey, timestamp);
+    presentationSuppressed.delete(currentKey);
     selectedMouse = mouse;
 
     const switched = previousKey !== currentKey;
@@ -339,6 +341,22 @@ function createMouseActivityTracker(options = {}) {
     return mouse ? mouse.backend : fallbackPath;
   }
 
+  function suppressPresentation(mouse) {
+    const key = mouseKey(mouse);
+    if (!key) return;
+    presentationSuppressed.add(key);
+    onDiagnostic('mouse_presentation_suppressed', {
+      backend: mouse.backend,
+      vendorId: mouse.vendorId,
+      productId: mouse.productId,
+    });
+  }
+
+  function isPresentationSuppressed(mouse) {
+    const key = mouseKey(mouse);
+    return Boolean(key && presentationSuppressed.has(key));
+  }
+
   function close() {
     for (const entry of handles.values()) closeEntry(entry);
     handles.clear();
@@ -363,6 +381,8 @@ function createMouseActivityTracker(options = {}) {
     getSelectedPath() {
       return selectedMouse ? selectedMouse.backend : null;
     },
+    isPresentationSuppressed,
+    suppressPresentation,
     setOnActiveMouseChanged(handler) {
       onActiveMouseChanged = typeof handler === 'function' ? handler : null;
     },

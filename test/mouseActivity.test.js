@@ -124,7 +124,7 @@ test('Windows Raw Input switches from fallback Razer to active CrazyLight immedi
   assert.equal(tracker.choosePreferredMouse(available, fallback).productId, 0x00e5);
 
   timestamp += 1;
-  raw.emit(0x3710, 0x5406, '\\\\?\\HID#VID_3710&PID_5406&MI_00#pulsar');
+  raw.emit(0x3710, 0x5406, '\\?\HID#VID_3710&PID_5406&MI_00#pulsar');
   assert.equal(tracker.getSelectedMouse().productId, 0x5406);
   assert.equal(changes.length, 1);
   assert.equal(changes[0].activeMouse.backend, 'pulsar');
@@ -236,5 +236,26 @@ test('non-Windows fallback still uses changing HID reports for activity', () => 
   hidApi.opened.get('pulsar').emit('data', Buffer.from([1, 2, 0]));
 
   assert.equal(tracker.getSelectedMouse().backend, 'pulsar');
+  tracker.close();
+});
+
+test('real Raw Input clears a sleeping/off presentation latch for that mouse', () => {
+  const raw = makeRawMonitorHarness();
+  const tracker = createMouseActivityTracker({
+    platform: 'win32',
+    rawMouseMonitorFactory: raw.factory,
+  });
+  const available = discovery(rawUsb(0x1532, 0x00e5), rawUsb(0x3710, 0x5406));
+  const fallback = { backend: 'razer', vendorId: 0x1532, productId: 0x00e5, serialNumber: null };
+
+  tracker.choosePreferredMouse(available, fallback);
+  raw.emit(0x3710, 0x5406, 'pulsar');
+  const pulsar = tracker.getSelectedMouse();
+
+  tracker.suppressPresentation(pulsar);
+  assert.equal(tracker.isPresentationSuppressed(pulsar), true);
+
+  raw.emit(0x3710, 0x5406, 'pulsar');
+  assert.equal(tracker.isPresentationSuppressed(pulsar), false);
   tracker.close();
 });
