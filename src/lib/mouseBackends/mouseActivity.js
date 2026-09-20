@@ -18,7 +18,21 @@ function loadNodeHid() {
   return require('node-hid');
 }
 
-function backendForHidMouse(device) {
+function normalizeSerialNumber(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function mouseKey(mouse) {
+  if (!mouse) return null;
+  return [
+    mouse.backend,
+    Number(mouse.vendorId).toString(16),
+    Number(mouse.productId).toString(16),
+    normalizeSerialNumber(mouse.serialNumber) || '',
+  ].join(':');
+}
+
+function knownMouseForHidDevice(device) {
   if (!device
     || device.usagePage !== GENERIC_DESKTOP_USAGE_PAGE
     || device.usage !== MOUSE_USAGE) {
@@ -26,24 +40,60 @@ function backendForHidMouse(device) {
   }
 
   if (device.vendorId === RAZER_VENDOR_ID && dongles[device.productId] !== undefined) {
-    return 'razer';
+    return {
+      backend: 'razer',
+      vendorId: device.vendorId,
+      productId: device.productId,
+      serialNumber: normalizeSerialNumber(device.serialNumber),
+    };
   }
 
   if (device.vendorId === CRAZYLIGHT_VENDOR_ID && device.productId === CRAZYLIGHT_PRODUCT_ID) {
-    return 'pulsar';
+    return {
+      backend: 'pulsar',
+      vendorId: device.vendorId,
+      productId: device.productId,
+      serialNumber: normalizeSerialNumber(device.serialNumber),
+    };
   }
 
   return null;
 }
 
-function discoveryHasPath(discovery, path) {
-  if (path === 'razer') {
-    return Boolean(discovery && discovery.supportedRazer && discovery.supportedRazer.length > 0);
+function discoveryTargets(discovery) {
+  if (!discovery) return [];
+
+  const targets = [];
+  for (const entry of discovery.supportedRazer || []) {
+    targets.push({
+      backend: 'razer',
+      vendorId: entry.identity.vendorId,
+      productId: entry.identity.productId,
+      serialNumber: normalizeSerialNumber(entry.device && entry.device.serialNumber),
+    });
   }
-  if (path === 'pulsar') {
-    return Boolean(discovery && discovery.knownCrazyLight && discovery.knownCrazyLight.length > 0);
+  for (const entry of discovery.knownCrazyLight || []) {
+    targets.push({
+      backend: 'pulsar',
+      vendorId: entry.identity.vendorId,
+      productId: entry.identity.productId,
+      serialNumber: normalizeSerialNumber(entry.device && entry.device.serialNumber),
+    });
   }
-  return false;
+  return targets;
+}
+
+function sameKnownMouse(left, right) {
+  if (!left || !right
+    || left.backend !== right.backend
+    || left.vendorId !== right.vendorId
+    || left.productId !== right.productId) {
+    return false;
+  }
+
+  const leftSerial = normalizeSerialNumber(left.serialNumber);
+  const rightSerial = normalizeSerialNumber(right.serialNumber);
+  return !leftSerial || !rightSerial || leftSerial === rightSerial;
 }
 
 function createMouseActivityTracker(options = {}) {
@@ -60,7 +110,7 @@ function createMouseActivityTracker(options = {}) {
 
   const handles = new Map();
   const lastActivity = new Map();
-  let selectedPath = null;
+  let selectedMouse = null;
   let lastRefresh = Number.NEGATIVE_INFINITY;
 
   function closeEntry(entry) {
@@ -81,47 +131,54 @@ function createMouseActivityTracker(options = {}) {
     return [];
   }
 
-  function recordActivity(backend, device) {
+  function recordActivity(mouse, device) {
     const timestamp = now();
-    const previousSelected = selectedPath;
-    const selectedLastActivity = previousSelected
-      ? (lastActivity.get(previousSelected) || 0)
+    const currentKey = mouseKey(mouse);
+    const previousSelected = selectedMouse;
+    const previousKey = mouseKey(previousSelected);
+    const selectedLastActivity = previousKey
+      ? (lastActivity.get(previousKey) || 0)
       : 0;
 
-    lastActivity.set(backend, timestamp);
+    lastActivity.set(currentKey, timestamp);
 
     if (!previousSelected) {
-      selectedPath = backend;
-    } else if (previousSelected !== backend) {
+      selectedMouse = mouse;
+    } else if (previousKey !== currentKey) {
       const selectedIsIdle = selectedLastActivity === 0
         || timestamp - selectedLastActivity >= idleMs;
       if (selectedIsIdle) {
-        selectedPath = backend;
+        selectedMouse = mouse;
       }
     }
 
     onDiagnostic('mouse_activity_detected', {
-      backend,
-      vendorId: device.vendorId,
-      productId: device.productId,
-      selected: selectedPath,
-      switched: selectedPath !== previousSelected,
+      backend: mouse.backend,
+      vendorId: mouse.vendorId,
+      productId: mouse.productId,
+      serialNumber: mouse.serialNumber,
+      selectedBackend: selectedMouse ? selectedMouse.backend : null,
+      selectedVendorId: selectedMouse ? selectedMouse.vendorId : null,
+      selectedProductId: selectedMouse ? selectedMouse.productId : null,
+      switched: mouseKey(selectedMouse) !== previousKey,
     });
   }
 
-  function openCandidate(device, backend) {
+  function openCandidate(device, mouse) {
     if (!device.path || handles.has(device.path) || typeof hidApi.HID !== 'function') return;
 
     try {
       const handle = new hidApi.HID(device.path, { nonExclusive: true });
-      const entry = { handle, backend, device };
+      const entry = { handle, mouse, device };
       handles.set(device.path, entry);
 
       if (typeof handle.on === 'function') {
-        handle.on('data', () => recordActivity(backend, device));
+        handle.on('data', () => recordActivity(mouse, device));
         handle.on('error', (error) => {
           onDiagnostic('mouse_activity_monitor_error', {
-            backend,
+            backend: mouse.backend,
+            vendorId: mouse.vendorId,
+            productId: mouse.productId,
             error: error && error.message ? error.message : String(error),
           });
           const current = handles.get(device.path);
@@ -135,7 +192,9 @@ function createMouseActivityTracker(options = {}) {
       // Activity tracking is advisory. Failure to monitor one HID collection
       // must never prevent the polling-rate backend itself from working.
       onDiagnostic('mouse_activity_monitor_error', {
-        backend,
+        backend: mouse.backend,
+        vendorId: mouse.vendorId,
+        productId: mouse.productId,
         error: error && error.message ? error.message : String(error),
       });
     }
@@ -158,10 +217,10 @@ function createMouseActivityTracker(options = {}) {
 
     const currentPaths = new Set();
     for (const device of devices) {
-      const backend = backendForHidMouse(device);
-      if (!backend || !device.path) continue;
+      const mouse = knownMouseForHidDevice(device);
+      if (!mouse || !device.path) continue;
       currentPaths.add(device.path);
-      openCandidate(device, backend);
+      openCandidate(device, mouse);
     }
 
     for (const [path, entry] of handles) {
@@ -172,45 +231,57 @@ function createMouseActivityTracker(options = {}) {
     }
   }
 
-  function choosePreferredMousePath(discovery, fallbackPath = null) {
+  function currentMonitoredMice(discovery) {
+    const available = discoveryTargets(discovery);
+    const result = new Map();
+
+    for (const { mouse } of handles.values()) {
+      if (!available.some((target) => sameKnownMouse(mouse, target))) continue;
+      result.set(mouseKey(mouse), mouse);
+    }
+
+    return [...result.values()];
+  }
+
+  function choosePreferredMouse(discovery, fallbackMouse = null) {
     refresh();
 
-    const hasRazer = discoveryHasPath(discovery, 'razer');
-    const hasPulsar = discoveryHasPath(discovery, 'pulsar');
-
-    if (!hasRazer && !hasPulsar) {
-      selectedPath = null;
-      return fallbackPath;
+    const available = discoveryTargets(discovery);
+    if (available.length === 0) {
+      selectedMouse = null;
+      return fallbackMouse;
     }
 
-    if (hasRazer && !hasPulsar) {
-      selectedPath = 'razer';
-      return selectedPath;
+    if (available.length === 1) {
+      selectedMouse = available[0];
+      return selectedMouse;
     }
 
-    if (hasPulsar && !hasRazer) {
-      selectedPath = 'pulsar';
-      return selectedPath;
+    if (selectedMouse && available.some((target) => sameKnownMouse(selectedMouse, target))) {
+      return selectedMouse;
     }
 
-    // Both dongles are present. Keep the last-used mouse sticky. The data
-    // handler changes selectedPath only when this mouse has already been idle,
-    // so merely enumerating the other dongle can never steal selection.
-    if (selectedPath && discoveryHasPath(discovery, selectedPath)) {
-      return selectedPath;
+    const monitored = currentMonitoredMice(discovery);
+    let best = null;
+    let bestTimestamp = 0;
+    for (const mouse of monitored) {
+      const timestamp = lastActivity.get(mouseKey(mouse)) || 0;
+      if (timestamp > bestTimestamp) {
+        best = mouse;
+        bestTimestamp = timestamp;
+      }
     }
 
-    const razerActivity = lastActivity.get('razer') || 0;
-    const pulsarActivity = lastActivity.get('pulsar') || 0;
-    if (razerActivity > pulsarActivity) {
-      selectedPath = 'razer';
-    } else if (pulsarActivity > razerActivity) {
-      selectedPath = 'pulsar';
-    } else {
-      selectedPath = fallbackPath;
-    }
+    selectedMouse = best || fallbackMouse || available[0];
+    return selectedMouse;
+  }
 
-    return selectedPath;
+  function choosePreferredMousePath(discovery, fallbackPath = null) {
+    const fallbackMouse = fallbackPath
+      ? discoveryTargets(discovery).find((mouse) => mouse.backend === fallbackPath) || null
+      : null;
+    const mouse = choosePreferredMouse(discovery, fallbackMouse);
+    return mouse ? mouse.backend : fallbackPath;
   }
 
   function close() {
@@ -219,14 +290,18 @@ function createMouseActivityTracker(options = {}) {
   }
 
   return {
+    choosePreferredMouse,
     choosePreferredMousePath,
     close,
     refresh,
-    getLastActivity(path) {
-      return lastActivity.get(path) || 0;
+    getLastActivity(mouse) {
+      return lastActivity.get(typeof mouse === 'string' ? mouse : mouseKey(mouse)) || 0;
+    },
+    getSelectedMouse() {
+      return selectedMouse;
     },
     getSelectedPath() {
-      return selectedPath;
+      return selectedMouse ? selectedMouse.backend : null;
     },
   };
 }
@@ -240,7 +315,12 @@ function getSharedMouseActivityTracker(options = {}) {
 
 module.exports = {
   ACTIVE_MOUSE_IDLE_MS,
-  backendForHidMouse,
+  backendForHidMouse: (device) => {
+    const mouse = knownMouseForHidDevice(device);
+    return mouse ? mouse.backend : null;
+  },
   createMouseActivityTracker,
   getSharedMouseActivityTracker,
+  knownMouseForHidDevice,
+  mouseKey,
 };
