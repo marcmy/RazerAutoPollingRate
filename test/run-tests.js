@@ -8,6 +8,7 @@ require('./gameLibraries.test');
 require('./githubReleaseClient.test');
 require('./mainBackendIntegration.test');
 require('./mouseBackendRuntime.test');
+require('./mouseStatusPresentation.test');
 require('./processDiscovery.test');
 require('./processes.test');
 require('./pulsarCrazyLightBackend.test');
@@ -26,6 +27,7 @@ require('./updateCoordinator.test');
 require('./updateInstaller.test');
 require('./updateIntegration.test');
 require('./windowsHidOutputReport.test');
+require('./windowsRawMouseActivity.test');
 require('./rollingBuildVersion.test');
 require('./rollingReleaseNotes.test');
 

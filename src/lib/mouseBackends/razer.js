@@ -34,6 +34,13 @@ function createRazerBackend(options = {}) {
   const sleep = options.sleep || defaultSleep;
   const log = options.log || (() => {});
   const onDiagnostic = options.onDiagnostic || (() => {});
+  const preferredProductId = Number.isInteger(options.preferredProductId)
+    ? options.preferredProductId
+    : null;
+  const preferredSerialNumber = typeof options.preferredSerialNumber === 'string'
+    && options.preferredSerialNumber.trim()
+    ? options.preferredSerialNumber.trim()
+    : null;
 
   let device = null;
   let currentModel = null;
@@ -49,8 +56,24 @@ function createRazerBackend(options = {}) {
       : 0x00;
   }
 
+  function selectSupportedDevice(devices) {
+    const supported = (devices || []).filter(isSupportedRazerDevice);
+    const matchingProduct = preferredProductId === null
+      ? supported
+      : supported.filter((candidate) => candidate.productId === preferredProductId);
+
+    if (preferredSerialNumber) {
+      const exactSerial = matchingProduct.find(
+        (candidate) => candidate.serialNumber === preferredSerialNumber,
+      );
+      if (exactSerial) return exactSerial;
+    }
+
+    return matchingProduct[0] || null;
+  }
+
   async function discover() {
-    const webUsb = createWebUsb((devices) => devices.find(isSupportedRazerDevice));
+    const webUsb = createWebUsb(selectSupportedDevice);
 
     try {
       const discovered = await webUsb.requestDevice({ filters: [{}] });
@@ -60,6 +83,13 @@ function createRazerBackend(options = {}) {
 
       device = discovered;
       currentModel = dongles[device.productId];
+      onDiagnostic('razer_device_selected', {
+        vendorId: device.vendorId,
+        productId: device.productId,
+        serialNumber: device.serialNumber || null,
+        preferredProductId,
+        preferredSerialNumber,
+      });
       return device;
     } catch (error) {
       if (error && error.name === 'NotFoundError') {
