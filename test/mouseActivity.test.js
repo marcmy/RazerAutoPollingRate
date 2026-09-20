@@ -154,6 +154,35 @@ test('Windows Raw Input can switch back and forth with no idle delay', () => {
   tracker.close();
 });
 
+test('USB discovery cannot passively replace the active mouse while it sleeps', () => {
+  const raw = makeRawMonitorHarness();
+  const tracker = createMouseActivityTracker({
+    platform: 'win32',
+    rawMouseMonitorFactory: raw.factory,
+  });
+
+  const bothConnected = discovery(rawUsb(0x1532, 0x00e5), rawUsb(0x3710, 0x5406));
+  const onlyRazerVisible = discovery(rawUsb(0x1532, 0x00e5));
+  const fallbackRazer = {
+    backend: 'razer',
+    vendorId: 0x1532,
+    productId: 0x00e5,
+    serialNumber: null,
+  };
+
+  tracker.choosePreferredMouse(bothConnected, fallbackRazer);
+  raw.emit(0x3710, 0x5406, 'pulsar');
+  assert.equal(tracker.getSelectedMouse().backend, 'pulsar');
+
+  // Simulate CrazyLight sleeping/disappearing from this USB enumeration path.
+  // An idle Viper dongle remains visible, but it has produced no Raw Input.
+  const selected = tracker.choosePreferredMouse(onlyRazerVisible, fallbackRazer);
+  assert.equal(selected.backend, 'pulsar');
+  assert.equal(selected.productId, 0x5406);
+
+  tracker.close();
+});
+
 test('Windows Raw Input switches between exact known Razer models', () => {
   const raw = makeRawMonitorHarness();
   const tracker = createMouseActivityTracker({
