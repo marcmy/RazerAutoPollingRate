@@ -19,6 +19,14 @@ public sealed class RaprRawMouseWindow : NativeWindow, IDisposable
     private const uint RIDEV_INPUTSINK = 0x00000100;
     private const uint RIM_TYPEMOUSE = 0;
 
+    // A single isolated one-count motion packet can be sensor/desk noise.
+    // Accumulating three counts inside 50 ms still makes an intentional handoff
+    // effectively immediate, including at high polling rates where slow motion
+    // is split across many tiny Raw Input packets.
+    private const long SwitchMotionThreshold = 3;
+    private static readonly TimeSpan SwitchCandidateWindow = TimeSpan.FromMilliseconds(50);
+    private static readonly TimeSpan ResumeGap = TimeSpan.FromMilliseconds(250);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct RAWINPUTDEVICE
     {
@@ -35,6 +43,17 @@ public sealed class RaprRawMouseWindow : NativeWindow, IDisposable
         public uint dwSize;
         public IntPtr hDevice;
         public IntPtr wParam;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RAWMOUSE
+    {
+        public ushort usFlags;
+        public uint ulButtons;
+        public uint ulRawButtons;
+        public int lLastX;
+        public int lLastY;
+        public uint ulExtraInformation;
     }
 
     [DllImport("user32.dll", SetLastError = true)]
@@ -69,7 +88,11 @@ public sealed class RaprRawMouseWindow : NativeWindow, IDisposable
         ref uint pcbSize
     );
 
-    private string lastDeviceName;
+    private string activeDeviceName;
+    private DateTime activeDeviceLastInputUtc = DateTime.MinValue;
+    private string candidateDeviceName;
+    private DateTime candidateStartedUtc = DateTime.MinValue;
+    private long candidateMotion;
 
     public RaprRawMouseWindow()
     {
@@ -111,7 +134,7 @@ public sealed class RaprRawMouseWindow : NativeWindow, IDisposable
         uint headerSize = (uint)Marshal.SizeOf(typeof(RAWINPUTHEADER));
         uint size = 0;
         uint queryResult = GetRawInputData(rawInputHandle, RID_INPUT, IntPtr.Zero, ref size, headerSize);
-        if (queryResult == UInt32.MaxValue || size < headerSize)
+        if (queryResult == UInt32.MaxValue || size < headerSize + Marshal.SizeOf(typeof(RAWMOUSE)))
         {
             return;
         }
@@ -121,7 +144,7 @@ public sealed class RaprRawMouseWindow : NativeWindow, IDisposable
         {
             uint readSize = size;
             uint bytesRead = GetRawInputData(rawInputHandle, RID_INPUT, buffer, ref readSize, headerSize);
-            if (bytesRead == UInt32.MaxValue || bytesRead < headerSize)
+            if (bytesRead == UInt32.MaxValue || bytesRead < headerSize + Marshal.SizeOf(typeof(RAWMOUSE)))
             {
                 return;
             }
@@ -132,23 +155,92 @@ public sealed class RaprRawMouseWindow : NativeWindow, IDisposable
                 return;
             }
 
+            IntPtr mousePointer = IntPtr.Add(buffer, (int)headerSize);
+            RAWMOUSE mouse = (RAWMOUSE)Marshal.PtrToStructure(mousePointer, typeof(RAWMOUSE));
+            ushort buttonFlags = (ushort)(mouse.ulButtons & 0xFFFF);
+            long motion = Math.Abs((long)mouse.lLastX) + Math.Abs((long)mouse.lLastY);
+
+            // Raw Input can deliver zero-delta packets from a receiver even
+            // though the user did not touch that mouse. Those must never
+            // change RAPR's selected device.
+            if (motion == 0 && buttonFlags == 0)
+            {
+                return;
+            }
+
             string deviceName = GetDeviceName(header.hDevice);
             if (String.IsNullOrWhiteSpace(deviceName))
             {
                 return;
             }
 
-            if (!String.Equals(lastDeviceName, deviceName, StringComparison.OrdinalIgnoreCase))
+            DateTime now = DateTime.UtcNow;
+
+            if (String.Equals(activeDeviceName, deviceName, StringComparison.OrdinalIgnoreCase))
             {
-                lastDeviceName = deviceName;
-                Console.WriteLine("MOUSE\t" + deviceName);
-                Console.Out.Flush();
+                TimeSpan gap = now - activeDeviceLastInputUtc;
+                activeDeviceLastInputUtc = now;
+                ResetCandidate();
+
+                // Re-emit the first real packet after a quiet period. This lets
+                // RAPR immediately retry a sleeping mouse that woke up without
+                // flooding the parent process during continuous 4/8 kHz input.
+                if (gap >= ResumeGap)
+                {
+                    Emit(deviceName);
+                }
+                return;
+            }
+
+            // A button, wheel, or horizontal-wheel transition is unequivocal
+            // user input and may switch devices immediately.
+            if (buttonFlags != 0)
+            {
+                Activate(deviceName, now);
+                return;
+            }
+
+            // For motion-only handoffs, reject isolated sensor noise but
+            // accumulate tiny high-polling-rate movement packets briefly.
+            if (!String.Equals(candidateDeviceName, deviceName, StringComparison.OrdinalIgnoreCase)
+                || now - candidateStartedUtc > SwitchCandidateWindow)
+            {
+                candidateDeviceName = deviceName;
+                candidateStartedUtc = now;
+                candidateMotion = 0;
+            }
+
+            candidateMotion += motion;
+            if (candidateMotion >= SwitchMotionThreshold)
+            {
+                Activate(deviceName, now);
             }
         }
         finally
         {
             Marshal.FreeHGlobal(buffer);
         }
+    }
+
+    private void Activate(string deviceName, DateTime now)
+    {
+        activeDeviceName = deviceName;
+        activeDeviceLastInputUtc = now;
+        ResetCandidate();
+        Emit(deviceName);
+    }
+
+    private void ResetCandidate()
+    {
+        candidateDeviceName = null;
+        candidateStartedUtc = DateTime.MinValue;
+        candidateMotion = 0;
+    }
+
+    private static void Emit(string deviceName)
+    {
+        Console.WriteLine("MOUSE\t" + deviceName);
+        Console.Out.Flush();
     }
 
     private static string GetDeviceName(IntPtr deviceHandle)

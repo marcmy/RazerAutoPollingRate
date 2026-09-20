@@ -153,13 +153,15 @@ function createMouseActivityTracker(options = {}) {
       source: platform === 'win32' ? 'raw-input' : 'hid',
     });
 
-    if (!switched) return;
+    // On Windows the Raw Input helper emits only on an actual device handoff
+    // or on the first real input after a quiet gap. Requesting a check for both
+    // cases makes a sleeping selected mouse wake immediately without generating
+    // checks continuously while it is moving at 4/8 kHz.
+    if (platform === 'win32' || switched) {
+      requestLatestCheck();
+    }
 
-    // Wake the main polling loop immediately. checkGuard coalesces requests
-    // and queues one follow-up if a USB check is already in progress.
-    requestLatestCheck();
-
-    if (onActiveMouseChanged) {
+    if (switched && onActiveMouseChanged) {
       try {
         onActiveMouseChanged({
           previousMouse: previousSelected,
@@ -306,17 +308,12 @@ function createMouseActivityTracker(options = {}) {
     refresh();
 
     const available = discoveryTargets(discovery);
-    if (available.length === 0) {
-      selectedMouse = null;
-      return fallbackMouse;
-    }
 
-    if (available.length === 1) {
-      selectedMouse = available[0];
-      return selectedMouse;
-    }
-
-    if (selectedMouse && available.some((target) => sameKnownMouse(selectedMouse, target))) {
+    // Once a mouse identity has been selected, USB enumeration is no longer
+    // allowed to replace it. Wireless devices can disappear/reappear from a
+    // particular discovery API while sleeping. Only actual input from another
+    // supported mouse may hand selection over through recordActivity().
+    if (selectedMouse) {
       return selectedMouse;
     }
 
@@ -330,7 +327,7 @@ function createMouseActivityTracker(options = {}) {
       }
     }
 
-    selectedMouse = best || fallbackMouse || available[0];
+    selectedMouse = best || fallbackMouse || available[0] || null;
     return selectedMouse;
   }
 
