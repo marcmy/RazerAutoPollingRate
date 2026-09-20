@@ -1,7 +1,42 @@
 const { contextBridge, ipcRenderer } = require('electron');
-const { createMouseStatusNormalizer } = require('./lib/mouseStatusPresentation');
 
-const normalizeMouseStatusText = createMouseStatusNormalizer();
+const NO_SUPPORTED_MOUSE_CONNECTED = 'No supported mouse connected';
+const NO_SUPPORTED_MOUSE_FOUND = 'No supported mouse found - Is it disconnected, sleeping, or powered off?';
+const MOUSE_PREFIX = 'Mouse: ';
+const TURBO_MARKER = ' · Turbo ';
+
+let lastStableTurboText = null;
+
+function normalizeMouseStatusText(value) {
+  const text = String(value || '');
+
+  if (text.startsWith(NO_SUPPORTED_MOUSE_CONNECTED)
+    || text === NO_SUPPORTED_MOUSE_FOUND) {
+    lastStableTurboText = null;
+    return NO_SUPPORTED_MOUSE_FOUND;
+  }
+
+  if (!text.startsWith(MOUSE_PREFIX)) {
+    return text;
+  }
+
+  const turboIndex = text.indexOf(TURBO_MARKER);
+  if (turboIndex >= 0) {
+    const turboState = text.slice(turboIndex + TURBO_MARKER.length).toLowerCase();
+    if (turboState === 'on' || turboState === 'off') {
+      lastStableTurboText = text;
+    }
+    return text;
+  }
+
+  if (lastStableTurboText
+    && lastStableTurboText.startsWith(`${text}${TURBO_MARKER}`)) {
+    return lastStableTurboText;
+  }
+
+  lastStableTurboText = null;
+  return text;
+}
 
 function normalizeMouseStatusElement() {
   const element = document.getElementById('detected-mouse');
