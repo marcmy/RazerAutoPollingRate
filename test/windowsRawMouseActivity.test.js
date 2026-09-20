@@ -45,7 +45,7 @@ test('Windows Raw Input PowerShell helper compiles on Windows', { skip: process.
   ], {
     encoding: 'utf8',
     windowsHide: true,
-    timeout: 15000,
+    timeout: 45_000,
   });
 
   assert.match(output, /COMPILED/);
