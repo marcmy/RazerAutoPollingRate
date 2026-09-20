@@ -4,6 +4,7 @@ const { getDeviceList } = require('usb');
 const { classifyUsbDevices, choosePreferredMousePath } = require('./discovery');
 const { createPulsarCrazyLightBackend } = require('./pulsarCrazyLight');
 const { createRazerBackend } = require('./razer');
+const { getSharedMouseActivityTracker } = require('./mouseActivity');
 
 function createPreferredMouseBackend(options = {}) {
   const listDevices = options.getDeviceList || getDeviceList;
@@ -22,7 +23,12 @@ function createPreferredMouseBackend(options = {}) {
     });
   }
 
-  const path = choosePreferredMousePath(discovery);
+  const fallbackPath = choosePreferredMousePath(discovery);
+  const activityTracker = options.activityTracker
+    || (!options.getDeviceList ? getSharedMouseActivityTracker({ log, onDiagnostic }) : null);
+  const path = activityTracker
+    ? activityTracker.choosePreferredMousePath(discovery, fallbackPath)
+    : fallbackPath;
 
   if (path === 'razer') {
     return {

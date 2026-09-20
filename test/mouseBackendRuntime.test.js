@@ -16,7 +16,7 @@ function fakeBackend(id) {
   return { id, canWrite: true };
 }
 
-test('runtime prefers the existing Razer automatic backend when both vendors are attached', () => {
+test('runtime falls back to Razer when both vendors are attached but no activity is known', () => {
   const created = [];
   const result = createPreferredMouseBackend({
     getDeviceList: () => [
@@ -37,6 +37,35 @@ test('runtime prefers the existing Razer automatic backend when both vendors are
   assert.equal(result.backend.id, 'razer');
   assert.equal(created.filter(([kind]) => kind === 'razer').length, 1);
   assert.equal(created.filter(([kind]) => kind === 'pulsar').length, 0);
+});
+
+test('runtime prefers the backend selected by recent mouse activity when both are attached', () => {
+  const created = [];
+  const result = createPreferredMouseBackend({
+    getDeviceList: () => [
+      rawUsb(0x3710, 0x5406),
+      rawUsb(0x1532, 0x00e5),
+    ],
+    activityTracker: {
+      choosePreferredMousePath: (_discovery, fallbackPath) => {
+        assert.equal(fallbackPath, 'razer');
+        return 'pulsar';
+      },
+    },
+    createRazerBackend: (options) => {
+      created.push(['razer', options]);
+      return fakeBackend('razer');
+    },
+    createPulsarBackend: (options) => {
+      created.push(['pulsar', options]);
+      return fakeBackend('pulsar-x2-crazylight');
+    },
+  });
+
+  assert.equal(result.path, 'pulsar');
+  assert.equal(result.backend.id, 'pulsar-x2-crazylight');
+  assert.equal(created.filter(([kind]) => kind === 'razer').length, 0);
+  assert.equal(created.filter(([kind]) => kind === 'pulsar').length, 1);
 });
 
 test('runtime enables writes only for the hardware-validated CrazyLight identity', () => {
