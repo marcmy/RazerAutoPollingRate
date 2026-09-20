@@ -6,6 +6,7 @@ const {
   CRAZYLIGHT_PRODUCT_ID,
   CRAZYLIGHT_VENDOR_ID,
 } = require('./pulsarCrazyLight');
+const { createWindowsRawMouseMonitor } = require('./windowsRawMouseActivity');
 
 const RAZER_VENDOR_ID = 0x1532;
 const GENERIC_DESKTOP_USAGE_PAGE = 0x01;
@@ -13,7 +14,8 @@ const MOUSE_USAGE = 0x02;
 const REFRESH_INTERVAL_MS = 5000;
 
 function loadNodeHid() {
-  // Lazy-load so hardware-independent tests never need the native HID binding.
+  // Lazy-load so Windows can use Raw Input without attempting to open
+  // OS-owned mouse HID collections.
   // eslint-disable-next-line global-require
   return require('node-hid');
 }
@@ -32,6 +34,30 @@ function mouseKey(mouse) {
   ].join(':');
 }
 
+function knownMouseForIdentity(vendorId, productId, extra = {}) {
+  if (vendorId === RAZER_VENDOR_ID && dongles[productId] !== undefined) {
+    return {
+      backend: 'razer',
+      vendorId,
+      productId,
+      serialNumber: normalizeSerialNumber(extra.serialNumber),
+      devicePath: extra.devicePath || null,
+    };
+  }
+
+  if (vendorId === CRAZYLIGHT_VENDOR_ID && productId === CRAZYLIGHT_PRODUCT_ID) {
+    return {
+      backend: 'pulsar',
+      vendorId,
+      productId,
+      serialNumber: normalizeSerialNumber(extra.serialNumber),
+      devicePath: extra.devicePath || null,
+    };
+  }
+
+  return null;
+}
+
 function knownMouseForHidDevice(device) {
   if (!device
     || device.usagePage !== GENERIC_DESKTOP_USAGE_PAGE
@@ -39,25 +65,10 @@ function knownMouseForHidDevice(device) {
     return null;
   }
 
-  if (device.vendorId === RAZER_VENDOR_ID && dongles[device.productId] !== undefined) {
-    return {
-      backend: 'razer',
-      vendorId: device.vendorId,
-      productId: device.productId,
-      serialNumber: normalizeSerialNumber(device.serialNumber),
-    };
-  }
-
-  if (device.vendorId === CRAZYLIGHT_VENDOR_ID && device.productId === CRAZYLIGHT_PRODUCT_ID) {
-    return {
-      backend: 'pulsar',
-      vendorId: device.vendorId,
-      productId: device.productId,
-      serialNumber: normalizeSerialNumber(device.serialNumber),
-    };
-  }
-
-  return null;
+  return knownMouseForIdentity(device.vendorId, device.productId, {
+    serialNumber: device.serialNumber,
+    devicePath: device.path,
+  });
 }
 
 function discoveryTargets(discovery) {
@@ -97,22 +108,95 @@ function sameKnownMouse(left, right) {
 }
 
 function createMouseActivityTracker(options = {}) {
-  const hidApi = options.hidApi || loadNodeHid();
+  const platform = options.platform || process.platform;
   const now = options.now || Date.now;
   const log = options.log || (() => {});
   const onDiagnostic = options.onDiagnostic || (() => {});
   const refreshIntervalMs = Number.isFinite(options.refreshIntervalMs)
     ? options.refreshIntervalMs
     : REFRESH_INTERVAL_MS;
+  const rawMouseMonitorFactory = options.rawMouseMonitorFactory || createWindowsRawMouseMonitor;
+  const hidApi = platform === 'win32' ? null : (options.hidApi || loadNodeHid());
 
   const handles = new Map();
   const lastActivity = new Map();
   const lastReports = new Map();
+  let rawMouseMonitor = null;
   let selectedMouse = null;
   let lastRefresh = Number.NEGATIVE_INFINITY;
   let onActiveMouseChanged = typeof options.onActiveMouseChanged === 'function'
     ? options.onActiveMouseChanged
     : null;
+
+  function recordActivity(mouse) {
+    if (!mouse) return;
+
+    const timestamp = now();
+    const currentKey = mouseKey(mouse);
+    const previousSelected = selectedMouse;
+    const previousKey = mouseKey(previousSelected);
+
+    lastActivity.set(currentKey, timestamp);
+    selectedMouse = mouse;
+
+    const switched = previousKey !== currentKey;
+    onDiagnostic('mouse_activity_detected', {
+      backend: mouse.backend,
+      vendorId: mouse.vendorId,
+      productId: mouse.productId,
+      serialNumber: mouse.serialNumber,
+      devicePath: mouse.devicePath || null,
+      selectedBackend: selectedMouse.backend,
+      selectedVendorId: selectedMouse.vendorId,
+      selectedProductId: selectedMouse.productId,
+      switched,
+      source: platform === 'win32' ? 'raw-input' : 'hid',
+    });
+
+    if (!switched) return;
+
+    // Wake the main polling loop immediately. checkGuard coalesces requests
+    // and queues one follow-up if a USB check is already in progress.
+    requestLatestCheck();
+
+    if (onActiveMouseChanged) {
+      try {
+        onActiveMouseChanged({
+          previousMouse: previousSelected,
+          activeMouse: selectedMouse,
+          timestamp,
+        });
+      } catch (error) {
+        onDiagnostic('mouse_activity_change_handler_error', {
+          error: error && error.message ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  function ensureWindowsRawInputMonitor() {
+    if (platform !== 'win32' || rawMouseMonitor) return;
+
+    rawMouseMonitor = rawMouseMonitorFactory({
+      log,
+      onDiagnostic,
+      onActivity: (activity) => {
+        const mouse = knownMouseForIdentity(activity.vendorId, activity.productId, {
+          devicePath: activity.devicePath,
+          serialNumber: activity.serialNumber,
+        });
+        if (!mouse) {
+          onDiagnostic('raw_mouse_unsupported_activity', {
+            vendorId: activity.vendorId,
+            productId: activity.productId,
+            devicePath: activity.devicePath || null,
+          });
+          return;
+        }
+        recordActivity(mouse);
+      },
+    });
+  }
 
   function closeEntry(entry) {
     if (!entry || !entry.handle) return;
@@ -131,7 +215,7 @@ function createMouseActivityTracker(options = {}) {
   }
 
   function enumerate() {
-    if (typeof hidApi.devices === 'function') return hidApi.devices();
+    if (hidApi && typeof hidApi.devices === 'function') return hidApi.devices();
     return [];
   }
 
@@ -141,57 +225,12 @@ function createMouseActivityTracker(options = {}) {
 
     const previous = lastReports.get(path);
     lastReports.set(path, current);
-
-    // The first packet establishes the receiver's baseline. Repeated identical
-    // reports are ignored so an idle/powered-off dongle cannot look "active".
     if (!previous) return false;
     return !previous.equals(current);
   }
 
-  function recordActivity(mouse, device) {
-    const timestamp = now();
-    const currentKey = mouseKey(mouse);
-    const previousSelected = selectedMouse;
-    const previousKey = mouseKey(previousSelected);
-
-    lastActivity.set(currentKey, timestamp);
-    selectedMouse = mouse;
-
-    const switched = previousKey !== currentKey;
-    onDiagnostic('mouse_activity_detected', {
-      backend: mouse.backend,
-      vendorId: mouse.vendorId,
-      productId: mouse.productId,
-      serialNumber: mouse.serialNumber,
-      selectedBackend: selectedMouse.backend,
-      selectedVendorId: selectedMouse.vendorId,
-      selectedProductId: selectedMouse.productId,
-      switched,
-    });
-
-    if (switched) {
-      // Wake the main polling loop immediately. checkGuard coalesces requests
-      // and queues one follow-up if a USB check is already in progress.
-      requestLatestCheck();
-
-      if (onActiveMouseChanged) {
-        try {
-          onActiveMouseChanged({
-            previousMouse: previousSelected,
-            activeMouse: selectedMouse,
-            timestamp,
-          });
-        } catch (error) {
-          onDiagnostic('mouse_activity_change_handler_error', {
-            error: error && error.message ? error.message : String(error),
-          });
-        }
-      }
-    }
-  }
-
   function openCandidate(device, mouse) {
-    if (!device.path || handles.has(device.path) || typeof hidApi.HID !== 'function') return;
+    if (!hidApi || !device.path || handles.has(device.path) || typeof hidApi.HID !== 'function') return;
 
     try {
       const handle = new hidApi.HID(device.path, { nonExclusive: true });
@@ -201,7 +240,7 @@ function createMouseActivityTracker(options = {}) {
       if (typeof handle.on === 'function') {
         handle.on('data', (data) => {
           if (!reportChanged(device.path, data)) return;
-          recordActivity(mouse, device);
+          recordActivity(mouse);
         });
         handle.on('error', (error) => {
           onDiagnostic('mouse_activity_monitor_error', {
@@ -218,8 +257,6 @@ function createMouseActivityTracker(options = {}) {
         });
       }
     } catch (error) {
-      // Activity tracking is advisory. Failure to monitor one HID collection
-      // must never prevent the polling-rate backend itself from working.
       onDiagnostic('mouse_activity_monitor_error', {
         backend: mouse.backend,
         vendorId: mouse.vendorId,
@@ -230,6 +267,11 @@ function createMouseActivityTracker(options = {}) {
   }
 
   function refresh(force = false) {
+    if (platform === 'win32') {
+      ensureWindowsRawInputMonitor();
+      return;
+    }
+
     const timestamp = now();
     if (!force && timestamp - lastRefresh < refreshIntervalMs) return;
     lastRefresh = timestamp;
@@ -260,18 +302,6 @@ function createMouseActivityTracker(options = {}) {
     }
   }
 
-  function currentMonitoredMice(discovery) {
-    const available = discoveryTargets(discovery);
-    const result = new Map();
-
-    for (const { mouse } of handles.values()) {
-      if (!available.some((target) => sameKnownMouse(mouse, target))) continue;
-      result.set(mouseKey(mouse), mouse);
-    }
-
-    return [...result.values()];
-  }
-
   function choosePreferredMouse(discovery, fallbackMouse = null) {
     refresh();
 
@@ -290,10 +320,9 @@ function createMouseActivityTracker(options = {}) {
       return selectedMouse;
     }
 
-    const monitored = currentMonitoredMice(discovery);
     let best = null;
     let bestTimestamp = 0;
-    for (const mouse of monitored) {
+    for (const mouse of available) {
       const timestamp = lastActivity.get(mouseKey(mouse)) || 0;
       if (timestamp > bestTimestamp) {
         best = mouse;
@@ -317,6 +346,10 @@ function createMouseActivityTracker(options = {}) {
     for (const entry of handles.values()) closeEntry(entry);
     handles.clear();
     lastReports.clear();
+    if (rawMouseMonitor) {
+      rawMouseMonitor.close();
+      rawMouseMonitor = null;
+    }
   }
 
   return {
@@ -351,13 +384,21 @@ function getSharedMouseActivityTracker(options = {}) {
   return sharedTracker;
 }
 
+function closeSharedMouseActivityTracker() {
+  if (!sharedTracker) return;
+  sharedTracker.close();
+  sharedTracker = null;
+}
+
 module.exports = {
   backendForHidMouse: (device) => {
     const mouse = knownMouseForHidDevice(device);
     return mouse ? mouse.backend : null;
   },
+  closeSharedMouseActivityTracker,
   createMouseActivityTracker,
   getSharedMouseActivityTracker,
   knownMouseForHidDevice,
+  knownMouseForIdentity,
   mouseKey,
 };
