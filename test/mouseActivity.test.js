@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('events');
 
+const { dongles } = require('../src/lib/devices');
 const {
   backendForHidMouse,
   createMouseActivityTracker,
@@ -66,17 +67,7 @@ function makeHidApi(devices) {
 }
 
 test('activity classifier covers every Razer dongle identity known by the app plus CrazyLight', () => {
-  for (const productId of [
-    0x009f,
-    0x00b3,
-    0x00c3,
-    0x00a4,
-    0x00c1,
-    0x00e5,
-    0x00e6,
-    0x00be,
-    0x00bf,
-  ]) {
+  for (const productId of Object.keys(dongles).map(Number)) {
     const mouse = knownMouseForHidDevice({
       vendorId: 0x1532,
       productId,
