@@ -51,7 +51,11 @@ function createPreferredMouseBackend(options = {}) {
 
   const fallbackMouse = fallbackMouseFromDiscovery(discovery);
   const activityTracker = options.activityTracker
-    || (!options.getDeviceList ? getSharedMouseActivityTracker({ log, onDiagnostic }) : null);
+    || (!options.getDeviceList ? getSharedMouseActivityTracker({
+      log,
+      onDiagnostic,
+      onActiveMouseChanged: options.onActiveMouseChanged,
+    }) : null);
   const selectedMouse = activityTracker && typeof activityTracker.choosePreferredMouse === 'function'
     ? activityTracker.choosePreferredMouse(discovery, fallbackMouse)
     : fallbackMouse;

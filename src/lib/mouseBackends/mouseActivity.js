@@ -10,7 +10,6 @@ const RAZER_VENDOR_ID = 0x1532;
 const GENERIC_DESKTOP_USAGE_PAGE = 0x01;
 const MOUSE_USAGE = 0x02;
 const REFRESH_INTERVAL_MS = 5000;
-const ACTIVE_MOUSE_IDLE_MS = 1500;
 
 function loadNodeHid() {
   // Lazy-load so hardware-independent tests never need the native HID binding.
@@ -104,14 +103,15 @@ function createMouseActivityTracker(options = {}) {
   const refreshIntervalMs = Number.isFinite(options.refreshIntervalMs)
     ? options.refreshIntervalMs
     : REFRESH_INTERVAL_MS;
-  const idleMs = Number.isFinite(options.idleMs)
-    ? Math.max(0, options.idleMs)
-    : ACTIVE_MOUSE_IDLE_MS;
 
   const handles = new Map();
   const lastActivity = new Map();
+  const lastReports = new Map();
   let selectedMouse = null;
   let lastRefresh = Number.NEGATIVE_INFINITY;
+  let onActiveMouseChanged = typeof options.onActiveMouseChanged === 'function'
+    ? options.onActiveMouseChanged
+    : null;
 
   function closeEntry(entry) {
     if (!entry || !entry.handle) return;
@@ -124,6 +124,9 @@ function createMouseActivityTracker(options = {}) {
     } catch (error) {
       log(`Mouse activity HID close failed: ${error.message}`, true);
     }
+    if (entry.device && entry.device.path) {
+      lastReports.delete(entry.device.path);
+    }
   }
 
   function enumerate() {
@@ -131,37 +134,53 @@ function createMouseActivityTracker(options = {}) {
     return [];
   }
 
+  function reportChanged(path, data) {
+    const current = Buffer.from(data || []);
+    if (current.length === 0) return false;
+
+    const previous = lastReports.get(path);
+    lastReports.set(path, current);
+
+    // The first packet establishes the idle/report baseline. This avoids
+    // treating a receiver's periodic keepalive/status packet as mouse use.
+    if (!previous) return false;
+    return !previous.equals(current);
+  }
+
   function recordActivity(mouse, device) {
     const timestamp = now();
     const currentKey = mouseKey(mouse);
     const previousSelected = selectedMouse;
     const previousKey = mouseKey(previousSelected);
-    const selectedLastActivity = previousKey
-      ? (lastActivity.get(previousKey) || 0)
-      : 0;
 
     lastActivity.set(currentKey, timestamp);
+    selectedMouse = mouse;
 
-    if (!previousSelected) {
-      selectedMouse = mouse;
-    } else if (previousKey !== currentKey) {
-      const selectedIsIdle = selectedLastActivity === 0
-        || timestamp - selectedLastActivity >= idleMs;
-      if (selectedIsIdle) {
-        selectedMouse = mouse;
-      }
-    }
-
+    const switched = previousKey !== currentKey;
     onDiagnostic('mouse_activity_detected', {
       backend: mouse.backend,
       vendorId: mouse.vendorId,
       productId: mouse.productId,
       serialNumber: mouse.serialNumber,
-      selectedBackend: selectedMouse ? selectedMouse.backend : null,
-      selectedVendorId: selectedMouse ? selectedMouse.vendorId : null,
-      selectedProductId: selectedMouse ? selectedMouse.productId : null,
-      switched: mouseKey(selectedMouse) !== previousKey,
+      selectedBackend: selectedMouse.backend,
+      selectedVendorId: selectedMouse.vendorId,
+      selectedProductId: selectedMouse.productId,
+      switched,
     });
+
+    if (switched && onActiveMouseChanged) {
+      try {
+        onActiveMouseChanged({
+          previousMouse: previousSelected,
+          activeMouse: selectedMouse,
+          timestamp,
+        });
+      } catch (error) {
+        onDiagnostic('mouse_activity_change_handler_error', {
+          error: error && error.message ? error.message : String(error),
+        });
+      }
+    }
   }
 
   function openCandidate(device, mouse) {
@@ -173,7 +192,10 @@ function createMouseActivityTracker(options = {}) {
       handles.set(device.path, entry);
 
       if (typeof handle.on === 'function') {
-        handle.on('data', () => recordActivity(mouse, device));
+        handle.on('data', (data) => {
+          if (!reportChanged(device.path, data)) return;
+          recordActivity(mouse, device);
+        });
         handle.on('error', (error) => {
           onDiagnostic('mouse_activity_monitor_error', {
             backend: mouse.backend,
@@ -287,6 +309,7 @@ function createMouseActivityTracker(options = {}) {
   function close() {
     for (const entry of handles.values()) closeEntry(entry);
     handles.clear();
+    lastReports.clear();
   }
 
   return {
@@ -303,18 +326,25 @@ function createMouseActivityTracker(options = {}) {
     getSelectedPath() {
       return selectedMouse ? selectedMouse.backend : null;
     },
+    setOnActiveMouseChanged(handler) {
+      onActiveMouseChanged = typeof handler === 'function' ? handler : null;
+    },
   };
 }
 
 let sharedTracker = null;
 
 function getSharedMouseActivityTracker(options = {}) {
-  if (!sharedTracker) sharedTracker = createMouseActivityTracker(options);
+  if (!sharedTracker) {
+    sharedTracker = createMouseActivityTracker(options);
+  } else if (typeof sharedTracker.setOnActiveMouseChanged === 'function'
+    && typeof options.onActiveMouseChanged === 'function') {
+    sharedTracker.setOnActiveMouseChanged(options.onActiveMouseChanged);
+  }
   return sharedTracker;
 }
 
 module.exports = {
-  ACTIVE_MOUSE_IDLE_MS,
   backendForHidMouse: (device) => {
     const mouse = knownMouseForHidDevice(device);
     return mouse ? mouse.backend : null;
