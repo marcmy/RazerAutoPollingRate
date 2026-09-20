@@ -1,22 +1,25 @@
 const { contextBridge, ipcRenderer } = require('electron');
+const { createMouseStatusNormalizer } = require('./lib/mouseStatusPresentation');
 
-const NO_SUPPORTED_MOUSE_CONNECTED = 'No supported mouse connected';
-const NO_SUPPORTED_MOUSE_FOUND = 'No supported mouse found - Is it disconnected, sleeping, or powered off?';
+const normalizeMouseStatusText = createMouseStatusNormalizer();
 
-function updateNoMouseStatusText() {
+function normalizeMouseStatusElement() {
   const element = document.getElementById('detected-mouse');
-  if (element && element.textContent === NO_SUPPORTED_MOUSE_CONNECTED) {
-    element.textContent = NO_SUPPORTED_MOUSE_FOUND;
+  if (!element) return;
+
+  const normalized = normalizeMouseStatusText(element.textContent);
+  if (normalized !== element.textContent) {
+    element.textContent = normalized;
   }
 }
 
 window.addEventListener('DOMContentLoaded', () => {
-  updateNoMouseStatusText();
+  normalizeMouseStatusElement();
 
   const element = document.getElementById('detected-mouse');
   if (!element) return;
 
-  const observer = new MutationObserver(updateNoMouseStatusText);
+  const observer = new MutationObserver(normalizeMouseStatusElement);
   observer.observe(element, {
     childList: true,
     characterData: true,

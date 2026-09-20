@@ -8,6 +8,7 @@ require('./gameLibraries.test');
 require('./githubReleaseClient.test');
 require('./mainBackendIntegration.test');
 require('./mouseBackendRuntime.test');
+require('./mouseStatusPresentation.test');
 require('./processDiscovery.test');
 require('./processes.test');
 require('./pulsarCrazyLightBackend.test');
