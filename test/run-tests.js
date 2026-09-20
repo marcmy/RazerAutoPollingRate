@@ -26,6 +26,7 @@ require('./updateCoordinator.test');
 require('./updateInstaller.test');
 require('./updateIntegration.test');
 require('./windowsHidOutputReport.test');
+require('./windowsRawMouseActivity.test');
 require('./rollingBuildVersion.test');
 require('./rollingReleaseNotes.test');
 

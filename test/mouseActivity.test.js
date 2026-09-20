@@ -7,6 +7,7 @@ const {
   backendForHidMouse,
   createMouseActivityTracker,
   knownMouseForHidDevice,
+  knownMouseForIdentity,
 } = require('../src/lib/mouseBackends/mouseActivity');
 
 function rawUsb(vendorId, productId, serialNumber = null) {
@@ -44,14 +45,37 @@ function discovery(...devices) {
   };
 }
 
+function makeRawMonitorHarness() {
+  let callbacks = null;
+  let closed = false;
+
+  return {
+    factory(options) {
+      callbacks = options;
+      return {
+        close() {
+          closed = true;
+        },
+      };
+    },
+    emit(vendorId, productId, devicePath = null) {
+      assert.ok(callbacks, 'raw monitor must be started first');
+      callbacks.onActivity({ vendorId, productId, devicePath });
+    },
+    get closed() {
+      return closed;
+    },
+  };
+}
+
 function makeHidApi(devices) {
   const opened = new Map();
   class FakeHid extends EventEmitter {
-    constructor(path) {
+    constructor(devicePath) {
       super();
-      this.path = path;
+      this.path = devicePath;
       this.closed = false;
-      opened.set(path, this);
+      opened.set(devicePath, this);
     }
 
     close() {
@@ -68,15 +92,13 @@ function makeHidApi(devices) {
 
 test('activity classifier covers every Razer dongle identity known by the app plus CrazyLight', () => {
   for (const productId of Object.keys(dongles).map(Number)) {
-    const mouse = knownMouseForHidDevice({
-      vendorId: 0x1532,
-      productId,
-      usagePage: 1,
-      usage: 2,
-    });
+    const mouse = knownMouseForIdentity(0x1532, productId);
     assert.equal(mouse.backend, 'razer');
     assert.equal(mouse.productId, productId);
   }
+
+  assert.equal(knownMouseForIdentity(0x3710, 0x5406).backend, 'pulsar');
+  assert.equal(knownMouseForIdentity(0x3710, 0x9999), null);
 
   assert.equal(backendForHidMouse({
     vendorId: 0x3710, productId: 0x5406, usagePage: 1, usage: 2,
@@ -86,17 +108,14 @@ test('activity classifier covers every Razer dongle identity known by the app pl
   }), null);
 });
 
-test('repeated idle/keepalive HID reports do not count as mouse activity', () => {
+test('Windows Raw Input switches from fallback Razer to active CrazyLight immediately', () => {
   let timestamp = 10000;
   const changes = [];
-  const hidApi = makeHidApi([
-    { path: 'viper', vendorId: 0x1532, productId: 0x00e5, usagePage: 1, usage: 2 },
-    { path: 'pulsar', vendorId: 0x3710, productId: 0x5406, usagePage: 1, usage: 2 },
-  ]);
+  const raw = makeRawMonitorHarness();
   const tracker = createMouseActivityTracker({
-    hidApi,
+    platform: 'win32',
+    rawMouseMonitorFactory: raw.factory,
     now: () => timestamp,
-    refreshIntervalMs: 0,
     onActiveMouseChanged: (details) => changes.push(details),
   });
   const available = discovery(rawUsb(0x1532, 0x00e5), rawUsb(0x3710, 0x5406));
@@ -104,110 +123,89 @@ test('repeated idle/keepalive HID reports do not count as mouse activity', () =>
 
   assert.equal(tracker.choosePreferredMouse(available, fallback).productId, 0x00e5);
 
-  hidApi.opened.get('pulsar').emit('data', Buffer.from([1, 0, 0, 0]));
-  timestamp += 20;
-  hidApi.opened.get('pulsar').emit('data', Buffer.from([1, 0, 0, 0]));
+  timestamp += 1;
+  raw.emit(0x3710, 0x5406, '\\\\?\\HID#VID_3710&PID_5406&MI_00#pulsar');
+  assert.equal(tracker.getSelectedMouse().productId, 0x5406);
+  assert.equal(changes.length, 1);
+  assert.equal(changes[0].activeMouse.backend, 'pulsar');
+
+  tracker.close();
+  assert.equal(raw.closed, true);
+});
+
+test('Windows Raw Input can switch back and forth with no idle delay', () => {
+  const changes = [];
+  const raw = makeRawMonitorHarness();
+  const tracker = createMouseActivityTracker({
+    platform: 'win32',
+    rawMouseMonitorFactory: raw.factory,
+    onActiveMouseChanged: (details) => changes.push(details),
+  });
+  const available = discovery(rawUsb(0x1532, 0x00e5), rawUsb(0x3710, 0x5406));
+  const fallback = { backend: 'razer', vendorId: 0x1532, productId: 0x00e5, serialNumber: null };
+
+  tracker.choosePreferredMouse(available, fallback);
+  raw.emit(0x3710, 0x5406, 'pulsar');
+  raw.emit(0x1532, 0x00e5, 'viper');
+  raw.emit(0x3710, 0x5406, 'pulsar');
+
+  assert.equal(tracker.getSelectedMouse().backend, 'pulsar');
+  assert.deepEqual(changes.map((change) => change.activeMouse.backend), ['pulsar', 'razer', 'pulsar']);
+  tracker.close();
+});
+
+test('Windows Raw Input switches between exact known Razer models', () => {
+  const raw = makeRawMonitorHarness();
+  const tracker = createMouseActivityTracker({
+    platform: 'win32',
+    rawMouseMonitorFactory: raw.factory,
+  });
+  const available = discovery(rawUsb(0x1532, 0x00e5), rawUsb(0x1532, 0x00be));
+  const fallback = { backend: 'razer', vendorId: 0x1532, productId: 0x00e5, serialNumber: null };
+
+  assert.equal(tracker.choosePreferredMouse(available, fallback).productId, 0x00e5);
+  raw.emit(0x1532, 0x00be, 'deathadder');
+  assert.equal(tracker.getSelectedMouse().productId, 0x00be);
+
+  tracker.close();
+});
+
+test('unsupported Raw Input devices never steal selection', () => {
+  const changes = [];
+  const raw = makeRawMonitorHarness();
+  const tracker = createMouseActivityTracker({
+    platform: 'win32',
+    rawMouseMonitorFactory: raw.factory,
+    onActiveMouseChanged: (details) => changes.push(details),
+  });
+  const available = discovery(rawUsb(0x1532, 0x00e5), rawUsb(0x3710, 0x5406));
+  const fallback = { backend: 'razer', vendorId: 0x1532, productId: 0x00e5, serialNumber: null };
+
+  tracker.choosePreferredMouse(available, fallback);
+  raw.emit(0x046d, 0xc547, 'unrelated-mouse');
 
   assert.equal(tracker.getSelectedMouse().productId, 0x00e5);
   assert.equal(changes.length, 0);
   tracker.close();
 });
 
-test('changed HID input switches to the newly active mouse immediately with no idle wait', () => {
-  let timestamp = 10000;
-  const changes = [];
+test('non-Windows fallback still uses changing HID reports for activity', () => {
   const hidApi = makeHidApi([
     { path: 'viper', vendorId: 0x1532, productId: 0x00e5, usagePage: 1, usage: 2 },
     { path: 'pulsar', vendorId: 0x3710, productId: 0x5406, usagePage: 1, usage: 2 },
   ]);
   const tracker = createMouseActivityTracker({
+    platform: 'linux',
     hidApi,
-    now: () => timestamp,
     refreshIntervalMs: 0,
-    onActiveMouseChanged: (details) => changes.push(details),
   });
   const available = discovery(rawUsb(0x1532, 0x00e5), rawUsb(0x3710, 0x5406));
   const fallback = { backend: 'razer', vendorId: 0x1532, productId: 0x00e5, serialNumber: null };
 
-  assert.equal(tracker.choosePreferredMouse(available, fallback).productId, 0x00e5);
+  tracker.choosePreferredMouse(available, fallback);
+  hidApi.opened.get('pulsar').emit('data', Buffer.from([1, 0, 0]));
+  hidApi.opened.get('pulsar').emit('data', Buffer.from([1, 2, 0]));
 
-  // Establish each receiver's normal report baseline.
-  hidApi.opened.get('viper').emit('data', Buffer.from([1, 0, 0, 0]));
-  hidApi.opened.get('pulsar').emit('data', Buffer.from([1, 0, 0, 0]));
-
-  timestamp += 1;
-  hidApi.opened.get('pulsar').emit('data', Buffer.from([1, 4, 0, 0]));
-  assert.equal(tracker.getSelectedMouse().productId, 0x5406);
-  assert.equal(changes.length, 1);
-  assert.equal(changes[0].activeMouse.productId, 0x5406);
-
-  // No idle period: one millisecond later, real input from the Viper takes it back.
-  timestamp += 1;
-  hidApi.opened.get('viper').emit('data', Buffer.from([1, 0, 7, 0]));
-  assert.equal(tracker.getSelectedMouse().productId, 0x00e5);
-  assert.equal(changes.length, 2);
-  assert.equal(changes[1].activeMouse.productId, 0x00e5);
-
-  tracker.close();
-});
-
-test('Razer-to-Razer activity switches the exact known model immediately', () => {
-  const hidApi = makeHidApi([
-    { path: 'viper', vendorId: 0x1532, productId: 0x00e5, usagePage: 1, usage: 2 },
-    { path: 'deathadder', vendorId: 0x1532, productId: 0x00be, usagePage: 1, usage: 2 },
-  ]);
-  const tracker = createMouseActivityTracker({
-    hidApi,
-    refreshIntervalMs: 0,
-  });
-  const available = discovery(rawUsb(0x1532, 0x00e5), rawUsb(0x1532, 0x00be));
-  const fallback = { backend: 'razer', vendorId: 0x1532, productId: 0x00e5, serialNumber: null };
-
-  assert.equal(tracker.choosePreferredMouse(available, fallback).productId, 0x00e5);
-
-  hidApi.opened.get('viper').emit('data', Buffer.from([1, 0, 0]));
-  hidApi.opened.get('deathadder').emit('data', Buffer.from([1, 0, 0]));
-  hidApi.opened.get('deathadder').emit('data', Buffer.from([1, 1, 0]));
-
-  assert.equal(tracker.getSelectedMouse().productId, 0x00be);
-  tracker.close();
-});
-
-test('serial number distinguishes two known mice that share the same product ID', () => {
-  const hidApi = makeHidApi([
-    {
-      path: 'viper-a',
-      vendorId: 0x1532,
-      productId: 0x00e5,
-      serialNumber: 'A',
-      usagePage: 1,
-      usage: 2,
-    },
-    {
-      path: 'viper-b',
-      vendorId: 0x1532,
-      productId: 0x00e5,
-      serialNumber: 'B',
-      usagePage: 1,
-      usage: 2,
-    },
-  ]);
-  const tracker = createMouseActivityTracker({
-    hidApi,
-    refreshIntervalMs: 0,
-  });
-  const available = discovery(
-    rawUsb(0x1532, 0x00e5, 'A'),
-    rawUsb(0x1532, 0x00e5, 'B'),
-  );
-  const fallback = { backend: 'razer', vendorId: 0x1532, productId: 0x00e5, serialNumber: 'A' };
-
-  assert.equal(tracker.choosePreferredMouse(available, fallback).serialNumber, 'A');
-
-  hidApi.opened.get('viper-a').emit('data', Buffer.from([1, 0, 0]));
-  hidApi.opened.get('viper-b').emit('data', Buffer.from([1, 0, 0]));
-  hidApi.opened.get('viper-b').emit('data', Buffer.from([1, 3, 0]));
-
-  assert.equal(tracker.getSelectedMouse().serialNumber, 'B');
+  assert.equal(tracker.getSelectedMouse().backend, 'pulsar');
   tracker.close();
 });
