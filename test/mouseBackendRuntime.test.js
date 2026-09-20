@@ -3,8 +3,9 @@ const assert = require('node:assert/strict');
 
 const { createPreferredMouseBackend } = require('../src/lib/mouseBackends/runtime');
 
-function rawUsb(vendorId, productId) {
+function rawUsb(vendorId, productId, serialNumber = null) {
   return {
+    serialNumber,
     deviceDescriptor: {
       idVendor: vendorId,
       idProduct: productId,
@@ -16,7 +17,7 @@ function fakeBackend(id) {
   return { id, canWrite: true };
 }
 
-test('runtime falls back to Razer when both vendors are attached but no activity is known', () => {
+test('runtime falls back to the first supported Razer identity when no activity is known', () => {
   const created = [];
   const result = createPreferredMouseBackend({
     getDeviceList: () => [
@@ -34,12 +35,49 @@ test('runtime falls back to Razer when both vendors are attached but no activity
   });
 
   assert.equal(result.path, 'razer');
+  assert.equal(result.selectedMouse.productId, 0x00e5);
   assert.equal(result.backend.id, 'razer');
   assert.equal(created.filter(([kind]) => kind === 'razer').length, 1);
   assert.equal(created.filter(([kind]) => kind === 'pulsar').length, 0);
+  assert.equal(created[0][1].preferredProductId, 0x00e5);
 });
 
-test('runtime prefers the backend selected by recent mouse activity when both are attached', () => {
+test('runtime targets the exact active Razer model instead of any Razer dongle', () => {
+  const created = [];
+  const result = createPreferredMouseBackend({
+    getDeviceList: () => [
+      rawUsb(0x1532, 0x00e5),
+      rawUsb(0x1532, 0x00be),
+      rawUsb(0x3710, 0x5406),
+    ],
+    activityTracker: {
+      choosePreferredMouse: (_discovery, fallbackMouse) => {
+        assert.equal(fallbackMouse.productId, 0x00e5);
+        return {
+          backend: 'razer',
+          vendorId: 0x1532,
+          productId: 0x00be,
+          serialNumber: 'deathadder-1',
+        };
+      },
+    },
+    createRazerBackend: (options) => {
+      created.push(['razer', options]);
+      return fakeBackend('razer');
+    },
+    createPulsarBackend: (options) => {
+      created.push(['pulsar', options]);
+      return fakeBackend('pulsar-x2-crazylight');
+    },
+  });
+
+  assert.equal(result.path, 'razer');
+  assert.equal(result.selectedMouse.productId, 0x00be);
+  assert.equal(created[0][1].preferredProductId, 0x00be);
+  assert.equal(created[0][1].preferredSerialNumber, 'deathadder-1');
+});
+
+test('runtime prefers the Pulsar identity selected by mouse activity', () => {
   const created = [];
   const result = createPreferredMouseBackend({
     getDeviceList: () => [
@@ -47,10 +85,12 @@ test('runtime prefers the backend selected by recent mouse activity when both ar
       rawUsb(0x1532, 0x00e5),
     ],
     activityTracker: {
-      choosePreferredMousePath: (_discovery, fallbackPath) => {
-        assert.equal(fallbackPath, 'razer');
-        return 'pulsar';
-      },
+      choosePreferredMouse: () => ({
+        backend: 'pulsar',
+        vendorId: 0x3710,
+        productId: 0x5406,
+        serialNumber: null,
+      }),
     },
     createRazerBackend: (options) => {
       created.push(['razer', options]);

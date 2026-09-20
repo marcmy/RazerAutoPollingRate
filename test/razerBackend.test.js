@@ -14,12 +14,13 @@ function emptyDataView() {
   return new DataView(new ArrayBuffer(90));
 }
 
-function createFakeDevice(productId = 0x00e5, replies = []) {
+function createFakeDevice(productId = 0x00e5, replies = [], serialNumber = null) {
   const calls = [];
   return {
     vendorId: 0x1532,
     productId,
     productName: 'Razer test device',
+    serialNumber,
     configuration: null,
     calls,
     async open() {
@@ -56,11 +57,13 @@ function createFakeDevice(productId = 0x00e5, replies = []) {
   };
 }
 
-function createBackend(device, diagnostics = []) {
+function createBackend(deviceOrDevices, diagnostics = [], options = {}) {
+  const devices = Array.isArray(deviceOrDevices) ? deviceOrDevices : [deviceOrDevices];
   return createRazerBackend({
+    ...options,
     createWebUsb: (devicesFound) => ({
       requestDevice: async () => {
-        const selected = devicesFound([device]);
+        const selected = devicesFound(devices);
         return selected || null;
       },
     }),
@@ -68,6 +71,33 @@ function createBackend(device, diagnostics = []) {
     onDiagnostic: (event, details) => diagnostics.push([event, details]),
   });
 }
+
+test('Razer backend honors the active mouse product identity when multiple known dongles are connected', async () => {
+  const viper = createFakeDevice(0x00e5, [], 'viper');
+  const deathadder = createFakeDevice(0x00be, [], 'deathadder');
+  const backend = createBackend([viper, deathadder], [], {
+    preferredProductId: 0x00be,
+  });
+
+  const discovered = await backend.discover();
+
+  assert.equal(discovered, deathadder);
+  assert.equal(backend.deviceInfo.productId, 0x00be);
+});
+
+test('Razer backend prefers the exact serial when two known mice share a product ID', async () => {
+  const first = createFakeDevice(0x00e5, [], 'A');
+  const second = createFakeDevice(0x00e5, [], 'B');
+  const backend = createBackend([first, second], [], {
+    preferredProductId: 0x00e5,
+    preferredSerialNumber: 'B',
+  });
+
+  const discovered = await backend.discover();
+
+  assert.equal(discovered, second);
+  assert.equal(backend.deviceInfo.productId, 0x00e5);
+});
 
 test('Razer backend preserves Viper V4 Pro interface and polling read wire format', async () => {
   const device = createFakeDevice(0x00e5, [dataViewWithPollingByte(0x02)]);
