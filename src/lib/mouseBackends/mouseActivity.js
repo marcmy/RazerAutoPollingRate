@@ -1,6 +1,7 @@
 'use strict';
 
 const { dongles } = require('../devices');
+const { requestLatestCheck } = require('../checkGuard');
 const {
   CRAZYLIGHT_PRODUCT_ID,
   CRAZYLIGHT_VENDOR_ID,
@@ -141,8 +142,8 @@ function createMouseActivityTracker(options = {}) {
     const previous = lastReports.get(path);
     lastReports.set(path, current);
 
-    // The first packet establishes the idle/report baseline. This avoids
-    // treating a receiver's periodic keepalive/status packet as mouse use.
+    // The first packet establishes the receiver's baseline. Repeated identical
+    // reports are ignored so an idle/powered-off dongle cannot look "active".
     if (!previous) return false;
     return !previous.equals(current);
   }
@@ -168,17 +169,23 @@ function createMouseActivityTracker(options = {}) {
       switched,
     });
 
-    if (switched && onActiveMouseChanged) {
-      try {
-        onActiveMouseChanged({
-          previousMouse: previousSelected,
-          activeMouse: selectedMouse,
-          timestamp,
-        });
-      } catch (error) {
-        onDiagnostic('mouse_activity_change_handler_error', {
-          error: error && error.message ? error.message : String(error),
-        });
+    if (switched) {
+      // Wake the main polling loop immediately. checkGuard coalesces requests
+      // and queues one follow-up if a USB check is already in progress.
+      requestLatestCheck();
+
+      if (onActiveMouseChanged) {
+        try {
+          onActiveMouseChanged({
+            previousMouse: previousSelected,
+            activeMouse: selectedMouse,
+            timestamp,
+          });
+        } catch (error) {
+          onDiagnostic('mouse_activity_change_handler_error', {
+            error: error && error.message ? error.message : String(error),
+          });
+        }
       }
     }
   }
