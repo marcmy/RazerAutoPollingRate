@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Fixed customized copies of the same game (such as Steam and EA Apex Legends) falling back to the desktop rate when Windows hides the executable path. Matching now accepts same-name rules whose effective polling rate, Turbo setting, and detection mode agree; conflicting rules still require an exact path.
 - Rolling CalVer releases now publish real changelog entries added since the previous build, with meaningful commit subjects only as a fallback when no changelog entry was added.
 
 ## 20260916.0259
