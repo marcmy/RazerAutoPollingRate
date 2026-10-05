@@ -3,12 +3,14 @@
 const { inspectWindowsHidCaps } = require('./windowsHidCaps');
 const { sendWindowsHidOutputReport } = require('./windowsHidOutputReport');
 
-const CRAZYLIGHT_VENDOR_ID = 0x3710;
-const CRAZYLIGHT_PRODUCT_ID = 0x5406;
+const {
+  CRAZYLIGHT_VENDOR_ID,
+  CRAZYLIGHT_PRODUCT_ID,
+  crazyLightConnection,
+} = require('./pulsarCrazyLightIdentity');
 const CRAZYLIGHT_INTERFACE = 0x01;
 const REPORT_SIZE = 17;
 const READ_TIMEOUT_MS = 2000;
-const DISCOVERY_CACHE_KEY = `${CRAZYLIGHT_VENDOR_ID}:${CRAZYLIGHT_PRODUCT_ID}:${CRAZYLIGHT_INTERFACE}`;
 const sharedDiscoveryCache = new Map();
 
 function loadNodeHid() {
@@ -54,6 +56,7 @@ function normalizeInfo(device, caps = null) {
     vendorId: device.vendorId,
     productId: device.productId,
     productName: device.product || null,
+    serialNumber: device.serialNumber || null,
     path: device.path || null,
     interfaceNumber: CRAZYLIGHT_INTERFACE,
     usagePage: caps && Number.isInteger(caps.usagePage)
@@ -77,6 +80,10 @@ function describeCandidate(entry) {
 }
 
 function createCrazyLightHidTransport(options = {}) {
+  const productId = options.preferredProductId || CRAZYLIGHT_PRODUCT_ID;
+  if (!crazyLightConnection(productId)) throw new Error('Unsupported CrazyLight HID product ID');
+  const serialNumber = options.preferredSerialNumber || null;
+  const discoveryCacheKey = `${CRAZYLIGHT_VENDOR_ID}:${productId}:${CRAZYLIGHT_INTERFACE}:${serialNumber || ''}`;
   const hidApi = options.hidApi || loadNodeHid();
   const log = options.log || (() => {});
   const inspectHidCaps = options.inspectHidCaps || inspectWindowsHidCaps;
@@ -92,9 +99,9 @@ function createCrazyLightHidTransport(options = {}) {
   let handle = null;
 
   function clearCachedSelection() {
-    const cached = discoveryCache.get(DISCOVERY_CACHE_KEY);
+    const cached = discoveryCache.get(discoveryCacheKey);
     if (!cached || !selected || cached.path === selected.path) {
-      discoveryCache.delete(DISCOVERY_CACHE_KEY);
+      discoveryCache.delete(discoveryCacheKey);
     }
   }
 
@@ -110,10 +117,10 @@ function createCrazyLightHidTransport(options = {}) {
 
   async function enumerate() {
     if (typeof hidApi.devicesAsync === 'function') {
-      return hidApi.devicesAsync(CRAZYLIGHT_VENDOR_ID, CRAZYLIGHT_PRODUCT_ID);
+      return hidApi.devicesAsync(CRAZYLIGHT_VENDOR_ID, productId);
     }
     if (typeof hidApi.devices === 'function') {
-      return hidApi.devices(CRAZYLIGHT_VENDOR_ID, CRAZYLIGHT_PRODUCT_ID);
+      return hidApi.devices(CRAZYLIGHT_VENDOR_ID, productId);
     }
     throw new Error('node-hid does not expose a device enumeration API');
   }
@@ -123,16 +130,17 @@ function createCrazyLightHidTransport(options = {}) {
     const candidates = (devices || [])
       .filter((device) => device
         && device.vendorId === CRAZYLIGHT_VENDOR_ID
-        && device.productId === CRAZYLIGHT_PRODUCT_ID
+        && device.productId === productId
+        && (!serialNumber || device.serialNumber === serialNumber)
         && device.path
         && isInterfaceOne(device));
 
     if (candidates.length === 0) {
-      discoveryCache.delete(DISCOVERY_CACHE_KEY);
+      discoveryCache.delete(discoveryCacheKey);
       throw new Error('Pulsar X2 CrazyLight HID interface 1 was not found');
     }
 
-    const cached = discoveryCache.get(DISCOVERY_CACHE_KEY);
+    const cached = discoveryCache.get(discoveryCacheKey);
     if (cached && isProtocolCapable(cached.caps)) {
       const currentDevice = candidates.find((device) => device.path === cached.path);
       if (currentDevice) {
@@ -143,7 +151,7 @@ function createCrazyLightHidTransport(options = {}) {
       }
       // Unplug/replug or USB topology change: discard the stale path and do a
       // full caps-driven discovery below.
-      discoveryCache.delete(DISCOVERY_CACHE_KEY);
+      discoveryCache.delete(discoveryCacheKey);
     }
 
     // A composite HID interface can expose several top-level collections. The
@@ -166,7 +174,7 @@ function createCrazyLightHidTransport(options = {}) {
         - candidateScore(left.device, left.caps));
 
     if (usable.length === 0) {
-      discoveryCache.delete(DISCOVERY_CACHE_KEY);
+      discoveryCache.delete(discoveryCacheKey);
       const details = inspected.map(describeCandidate).join('; ');
       throw new Error(
         `No interface 1 HID collection supports 17-byte input/output reports. Candidates: ${details}`,
@@ -175,7 +183,7 @@ function createCrazyLightHidTransport(options = {}) {
 
     selected = usable[0].device;
     selectedCaps = usable[0].caps;
-    discoveryCache.set(DISCOVERY_CACHE_KEY, {
+    discoveryCache.set(discoveryCacheKey, {
       path: selected.path,
       caps: selectedCaps,
     });

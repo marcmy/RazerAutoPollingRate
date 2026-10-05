@@ -93,6 +93,31 @@ function createCapsInspector(overrides = {}) {
   };
 }
 
+test('wired and receiver discovery validate and cache their own HID paths independently', async () => {
+  const hidApi = createFakeHidApi();
+  const originalEnumerate = hidApi.devicesAsync;
+  const devices = await originalEnumerate();
+  hidApi.devicesAsync = async () => [0x5406, 0x3524].flatMap((productId) => devices.map((device) => ({
+    ...device, productId, path: `${device.path}:${productId}`, serialNumber: 'mouse-1',
+  })));
+  const baseInspect = createCapsInspector();
+  let inspections = 0;
+  const inspectHidCaps = async (devicePath) => { inspections += 1; return baseInspect(devicePath.split(':')[0]); };
+  const discoveryCache = new Map();
+  for (let pass = 0; pass < 2; pass += 1) {
+    for (const productId of [0x5406, 0x3524]) {
+      const transport = createCrazyLightHidTransport({ hidApi, preferredProductId: productId,
+        preferredSerialNumber: 'mouse-1', inspectHidCaps, discoveryCache });
+      const info = await transport.discover();
+      assert.equal(info.productId, productId);
+      assert.equal(info.path, `consumer-collection:${productId}`);
+    }
+  }
+  assert.equal(inspections, 4);
+  assert.equal(discoveryCache.size, 2);
+  assert.throws(() => createCrazyLightHidTransport({ hidApi, preferredProductId: 0x3525 }), /Unsupported/);
+});
+
 test('Windows HID transport selects interface 1 collection by usable report caps, not vendor usage page', async () => {
   const hidApi = createFakeHidApi();
   const transport = createCrazyLightHidTransport({

@@ -5,6 +5,7 @@ const { classifyUsbDevices, choosePreferredMousePath } = require('./discovery');
 const { createPulsarCrazyLightBackend } = require('./pulsarCrazyLight');
 const { createRazerBackend } = require('./razer');
 const { getSharedMouseActivityTracker } = require('./mouseActivity');
+const { crazyLightConnection } = require('./pulsarCrazyLightIdentity');
 
 const PRESENTATION_PROBE_METHODS = new Set([
   'discover',
@@ -78,7 +79,8 @@ function fallbackMouseFromDiscovery(discovery) {
   }
 
   if (fallbackPath === 'pulsar' && discovery.knownCrazyLight.length > 0) {
-    const { identity, device } = discovery.knownCrazyLight[0];
+    const { identity, device } = discovery.knownCrazyLight.find((entry) =>
+      crazyLightConnection(entry.identity.productId) === 'wired') || discovery.knownCrazyLight[0];
     return {
       backend: 'pulsar',
       vendorId: identity.vendorId,
@@ -136,7 +138,7 @@ function createPreferredMouseBackend(options = {}) {
   if (path === 'pulsar') {
     onDiagnostic('pulsar_usb_detected', {
       vendorId: 0x3710,
-      productId: 0x5406,
+      productId: selectedMouse.productId,
       supported: true,
     });
     return {
@@ -149,6 +151,8 @@ function createPreferredMouseBackend(options = {}) {
         // Read/write has now been validated on the user's retail 3710:5406
         // hardware, including an automatic restore with readback.
         allowHardwareValidationWrites: true,
+        preferredProductId: selectedMouse.productId,
+        preferredSerialNumber: selectedMouse.serialNumber,
       }), activityTracker, selectedMouse),
     };
   }

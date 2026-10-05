@@ -9,6 +9,8 @@ require('./githubReleaseClient.test');
 require('./mainBackendIntegration.test');
 require('./mouseBackendRuntime.test');
 require('./mouseStatusPresentation.test');
+require('./mouseTelemetry.test');
+require('./mouseActivity.test');
 require('./processDiscovery.test');
 require('./processes.test');
 require('./pulsarCrazyLightBackend.test');

@@ -20,6 +20,17 @@ function fakeBackend(id) {
   return { id, canWrite: true };
 }
 
+test('runtime selects the wired CrazyLight ahead of its receiver and passes its exact identity', () => {
+  let created;
+  const result = createPreferredMouseBackend({
+    getDeviceList: () => [rawUsb(0x3710, 0x5406), rawUsb(0x3710, 0x3524, 'wire-serial')],
+    createPulsarBackend: (options) => { created = options; return fakeBackend('pulsar-x2-crazylight'); },
+  });
+  assert.equal(result.selectedMouse.productId, 0x3524);
+  assert.equal(created.preferredProductId, 0x3524);
+  assert.equal(created.preferredSerialNumber, 'wire-serial');
+});
+
 test('runtime falls back to the first supported Razer identity when no activity is known', () => {
   const created = [];
   const result = createPreferredMouseBackend({

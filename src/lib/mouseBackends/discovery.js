@@ -2,9 +2,9 @@
 
 const { dongles } = require('../devices');
 const {
-  CRAZYLIGHT_PRODUCT_ID,
   CRAZYLIGHT_VENDOR_ID,
-} = require('./pulsarCrazyLight');
+  crazyLightConnection,
+} = require('./pulsarCrazyLightIdentity');
 
 const RAZER_VENDOR_ID = 0x1532;
 
@@ -41,7 +41,7 @@ function classifyUsbDevices(devices = []) {
       continue;
     }
 
-    if (identity.vendorId === CRAZYLIGHT_VENDOR_ID && identity.productId === CRAZYLIGHT_PRODUCT_ID) {
+    if (identity.vendorId === CRAZYLIGHT_VENDOR_ID && crazyLightConnection(identity.productId)) {
       result.knownCrazyLight.push(entry);
       continue;
     }

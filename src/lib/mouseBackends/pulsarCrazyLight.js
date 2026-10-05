@@ -4,6 +4,7 @@ const { WebUSB } = require('usb');
 const { createCrazyLightHidTransport } = require('./pulsarCrazyLightHid');
 const {
   CMD_GET_ACTIVE_PROFILE,
+  CMD_GET_BATTERY,
   CMD_WRITE_MEMORY,
   REPORT_SIZE,
   buildCommandPacket,
@@ -12,12 +13,16 @@ const {
   decodePollingRate,
   encodePollingRate,
   parseActiveProfileReply,
+  parseBatteryReply,
   parseMemoryReadReply,
   validateReply,
 } = require('./pulsarCrazyLightProtocol');
 
-const CRAZYLIGHT_VENDOR_ID = 0x3710;
-const CRAZYLIGHT_PRODUCT_ID = 0x5406;
+const {
+  CRAZYLIGHT_VENDOR_ID,
+  CRAZYLIGHT_PRODUCT_ID,
+  crazyLightConnection,
+} = require('./pulsarCrazyLightIdentity');
 const CRAZYLIGHT_INTERFACE = 0x01;
 const CRAZYLIGHT_ENDPOINT_IN = 0x82;
 const CRAZYLIGHT_ENDPOINT_NUMBER = CRAZYLIGHT_ENDPOINT_IN & 0x0f;
@@ -42,14 +47,20 @@ function transferDataToBuffer(data) {
 function isCrazyLightDevice(device) {
   return Boolean(device
     && device.vendorId === CRAZYLIGHT_VENDOR_ID
-    && device.productId === CRAZYLIGHT_PRODUCT_ID);
+    && crazyLightConnection(device.productId));
 }
 
 function createPulsarCrazyLightBackend(options = {}) {
+  const productId = options.preferredProductId || CRAZYLIGHT_PRODUCT_ID;
+  const connection = crazyLightConnection(productId);
+  if (!connection) throw new Error('Unsupported CrazyLight product ID');
   const createWebUsb = options.createWebUsb || defaultCreateWebUsb;
   const onDiagnostic = options.onDiagnostic || (() => {});
   const log = options.log || (() => {});
-  const allowHardwareValidationWrites = options.allowHardwareValidationWrites === true;
+  // Wired variants are initially status-only. Wireless automation keeps its
+  // validated write behavior; telemetry never writes onboard settings.
+  const allowHardwareValidationWrites = options.allowHardwareValidationWrites === true
+    && connection === 'wireless';
   // Tests that inject WebUSB keep exercising the original transport unless
   // they explicitly request Windows. Real Windows runs default to HIDAPI.
   const platform = options.platform || (options.createWebUsb ? 'webusb' : process.platform);
@@ -60,6 +71,8 @@ function createPulsarCrazyLightBackend(options = {}) {
       inspectHidCaps: options.inspectHidCaps,
       log,
       sendOutputReport: options.sendOutputReport,
+      preferredProductId: productId,
+      preferredSerialNumber: options.preferredSerialNumber,
     })
     : null;
 
@@ -83,10 +96,11 @@ function createPulsarCrazyLightBackend(options = {}) {
       return device;
     }
 
-    const webUsb = createWebUsb((devices) => devices.find(isCrazyLightDevice));
+    const webUsb = createWebUsb((devices) => devices.find((item) => isCrazyLightDevice(item)
+      && item.productId === productId));
     const discovered = await webUsb.requestDevice({ filters: [{}] });
-    if (!isCrazyLightDevice(discovered)) {
-      throw new Error('USB device is not a supported Pulsar X2 CrazyLight (expected 3710:5406)');
+    if (!isCrazyLightDevice(discovered) || discovered.productId !== productId) {
+      throw new Error(`USB device is not a supported Pulsar X2 CrazyLight (expected 3710:${productId.toString(16).padStart(4, '0')})`);
     }
     device = discovered;
     return device;
@@ -204,7 +218,14 @@ function createPulsarCrazyLightBackend(options = {}) {
     if (!rate) {
       throw new Error(`CrazyLight returned unknown polling-rate value 0x${value.toString(16).padStart(2, '0')}`);
     }
-    return rate;
+    // The original wired model is limited to 1K. Newer firmware can expose
+    // different wired limits, so retain its reported value without guessing.
+    return productId === 0x3414 ? Math.min(rate, 1000) : rate;
+  }
+
+  async function getBatteryStatus() {
+    const reply = await sendCommand(buildCommandPacket(CMD_GET_BATTERY), CMD_GET_BATTERY);
+    return parseBatteryReply(reply);
   }
 
   async function setPollingRate(rate) {
@@ -302,7 +323,7 @@ function createPulsarCrazyLightBackend(options = {}) {
         backend: 'pulsar-x2-crazylight',
         name: 'Pulsar X2 CrazyLight',
         vendorId: CRAZYLIGHT_VENDOR_ID,
-        productId: CRAZYLIGHT_PRODUCT_ID,
+        productId,
         interfaceNumber: CRAZYLIGHT_INTERFACE,
         endpoint: CRAZYLIGHT_ENDPOINT_IN,
         activeProfile,
@@ -319,14 +340,16 @@ function createPulsarCrazyLightBackend(options = {}) {
     id: 'pulsar-x2-crazylight',
     name: 'Pulsar X2 CrazyLight',
     canWrite: allowHardwareValidationWrites,
-    supportedRates: [125, 250, 500, 1000, 2000, 4000, 8000],
+    connection,
+    supportedRates: productId === 0x3414 ? [125, 250, 500, 1000] : [125, 250, 500, 1000, 2000, 4000, 8000],
     discover,
     open,
     getActiveProfile,
     getPollingRate,
+    getBatteryStatus,
     getTurboMode,
     setTurboMode,
-    capabilities: { turboMode: true },
+    capabilities: { turboMode: connection === 'wireless', battery: true },
     probe,
     setPollingRate,
     close,
@@ -339,7 +362,7 @@ function createPulsarCrazyLightBackend(options = {}) {
       }
       return {
         vendorId: device ? device.vendorId : CRAZYLIGHT_VENDOR_ID,
-        productId: device ? device.productId : CRAZYLIGHT_PRODUCT_ID,
+        productId: device ? device.productId : productId,
         productName: device ? device.productName || null : null,
         interfaceNumber: CRAZYLIGHT_INTERFACE,
         endpoint: CRAZYLIGHT_ENDPOINT_IN,

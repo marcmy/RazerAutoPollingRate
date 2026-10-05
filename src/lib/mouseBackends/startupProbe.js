@@ -3,6 +3,7 @@
 const { getDeviceList } = require('usb');
 const { classifyUsbDevices } = require('./discovery');
 const { createPulsarCrazyLightBackend } = require('./pulsarCrazyLight');
+const { crazyLightConnection } = require('./pulsarCrazyLightIdentity');
 
 function formatUsbId(identity) {
   const vendor = Number.isInteger(identity.vendorId)
@@ -34,9 +35,12 @@ async function runCrazyLightProbe(options = {}) {
     };
   }
 
-  log('[Pulsar probe] Known X2 CrazyLight 3710:5406 detected; starting read-only probe.');
+  const { identity } = discovery.knownCrazyLight.find((entry) =>
+    crazyLightConnection(entry.identity.productId) === 'wired') || discovery.knownCrazyLight[0];
+  log(`[Pulsar probe] Known X2 CrazyLight ${formatUsbId(identity)} detected; starting read-only probe.`);
 
   const backend = makeBackend({
+    preferredProductId: identity.productId,
     onDiagnostic: (event, details) => {
       log(`[Pulsar probe] ${event}: ${JSON.stringify(details)}`);
     },
