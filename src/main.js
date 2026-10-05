@@ -96,7 +96,10 @@ const appPath = app.getAppPath();
 const legacyStore = new Store();
 const assetsFolder = 'src/assets/';
 const checkGuard = createCheckGuard();
-const readMouseTelemetry = createMouseTelemetryReader();
+const readMouseTelemetry = createMouseTelemetryReader({
+  loadBatteryHistory: () => legacyStore.get('mouseBatteryHistory', {}),
+  saveBatteryHistory: (history) => legacyStore.set('mouseBatteryHistory', history),
+});
 const createPollingBatteryIcon = createPollingBatteryIconFactory(nativeImage, path.join(appPath, 'src/assets/8000a.png'));
 const appDisplayVersion = getDisplayVersion(packageMetadata, app.getVersion());
 const UPDATE_API_URL = 'https://api.github.com/repos/marcmy/RazerAutoPollingRate/releases/latest';
@@ -214,7 +217,8 @@ function setTrayStatus(status) {
 
   const iconName = status.icon || 'loading.png';
   const rate = getPollingRateFromIconPath(iconName);
-  tray.setImage(rate && runtimeStatus.deviceName && Number.isInteger(runtimeStatus.batteryPercent)
+  tray.setImage(rate && runtimeStatus.deviceName
+    && (Number.isInteger(runtimeStatus.batteryPercent) || runtimeStatus.charging === true)
     ? createPollingBatteryIcon(rate, runtimeStatus.batteryPercent, runtimeStatus.charging)
     : nativeImage.createFromPath(path.join(appPath, assetsFolder + iconName)));
   const mouseDetails = runtimeStatus.deviceName ? formatMouseTelemetry(runtimeStatus) : '';

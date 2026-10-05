@@ -34,7 +34,7 @@ The automatic backend currently supports:
 
 - **Razer:** HyperPolling devices handled by the included USB report logic. Razer remains the preferred backend when both supported vendors are connected.
 - **Pulsar X2 CrazyLight (VID `3710`, PID `5406`):** hardware-validated polling-rate control on interface 1 / Col05 using the 17-byte Nordic HID protocol. Turbo Mode is exposed only after the app successfully reads the setting from the detected CrazyLight, so firmware without that capability does not show the per-game Turbo option.
-- **CrazyLight over USB cable (VID `3710`, PID `3414` or `3524`):** shows the wired connection, reported battery percentage and charging state. Cable support is currently read-only; automatic polling-rate and Turbo changes resume through the wireless dongle after unplugging the cable. The original `3414` model is limited to 1000 Hz; newer firmware's wired limits can differ.
+- **CrazyLight over USB cable (VID `3710`, PID `3414` or `3524`):** shows the wired connection, estimated battery percentage and charging state. Cable support is currently read-only; automatic polling-rate and Turbo changes resume through the wireless dongle after unplugging the cable. The original `3414` model is limited to 1000 Hz; newer firmware's wired limits can differ.
 
 Unknown Pulsar product IDs are diagnostics-only and never receive protocol traffic.
 
@@ -49,7 +49,7 @@ Right-click or click the tray icon to access:
 
 The tray tooltip shows the current rate, target rate, detection mode, and matched rule/process.
 
-For a supported CrazyLight, the tray icon also shows battery percentage below the rate. Battery text is cyan while charging and red at 20% or lower when discharging. The tooltip and Settings show wired/wireless connection and charging status. Battery is read once a minute using the existing HID helper; an unavailable reading leaves the regular rate icon in place. Battery reporting is currently supported for the CrazyLight only.
+For a supported CrazyLight, the tray icon shows a larger rate above a green battery graphic (red at 20% or lower when discharging). Hover over the tray icon or the detected mouse in Settings to see the percentage. The estimate uses Pulsar's voltage calibration and gradual changes, with history saved per mouse across cable changes and restarts. Battery is read once a minute using the existing HID helper. Starting while charging without a recent baseline shows a striped battery with Charging until a percentage can be established; unavailable readings leave the regular rate icon in place. Battery reporting is currently supported for the CrazyLight only.
 
 ## Settings
 

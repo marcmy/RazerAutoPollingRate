@@ -1,50 +1,60 @@
 const path = require('path');
 
 const PIXEL_GLYPHS = {
-  '0': ['111', '101', '101', '101', '111'],
-  '1': ['010', '110', '010', '010', '111'],
-  '2': ['111', '001', '111', '100', '111'],
-  '3': ['111', '001', '111', '001', '111'],
-  '4': ['101', '101', '111', '001', '001'],
-  '5': ['111', '100', '111', '001', '111'],
-  '6': ['111', '100', '111', '101', '111'],
-  '7': ['111', '001', '010', '010', '010'],
-  '8': ['111', '101', '111', '101', '111'],
-  '9': ['111', '101', '111', '001', '111'],
-  K: ['101', '101', '110', '101', '101'],
-  '%': ['101', '001', '010', '100', '101'],
+  '0': ['0110', '1001', '1001', '1001', '1001', '1001', '1001', '1001', '0110'],
+  '1': ['0010', '0110', '1010', '0010', '0010', '0010', '0010', '0010', '1111'],
+  '2': ['0110', '1001', '0001', '0001', '0010', '0100', '1000', '1000', '1111'],
+  '3': ['1110', '0001', '0001', '0001', '0110', '0001', '0001', '0001', '1110'],
+  '4': ['1001', '1001', '1001', '1001', '1111', '0001', '0001', '0001', '0001'],
+  '5': ['1111', '1000', '1000', '1000', '1110', '0001', '0001', '0001', '1110'],
+  '6': ['0110', '1000', '1000', '1000', '1110', '1001', '1001', '1001', '0110'],
+  '7': ['1111', '0001', '0001', '0010', '0010', '0010', '0100', '0100', '0100'],
+  '8': ['0110', '1001', '1001', '1001', '0110', '1001', '1001', '1001', '0110'],
+  '9': ['0110', '1001', '1001', '1001', '0111', '0001', '0001', '0001', '0110'],
+  K: ['1001', '1001', '1010', '1010', '1100', '1010', '1010', '1001', '1001'],
 };
 
 function buildPollingBatteryBitmap(rate, batteryPercent, charging, pixelFormat = 'BGRA', scale = 1) {
-  if (!getPollingRateColor(rate) || !Number.isInteger(batteryPercent)
-    || batteryPercent < 0 || batteryPercent > 100) throw new Error('Invalid rate/battery tray status');
+  const unknownCharging = batteryPercent === null && charging === true;
+  if (!getPollingRateColor(rate) || (!unknownCharging && (!Number.isInteger(batteryPercent)
+    || batteryPercent < 0 || batteryPercent > 100))) throw new Error('Invalid rate/battery tray status');
   if (!['RGBA', 'BGRA'].includes(pixelFormat) || ![1, 2].includes(scale)) {
     throw new Error('Invalid tray bitmap format or scale');
   }
   const size = 16 * scale;
   const bitmap = Buffer.alloc(size * size * 4);
-  function drawText(text, top, color) {
+  function pixel(x, y, color) {
     const channels = parseHexColor(color);
     if (pixelFormat === 'BGRA') channels.reverse();
-    const left = Math.floor((16 - (text.length * 4 - 1)) / 2);
+    for (let dy = 0; dy < scale; dy += 1) {
+      for (let dx = 0; dx < scale; dx += 1) {
+        bitmap.set([...channels, 255], (((y * scale + dy) * size) + x * scale + dx) * 4);
+      }
+    }
+  }
+  function drawText(text, top, color) {
+    const left = Math.floor((16 - (text.length * 5 - 1)) / 2);
     for (let char = 0; char < text.length; char += 1) {
       const glyph = PIXEL_GLYPHS[text[char]];
-      for (let y = 0; y < 5; y += 1) {
-        for (let x = 0; x < 3; x += 1) {
+      for (let y = 0; y < 9; y += 1) {
+        for (let x = 0; x < 4; x += 1) {
           if (glyph[y][x] !== '1') continue;
-          for (let dy = 0; dy < scale; dy += 1) {
-            for (let dx = 0; dx < scale; dx += 1) {
-              const offset = (((top + y) * scale + dy) * size
-                + (left + char * 4 + x) * scale + dx) * 4;
-              bitmap.set([...channels, 255], offset);
-            }
-          }
+          pixel(left + char * 5 + x, top + y, color);
         }
       }
     }
   }
-  drawText(rate >= 1000 ? `${rate / 1000}K` : String(rate), 1, getPollingRateColor(rate));
-  drawText(`${batteryPercent}%`, 9, charging ? '#00C8FF' : batteryPercent <= 20 ? '#FF5050' : '#A0A0A0');
+  drawText(rate >= 1000 ? `${rate / 1000}K` : String(rate), 0, getPollingRateColor(rate));
+  // Give the rate most of the icon. The percentage lives in the hover tooltip.
+  const outline = !charging && batteryPercent <= 20 ? '#FF5050' : '#A0A0A0';
+  for (let x = 0; x <= 14; x += 1) { pixel(x, 11, outline); pixel(x, 15, outline); }
+  for (let y = 12; y <= 14; y += 1) { pixel(0, y, outline); pixel(14, y, outline); pixel(15, y, outline); }
+  const filled = unknownCharging ? 13 : batteryPercent === 0 ? 0 : Math.max(1, Math.round(13 * batteryPercent / 100));
+  const fillColor = batteryPercent <= 20 && !charging ? '#FF5050' : '#00FF00';
+  for (let x = 1; x <= filled; x += 1) {
+    if (unknownCharging && x % 2 === 0) continue;
+    for (let y = 12; y <= 14; y += 1) pixel(x, y, fillColor);
+  }
   return bitmap;
 }
 

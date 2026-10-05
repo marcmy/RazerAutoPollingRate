@@ -7,6 +7,7 @@ const CMD_WRITE_MEMORY = 0x07;
 const CMD_READ_MEMORY = 0x08;
 const CMD_GET_ACTIVE_PROFILE = 0x0E;
 const CMD_GET_BATTERY = 0x04;
+const CMD_GET_DEVICE_STATUS = 0x03;
 
 const POLLING_RATE_BY_VALUE = new Map([
   [0x08, 125],
@@ -135,7 +136,26 @@ function parseBatteryReply(report) {
   if (reply[5] < 2 || reply[6] > 100 || ![0, 1].includes(reply[7])) {
     throw new Error('CrazyLight returned an unsupported battery percentage or charging flag');
   }
-  return { batteryPercent: reply[6], charging: reply[7] === 1 };
+  // Firmware reports a payload length of 2 even when the voltage follows it.
+  // Bibimbap reads these fixed fields, in big-endian millivolts.
+  const voltage = reply.readUInt16BE(8);
+  return {
+    batteryPercent: reply[6],
+    charging: reply[7] === 1,
+    voltageMv: voltage >= 2500 && voltage <= 4500 ? voltage : null,
+  };
+}
+
+function parseDeviceStatusReply(report) {
+  const reply = validateReply(report, CMD_GET_DEVICE_STATUS);
+  if (reply[5] < 1 || ![0, 1].includes(reply[6])) {
+    throw new Error('CrazyLight returned an unsupported connection status');
+  }
+  const address = Buffer.from([reply[9], reply[8], reply[7]]).toString('hex');
+  return {
+    online: reply[6] === 1,
+    batteryId: !['000000', 'ffffff'].includes(address) ? address : null,
+  };
 }
 
 function parseMemoryReadReply(report, expectedAddress, expectedLength) {
@@ -155,6 +175,7 @@ function parseMemoryReadReply(report, expectedAddress, expectedLength) {
 module.exports = {
   CMD_GET_ACTIVE_PROFILE,
   CMD_GET_BATTERY,
+  CMD_GET_DEVICE_STATUS,
   CMD_READ_MEMORY,
   CMD_WRITE_MEMORY,
   POLLING_RATE_BY_VALUE,
@@ -169,6 +190,7 @@ module.exports = {
   encodePollingRate,
   parseActiveProfileReply,
   parseBatteryReply,
+  parseDeviceStatusReply,
   parseMemoryReadReply,
   validateReply,
 };
