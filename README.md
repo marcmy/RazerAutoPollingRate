@@ -200,6 +200,8 @@ Toggle Autostart off and back on in Settings. The app updates both the startup s
 
 ## Development
 
+Use Node.js 22.13.0 or newer for the Electron Forge build tools. CI uses Node.js 22.
+
 ```powershell
 npm ci
 npm test

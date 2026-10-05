@@ -153,3 +153,88 @@ test('game override can inherit the current default game polling rate', () => {
 
   assert.equal(selected.targetRate, 8000);
 });
+
+const apexPaths = [
+  'C:\\Program Files (x86)\\Steam\\steamapps\\common\\Apex Legends\\r5apex_dx12.exe',
+  'C:\\Program Files\\EA Games\\Apex\\r5apex_dx12.exe',
+];
+
+function selectApexCopies(settings, overrides = {}) {
+  const entries = parseProcessConfig(settings.map((setting, index) => `"${apexPaths[index]}" ${setting}`).join('\n')).entries;
+  return selectConfiguredPollingRate(entries, {
+    foregroundProcess: { processName: 'R5APEX_DX12.EXE', executablePath: null },
+    runningProcesses: [],
+    defaultDetectionMode: 'foreground',
+    inactivePollingRate: 125,
+    defaultGamePollingRate: 4000,
+    ...overrides,
+  });
+}
+
+test('customizing a second Apex installation with the same settings preserves pathless matching', () => {
+  for (const settings of [['4000 turbo=on'], ['4000 turbo=on', '4000 turbo=on']]) {
+    const selected = selectApexCopies(settings);
+    assert.equal(selected.targetRate, 4000);
+    assert.equal(selected.matchedRule.turboMode, true);
+    assert.equal(selected.matchedDetectionMode, 'foreground');
+  }
+});
+
+test('same-name copies can agree through inherited rate and detection mode', () => {
+  const selected = selectApexCopies(['default turbo=on', '4000 foreground turbo=on']);
+  assert.equal(selected.targetRate, 4000);
+  assert.equal(selected.matchedRule.turboMode, true);
+
+  // Changing the default makes the two rules disagree again.
+  assert.equal(selectApexCopies(['default turbo=on', '4000 turbo=on'], {
+    defaultGamePollingRate: 1000,
+  }).matchedRule, null);
+});
+
+test('pathless same-name rules still refuse conflicting rate, Turbo, or detection mode', () => {
+  for (const settings of [
+    ['4000 turbo=on', '1000 turbo=on'],
+    ['4000 turbo=on', '4000'],
+    ['4000 foreground turbo=on', '4000 running turbo=on'],
+  ]) {
+    const selected = selectApexCopies(settings);
+    assert.equal(selected.targetRate, 125);
+    assert.equal(selected.matchedRule, null);
+  }
+});
+
+test('known executable paths select the correct copy even when their settings conflict', () => {
+  const settings = ['4000 turbo=on', '1000'];
+  for (let index = 0; index < apexPaths.length; index += 1) {
+    const selected = selectApexCopies(settings, {
+      foregroundProcess: { processName: 'r5apex_dx12.exe', executablePath: apexPaths[index] },
+    });
+    assert.equal(selected.targetRate, index === 0 ? 4000 : 1000);
+    assert.equal(selected.matchedRule.turboMode === true, index === 0);
+    assert.equal(selected.matchedRule.executablePath, apexPaths[index].toLowerCase());
+  }
+  assert.equal(selectApexCopies(['4000 turbo=on', '4000 turbo=on'], {
+    foregroundProcess: { processName: 'r5apex_dx12.exe', executablePath: 'D:\\Other\\r5apex_dx12.exe' },
+  }).matchedRule, null);
+});
+
+test('same-name foreground copies return to inactive on Alt-Tab even while Apex runs', () => {
+  const selected = selectApexCopies(['4000 turbo=on', '4000 turbo=on'], {
+    foregroundProcess: { processName: 'explorer.exe', executablePath: null },
+    runningProcesses: [{ processName: 'r5apex_dx12.exe', executablePath: null }],
+  });
+  assert.equal(selected.targetRate, 125);
+  assert.equal(selected.matchedRule, null);
+});
+
+test('same-name running copies match while running and return to inactive on exit', () => {
+  const settings = ['4000 running turbo=on', '4000 running turbo=on'];
+  const selected = selectApexCopies(settings, {
+    foregroundProcess: { processName: 'explorer.exe' },
+    runningProcesses: [{ processName: 'r5apex_dx12.exe', executablePath: null }],
+  });
+  assert.equal(selected.targetRate, 4000);
+  assert.equal(selected.matchedRule.turboMode, true);
+  assert.equal(selected.matchedDetectionMode, 'running');
+  assert.equal(selectApexCopies(settings, { foregroundProcess: null }).targetRate, 125);
+});

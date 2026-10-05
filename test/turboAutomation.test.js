@@ -75,3 +75,24 @@ test('Turbo uses foreground matching on Alt-Tab and running matching until game 
     assert.deepEqual(backend.writes, [true, false]);
   }
 });
+
+test('equivalent Steam and EA Apex rules enable Turbo and disable it after Alt-Tab', async () => {
+  const entries = parseProcessConfig([
+    '"C:\\Steam\\Apex\\r5apex_dx12.exe" 4000 turbo=on',
+    '"C:\\EA Games\\Apex\\r5apex_dx12.exe" 4000 turbo=on',
+  ].join('\n')).entries;
+  const backend = fakeBackend();
+  const select = (processName) => selectConfiguredPollingRate(entries, {
+    foregroundProcess: { processName, executablePath: null },
+    runningProcesses: [{ processName: 'r5apex_dx12.exe', executablePath: null }],
+    inactivePollingRate: 125,
+    defaultGamePollingRate: 1000,
+  });
+  const game = select('r5apex_dx12.exe');
+  assert.equal(game.targetRate, 4000);
+  assert.equal(await applyTurboMode(backend, game, true), true);
+  const desktop = select('explorer.exe');
+  assert.equal(desktop.targetRate, 125);
+  assert.equal(await applyTurboMode(backend, desktop, true), false);
+  assert.deepEqual(backend.writes, [true, false]);
+});

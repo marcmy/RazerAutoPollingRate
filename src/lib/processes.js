@@ -61,7 +61,13 @@ function entryMatchesProcess(entry, processInfo, options = {}) {
   return Boolean(process.processName) && entry.processName === process.processName;
 }
 
-function canSafelyFallbackPathRuleByName(entries, entry, processInfo) {
+function resolveRulePollingRate(entry, options = {}) {
+  return entry.usesDefaultPollingRate || entry.pollingRate === null
+    ? (options.defaultGamePollingRate || options.inactivePollingRate)
+    : entry.pollingRate;
+}
+
+function canSafelyFallbackPathRuleByName(entries, entry, processInfo, options = {}) {
   if (!entry || !entry.executablePath) {
     return false;
   }
@@ -74,7 +80,13 @@ function canSafelyFallbackPathRuleByName(entries, entry, processInfo) {
   const matchingPathRules = entries.filter((candidate) => candidate.executablePath
     && candidate.processName === process.processName);
 
-  return matchingPathRules.length === 1;
+  // Windows can hide protected games' paths. Multiple installs are safe to
+  // match by name only when choosing any of them has the same behavior.
+  return matchingPathRules.length > 0 && matchingPathRules.every((candidate) =>
+    resolveRulePollingRate(candidate, options) === resolveRulePollingRate(entry, options)
+    && (candidate.turboMode === true) === (entry.turboMode === true)
+    && getRuleDetectionMode(candidate, options.defaultDetectionMode)
+      === getRuleDetectionMode(entry, options.defaultDetectionMode));
 }
 
 function findBestMatchingProcess(entries, processInfos) {
@@ -96,9 +108,7 @@ function findFirstMatchingProcess(entries, runningProcessNames) {
 
 function buildSelection(match, inactivePollingRate, details = {}) {
   if (match) {
-    const targetRate = match.usesDefaultPollingRate || match.pollingRate === null
-      ? (details.defaultGamePollingRate || inactivePollingRate)
-      : match.pollingRate;
+    const targetRate = resolveRulePollingRate(match, { ...details, inactivePollingRate });
     return {
       targetRate,
       matchedProcess: match.rawTarget || match.rawProcessName || match.processName,
@@ -164,7 +174,7 @@ function findConfiguredMatch(entries, options = {}) {
         : (foregroundProcess ? [foregroundProcess] : []);
 
       if (candidates.some((candidate) => entryMatchesProcess(entry, candidate, {
-        allowPathNameFallback: canSafelyFallbackPathRuleByName(entries, entry, candidate),
+        allowPathNameFallback: canSafelyFallbackPathRuleByName(entries, entry, candidate, options),
       }))) {
         return {
           entry,
