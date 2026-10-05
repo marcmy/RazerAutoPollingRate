@@ -14,6 +14,7 @@ require('./mouseActivity.test');
 require('./processDiscovery.test');
 require('./processes.test');
 require('./pulsarCrazyLightBackend.test');
+require('./pulsarBattery.test');
 require('./pulsarCrazyLightHid.test');
 require('./pulsarCrazyLightProtocol.test');
 require('./pulsarDiscovery.test');

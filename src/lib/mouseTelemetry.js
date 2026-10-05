@@ -1,8 +1,13 @@
 'use strict';
 
 const BATTERY_REFRESH_MS = 60 * 1000;
+const { createPulsarBatteryEstimator } = require('./pulsarBattery');
 
-function createMouseTelemetryReader({ now = Date.now, refreshMs = BATTERY_REFRESH_MS } = {}) {
+function createMouseTelemetryReader({ now = Date.now, refreshMs = BATTERY_REFRESH_MS,
+  loadBatteryHistory, saveBatteryHistory } = {}) {
+  const estimateBattery = createPulsarBatteryEstimator({
+    loadHistory: loadBatteryHistory, saveHistory: saveBatteryHistory,
+  });
   let cachedKey = null;
   let checkedAt = -Infinity;
   let cached = { batteryPercent: null, charging: null, batteryError: null };
@@ -25,7 +30,12 @@ function createMouseTelemetryReader({ now = Date.now, refreshMs = BATTERY_REFRES
         || status.batteryPercent > 100 || typeof status.charging !== 'boolean') {
         throw new Error('Invalid mouse battery status');
       }
-      cached = { ...status, batteryError: null };
+      cached = {
+        batteryPercent: backend.id === 'pulsar-x2-crazylight'
+          ? estimateBattery(status, key, timestamp) : status.batteryPercent,
+        charging: status.charging,
+        batteryError: null,
+      };
     } catch (error) {
       // Optional telemetry must neither stop rate switching nor leave a stale
       // percentage/charging indication visible after a failed read.
@@ -43,6 +53,7 @@ function formatMouseTelemetry(status) {
   if (status.connection === 'wireless') parts.push('Wireless');
   if (Number.isInteger(status.batteryPercent)) parts.push(`${status.batteryPercent}% battery`);
   if (status.charging === true) parts.push('Charging');
+  if (status.charging === true && !Number.isInteger(status.batteryPercent)) parts.push('Battery percentage unavailable');
   if (status.charging === false && status.connection === 'wired') parts.push('Not charging');
   return parts.join(' · ');
 }

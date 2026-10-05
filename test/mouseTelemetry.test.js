@@ -48,3 +48,26 @@ test('a wire alone never implies charging and a real empty battery remains visib
   assert.equal(formatMouseTelemetry({ connection: 'wired', batteryPercent: 0, charging: false }), 'Wired · 0% battery · Not charging');
   assert.equal(formatMouseTelemetry({ connection: 'wired', batteryPercent: 95, charging: true }), 'Wired · 95% battery · Charging');
 });
+
+test('telemetry retains one baseline across cable, receiver, failures and app restart', async () => {
+  let timestamp = 1000;
+  let saved = {};
+  const readerOptions = { now: () => timestamp,
+    loadBatteryHistory: () => saved, saveBatteryHistory: (history) => { saved = history; } };
+  const read = createMouseTelemetryReader(readerOptions);
+  const backend = (productId, extra = {}) => ({ id: 'pulsar-x2-crazylight',
+    deviceInfo: { productId, path: String(productId) },
+    getBatteryStatus: async () => ({ batteryId: '1bcbc4', batteryPercent: 75,
+      voltageMv: 4016, charging: productId === 0x3524, ...extra }) });
+  assert.equal((await read(backend(0x5406))).batteryPercent, 79);
+  timestamp += 1000;
+  const cable = backend(0x3524, { batteryPercent: 95, voltageMv: 4172 });
+  assert.equal((await read(cable)).batteryPercent, 79);
+  read.reset();
+  timestamp += 1000;
+  assert.equal((await read(cable)).batteryPercent, 79);
+  const restarted = createMouseTelemetryReader(readerOptions);
+  assert.equal((await restarted(cable)).batteryPercent, 79);
+  assert.equal(formatMouseTelemetry({ connection: 'wired', charging: true }),
+    'Wired · Charging · Battery percentage unavailable');
+});

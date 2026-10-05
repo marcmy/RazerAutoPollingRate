@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   CMD_GET_ACTIVE_PROFILE,
   CMD_GET_BATTERY,
+  CMD_GET_DEVICE_STATUS,
   CMD_READ_MEMORY,
   CMD_WRITE_MEMORY,
   REPORT_ID,
@@ -15,6 +16,7 @@ const {
   encodePollingRate,
   parseActiveProfileReply,
   parseBatteryReply,
+  parseDeviceStatusReply,
   parseMemoryReadReply,
 } = require('../src/lib/mouseBackends/pulsarCrazyLightProtocol');
 
@@ -37,7 +39,7 @@ test('battery reply decodes percentage and charging with checksum and range vali
   for (const batteryPercent of [0, 95, 100]) {
     for (const flag of [0, 1]) {
       assert.deepEqual(parseBatteryReply(makeReply(CMD_GET_BATTERY, { 5: 2, 6: batteryPercent, 7: flag })),
-        { batteryPercent, charging: flag === 1 });
+        { batteryPercent, charging: flag === 1, voltageMv: null });
     }
   }
   for (const fields of [{ 5: 1 }, { 5: 2, 6: 255 }, { 5: 2, 6: 95, 7: 255 }]) {
@@ -47,6 +49,19 @@ test('battery reply decodes percentage and charging with checksum and range vali
   damaged[6] = 94;
   assert.throws(() => parseBatteryReply(damaged), /checksum/);
   assert.throws(() => parseBatteryReply(makeReply(0x0a)), /command/);
+});
+
+test('CrazyLight fixed voltage and address fields are decoded despite short firmware payload lengths', () => {
+  const wired = Buffer.from([8, 4, 0, 0, 0, 2, 95, 1, 16, 76, 0, 0, 0, 0, 0, 0, 139]);
+  const wireless = Buffer.from([8, 4, 0, 0, 0, 2, 95, 0, 15, 252, 0, 0, 0, 0, 0, 0, 221]);
+  assert.deepEqual(parseBatteryReply(wired), { batteryPercent: 95, charging: true, voltageMv: 4172 });
+  assert.deepEqual(parseBatteryReply(wireless), { batteryPercent: 95, charging: false, voltageMv: 4092 });
+  const identity = Buffer.from([8, 3, 0, 0, 0, 1, 1, 196, 203, 27, 0, 0, 0, 0, 0, 0, 158]);
+  assert.deepEqual(parseDeviceStatusReply(identity), { online: true, batteryId: '1bcbc4' });
+  assert.deepEqual(parseDeviceStatusReply(makeReply(CMD_GET_DEVICE_STATUS, { 5: 1 })),
+    { online: false, batteryId: null });
+  assert.throws(() => parseDeviceStatusReply(makeReply(CMD_GET_DEVICE_STATUS, { 5: 1, 6: 255 })), /connection status/);
+  assert.equal(parseBatteryReply(makeReply(CMD_GET_BATTERY, { 5: 2, 6: 95, 8: 255, 9: 255 })).voltageMv, null);
 });
 
 test('buildCommandPacket creates a 17-byte Nordic report with checksum', () => {

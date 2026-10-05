@@ -5,6 +5,7 @@ const { createCrazyLightHidTransport } = require('./pulsarCrazyLightHid');
 const {
   CMD_GET_ACTIVE_PROFILE,
   CMD_GET_BATTERY,
+  CMD_GET_DEVICE_STATUS,
   CMD_WRITE_MEMORY,
   REPORT_SIZE,
   buildCommandPacket,
@@ -14,6 +15,7 @@ const {
   encodePollingRate,
   parseActiveProfileReply,
   parseBatteryReply,
+  parseDeviceStatusReply,
   parseMemoryReadReply,
   validateReply,
 } = require('./pulsarCrazyLightProtocol');
@@ -224,8 +226,18 @@ function createPulsarCrazyLightBackend(options = {}) {
   }
 
   async function getBatteryStatus() {
+    let status;
+    try {
+      status = parseDeviceStatusReply(await sendCommand(
+        buildCommandPacket(CMD_GET_DEVICE_STATUS), CMD_GET_DEVICE_STATUS,
+      ));
+    } catch (error) {
+      // Older firmware can still supply battery data without a stable address.
+      log(`CrazyLight battery identity unavailable: ${error.message}`, true);
+    }
+    if (status && !status.online) throw new Error('CrazyLight battery unavailable while mouse is offline');
     const reply = await sendCommand(buildCommandPacket(CMD_GET_BATTERY), CMD_GET_BATTERY);
-    return parseBatteryReply(reply);
+    return { ...parseBatteryReply(reply), batteryId: status?.batteryId || null };
   }
 
   async function setPollingRate(rate) {

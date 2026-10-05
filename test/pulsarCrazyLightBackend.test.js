@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   CMD_GET_ACTIVE_PROFILE,
   CMD_GET_BATTERY,
+  CMD_GET_DEVICE_STATUS,
   CMD_READ_MEMORY,
   CMD_WRITE_MEMORY,
   buildCommandPacket,
@@ -72,6 +73,7 @@ function createBackendForDevice(device, diagnostics = [], options = {}) {
 test('wired CrazyLight battery reads use the Nordic collection without enabling writes', async () => {
   for (const productId of [0x3414, 0x3524]) {
     const device = createFakeDevice([
+      buildCommandPacket(CMD_GET_DEVICE_STATUS, { 5: 1, 6: 1, 7: 0xc4, 8: 0xcb, 9: 0x1b }),
       buildCommandPacket(0x0a),
       buildCommandPacket(CMD_GET_BATTERY, { 5: 2, 6: 95, 7: 1 }),
       buildCommandPacket(CMD_READ_MEMORY, { 5: 1, 6: 0x20 }),
@@ -83,13 +85,13 @@ test('wired CrazyLight battery reads use the Nordic collection without enabling 
     assert.equal(backend.connection, 'wired');
     assert.equal(backend.canWrite, false);
     assert.equal(backend.capabilities.turboMode, false);
-    assert.deepEqual(await backend.getBatteryStatus(), { batteryPercent: 95, charging: true });
+    assert.deepEqual(await backend.getBatteryStatus(), { batteryPercent: 95, charging: true, voltageMv: null, batteryId: '1bcbc4' });
     assert.equal(await backend.getPollingRate(), productId === 0x3414 ? 1000 : 4000);
     await assert.rejects(() => backend.setPollingRate(1000), /hardware-validation/);
     await assert.rejects(() => backend.setTurboMode(true, 1), /hardware-validation/);
     await backend.close();
     assert.deepEqual(device.calls.filter(([name]) => name === 'controlTransferOut').map((call) => call[2][1]),
-      [CMD_GET_BATTERY, CMD_READ_MEMORY]);
+      [CMD_GET_DEVICE_STATUS, CMD_GET_BATTERY, CMD_READ_MEMORY]);
   }
 });
 
@@ -100,6 +102,17 @@ test('CrazyLight backend remains read-only unless hardware-validation writes are
     () => backend.setPollingRate(8000),
     /hardware-validation/i,
   );
+});
+
+test('an offline mouse does not supply a stale receiver battery percentage', async () => {
+  const device = createFakeDevice([buildCommandPacket(CMD_GET_DEVICE_STATUS, { 5: 1, 6: 0 })]);
+  const backend = createBackendForDevice(device);
+  await backend.discover();
+  await backend.open();
+  await assert.rejects(() => backend.getBatteryStatus(), /offline/);
+  await backend.close();
+  assert.deepEqual(device.calls.filter(([name]) => name === 'controlTransferOut').map((call) => call[2][1]),
+    [CMD_GET_DEVICE_STATUS]);
 });
 
 test('CrazyLight discovery rejects a device whose VID or PID is not the validated pair', async () => {
