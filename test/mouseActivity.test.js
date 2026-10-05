@@ -33,7 +33,7 @@ function discovery(...devices) {
       })),
     knownCrazyLight: devices
       .filter((device) => device.deviceDescriptor.idVendor === 0x3710
-        && device.deviceDescriptor.idProduct === 0x5406)
+        && [0x5406, 0x3414, 0x3524].includes(device.deviceDescriptor.idProduct))
       .map((device) => ({
         device,
         identity: {
@@ -89,6 +89,21 @@ function makeHidApi(devices) {
     opened,
   };
 }
+
+test('CrazyLight selection follows cable attachment and removal without switching to another vendor', () => {
+  const monitor = makeRawMonitorHarness();
+  const tracker = createMouseActivityTracker({ platform: 'win32', rawMouseMonitorFactory: monitor.factory });
+  const receiver = rawUsb(0x3710, 0x5406);
+  const cable = rawUsb(0x3710, 0x3524);
+  const razer = rawUsb(0x1532, 0x00e5);
+  const fallback = { backend: 'pulsar', vendorId: 0x3710, productId: 0x5406 };
+  assert.equal(tracker.choosePreferredMouse(discovery(receiver), fallback).productId, 0x5406);
+  assert.equal(tracker.choosePreferredMouse(discovery(receiver, cable, razer), fallback).productId, 0x3524);
+  assert.equal(tracker.choosePreferredMouse(discovery(receiver, razer), fallback).productId, 0x5406);
+  monitor.emit(0x1532, 0x00e5);
+  assert.equal(tracker.choosePreferredMouse(discovery(receiver, cable, razer), fallback).backend, 'razer');
+  tracker.close();
+});
 
 test('activity classifier covers every Razer dongle identity known by the app plus CrazyLight', () => {
   for (const productId of Object.keys(dongles).map(Number)) {

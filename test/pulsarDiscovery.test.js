@@ -16,6 +16,12 @@ function rawUsb(vendorId, productId) {
   };
 }
 
+test('only documented or hardware-confirmed CrazyLight wired identities join discovery', () => {
+  const result = classifyUsbDevices([rawUsb(0x3710, 0x3414), rawUsb(0x3710, 0x3524), rawUsb(0x3710, 0x3525)]);
+  assert.deepEqual(result.knownCrazyLight.map((entry) => entry.identity.productId), [0x3414, 0x3524]);
+  assert.deepEqual(result.unknownPulsar.map((entry) => entry.identity.productId), [0x3525]);
+});
+
 test('getUsbIdentity accepts both WebUSB and node-usb device shapes', () => {
   assert.deepEqual(getUsbIdentity({ vendorId: 0x3710, productId: 0x5406 }), {
     vendorId: 0x3710,

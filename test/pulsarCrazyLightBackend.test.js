@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   CMD_GET_ACTIVE_PROFILE,
+  CMD_GET_BATTERY,
   CMD_READ_MEMORY,
   CMD_WRITE_MEMORY,
   buildCommandPacket,
@@ -67,6 +68,30 @@ function createBackendForDevice(device, diagnostics = [], options = {}) {
     ...options,
   });
 }
+
+test('wired CrazyLight battery reads use the Nordic collection without enabling writes', async () => {
+  for (const productId of [0x3414, 0x3524]) {
+    const device = createFakeDevice([
+      buildCommandPacket(0x0a),
+      buildCommandPacket(CMD_GET_BATTERY, { 5: 2, 6: 95, 7: 1 }),
+      buildCommandPacket(CMD_READ_MEMORY, { 5: 1, 6: 0x20 }),
+    ]);
+    device.productId = productId;
+    const backend = createBackendForDevice(device, [], { preferredProductId: productId, allowHardwareValidationWrites: true });
+    await backend.discover();
+    await backend.open();
+    assert.equal(backend.connection, 'wired');
+    assert.equal(backend.canWrite, false);
+    assert.equal(backend.capabilities.turboMode, false);
+    assert.deepEqual(await backend.getBatteryStatus(), { batteryPercent: 95, charging: true });
+    assert.equal(await backend.getPollingRate(), productId === 0x3414 ? 1000 : 4000);
+    await assert.rejects(() => backend.setPollingRate(1000), /hardware-validation/);
+    await assert.rejects(() => backend.setTurboMode(true, 1), /hardware-validation/);
+    await backend.close();
+    assert.deepEqual(device.calls.filter(([name]) => name === 'controlTransferOut').map((call) => call[2][1]),
+      [CMD_GET_BATTERY, CMD_READ_MEMORY]);
+  }
+});
 
 test('CrazyLight backend remains read-only unless hardware-validation writes are explicit', async () => {
   const backend = createBackendForDevice(createFakeDevice());

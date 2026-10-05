@@ -6,6 +6,7 @@ const REPORT_SIZE = 17;
 const CMD_WRITE_MEMORY = 0x07;
 const CMD_READ_MEMORY = 0x08;
 const CMD_GET_ACTIVE_PROFILE = 0x0E;
+const CMD_GET_BATTERY = 0x04;
 
 const POLLING_RATE_BY_VALUE = new Map([
   [0x08, 125],
@@ -129,6 +130,14 @@ function parseActiveProfileReply(report) {
   return reply[6] + 1;
 }
 
+function parseBatteryReply(report) {
+  const reply = validateReply(report, CMD_GET_BATTERY);
+  if (reply[5] < 2 || reply[6] > 100 || ![0, 1].includes(reply[7])) {
+    throw new Error('CrazyLight returned an unsupported battery percentage or charging flag');
+  }
+  return { batteryPercent: reply[6], charging: reply[7] === 1 };
+}
+
 function parseMemoryReadReply(report, expectedAddress, expectedLength) {
   const reply = validateReply(report, CMD_READ_MEMORY);
   const address = (reply[3] << 8) | reply[4];
@@ -145,6 +154,7 @@ function parseMemoryReadReply(report, expectedAddress, expectedLength) {
 
 module.exports = {
   CMD_GET_ACTIVE_PROFILE,
+  CMD_GET_BATTERY,
   CMD_READ_MEMORY,
   CMD_WRITE_MEMORY,
   POLLING_RATE_BY_VALUE,
@@ -158,6 +168,7 @@ module.exports = {
   decodePollingRate,
   encodePollingRate,
   parseActiveProfileReply,
+  parseBatteryReply,
   parseMemoryReadReply,
   validateReply,
 };

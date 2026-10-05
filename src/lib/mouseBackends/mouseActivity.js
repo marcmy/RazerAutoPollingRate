@@ -3,9 +3,9 @@
 const { dongles } = require('../devices');
 const { requestLatestCheck } = require('../checkGuard');
 const {
-  CRAZYLIGHT_PRODUCT_ID,
   CRAZYLIGHT_VENDOR_ID,
-} = require('./pulsarCrazyLight');
+  crazyLightConnection,
+} = require('./pulsarCrazyLightIdentity');
 const { createWindowsRawMouseMonitor } = require('./windowsRawMouseActivity');
 
 const RAZER_VENDOR_ID = 0x1532;
@@ -45,7 +45,7 @@ function knownMouseForIdentity(vendorId, productId, extra = {}) {
     };
   }
 
-  if (vendorId === CRAZYLIGHT_VENDOR_ID && productId === CRAZYLIGHT_PRODUCT_ID) {
+  if (vendorId === CRAZYLIGHT_VENDOR_ID && crazyLightConnection(productId)) {
     return {
       backend: 'pulsar',
       vendorId,
@@ -310,6 +310,18 @@ function createMouseActivityTracker(options = {}) {
     refresh();
 
     const available = discoveryTargets(discovery);
+
+    // Cable and receiver are two transports for this model. Prefer the cable
+    // while attached, then return to the receiver when it is removed. Keep
+    // selection of a different vendor governed by actual mouse activity.
+    if (selectedMouse?.backend === 'pulsar') {
+      const wired = available.find((mouse) => mouse.backend === 'pulsar'
+        && crazyLightConnection(mouse.productId) === 'wired');
+      const wireless = available.find((mouse) => mouse.backend === 'pulsar'
+        && crazyLightConnection(mouse.productId) === 'wireless');
+      if (wired) selectedMouse = wired;
+      else if (crazyLightConnection(selectedMouse.productId) === 'wired' && wireless) selectedMouse = wireless;
+    }
 
     // Once a mouse identity has been selected, USB enumeration is no longer
     // allowed to replace it. Wireless devices can disappear/reappear from a

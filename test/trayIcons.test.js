@@ -9,7 +9,25 @@ const {
   getPollingRateIconTemplate,
   installPollingRateIconColorizer,
   tintBitmap,
+  buildPollingBatteryBitmap,
 } = require('../src/lib/trayIcons');
+
+test('two-row tray bitmaps fit every rate and battery boundary at normal and high DPI', () => {
+  for (const rate of [125, 250, 500, 1000, 2000, 4000, 8000]) {
+    for (const battery of [0, 9, 20, 95, 100]) {
+      for (const scale of [1, 2]) {
+        const bitmap = buildPollingBatteryBitmap(rate, battery, true, 'RGBA', scale);
+        const rowBytes = 16 * scale * 4;
+        assert.equal(bitmap.length, 16 * scale * 16 * scale * 4);
+        assert.ok(bitmap.subarray(rowBytes * scale, rowBytes * 6 * scale).some((value) => value !== 0));
+        assert.ok(bitmap.subarray(rowBytes * 9 * scale, rowBytes * 14 * scale).some((value) => value !== 0));
+        assert.ok(bitmap.subarray(rowBytes * 6 * scale, rowBytes * 9 * scale).every((value) => value === 0));
+      }
+    }
+  }
+  assert.throws(() => buildPollingBatteryBitmap(1000, 101, false), /Invalid/);
+  assert.throws(() => buildPollingBatteryBitmap(1000, null, false), /Invalid/);
+});
 
 const expectedColors = new Map([
   [125, '#8B00FF'],

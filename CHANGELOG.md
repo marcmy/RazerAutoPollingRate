@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- Added CrazyLight battery percentage below the polling rate in the tray icon, plus battery and charging status in the tooltip and Settings. Battery reads are refreshed once a minute and unavailable readings do not interrupt automatic rate switching.
+- Added read-only wired CrazyLight detection for USB IDs `3710:3414` and `3710:3524`, so plugging in the charging cable no longer appears disconnected. The wired connection shows its reported rate; wireless polling-rate and Turbo automation resume after unplugging the cable.
+
 ### Changed
 
 - The post-update What's New window now shows the latest five release versions and provides a link to the full changelog.

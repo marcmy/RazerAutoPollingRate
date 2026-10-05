@@ -36,6 +36,8 @@ const {
 } = require('./lib/githubReleaseClient');
 const { supportsTurboMode, applyTurboMode } = require('./lib/mouseBackends/turboAutomation');
 const { createPreferredMouseBackend } = require('./lib/mouseBackends/runtime');
+const { createMouseTelemetryReader, formatMouseTelemetry } = require('./lib/mouseTelemetry');
+const { createPollingBatteryIconFactory, getPollingRateFromIconPath } = require('./lib/trayIcons');
 const {
   closeAllWindowsHidOutputBridges,
 } = require('./lib/mouseBackends/windowsHidOutputReport');
@@ -94,6 +96,8 @@ const appPath = app.getAppPath();
 const legacyStore = new Store();
 const assetsFolder = 'src/assets/';
 const checkGuard = createCheckGuard();
+const readMouseTelemetry = createMouseTelemetryReader();
+const createPollingBatteryIcon = createPollingBatteryIconFactory(nativeImage, path.join(appPath, 'src/assets/8000a.png'));
 const appDisplayVersion = getDisplayVersion(packageMetadata, app.getVersion());
 const UPDATE_API_URL = 'https://api.github.com/repos/marcmy/RazerAutoPollingRate/releases/latest';
 const UPDATE_RELEASES_URL = 'https://api.github.com/repos/marcmy/RazerAutoPollingRate/releases?per_page=5';
@@ -148,6 +152,10 @@ let runtimeStatus = {
   provider: null,
   backend: null,
   deviceName: null,
+  connection: null,
+  batteryPercent: null,
+  charging: null,
+  batteryError: null,
   error: null,
 };
 
@@ -205,8 +213,12 @@ function setTrayStatus(status) {
   }
 
   const iconName = status.icon || 'loading.png';
-  tray.setImage(nativeImage.createFromPath(path.join(appPath, assetsFolder + iconName)));
-  tray.setToolTip(status.tooltip);
+  const rate = getPollingRateFromIconPath(iconName);
+  tray.setImage(rate && runtimeStatus.deviceName && Number.isInteger(runtimeStatus.batteryPercent)
+    ? createPollingBatteryIcon(rate, runtimeStatus.batteryPercent, runtimeStatus.charging)
+    : nativeImage.createFromPath(path.join(appPath, assetsFolder + iconName)));
+  const mouseDetails = runtimeStatus.deviceName ? formatMouseTelemetry(runtimeStatus) : '';
+  tray.setToolTip(mouseDetails ? `${status.tooltip}\n${mouseDetails}` : status.tooltip);
 }
 
 function getPollingRateIcon(pollingRate, isActive) {
@@ -1808,10 +1820,21 @@ async function checkPollingRate(firstRun) {
     });
 
     const manageTurbo = turboAutomationUsed || entries.some((entry) => entry.turboMode === true);
+    if (!detectionEnabled) {
+      runtimeStatus.batteryPercent = null;
+      runtimeStatus.charging = null;
+      runtimeStatus.batteryError = null;
+      readMouseTelemetry.reset();
+    }
     if (!detectionEnabled && !manageTurbo) {
       runtimeStatus.currentRate = null;
       runtimeStatus.backend = null;
       runtimeStatus.deviceName = null;
+      runtimeStatus.connection = null;
+      runtimeStatus.batteryPercent = null;
+      runtimeStatus.charging = null;
+      runtimeStatus.batteryError = null;
+      readMouseTelemetry.reset();
       runtimeStatus.turboSupported = false;
       recordDiagnosticEvent('usb_access_decision', {
         access: false,
@@ -1832,6 +1855,12 @@ async function checkPollingRate(firstRun) {
 
     runtimeStatus.backend = backend.id;
     runtimeStatus.deviceName = backend.deviceInfo.productName || backend.name;
+    if (runtimeStatus.connection !== (backend.connection || null)) {
+      runtimeStatus.batteryPercent = null;
+      runtimeStatus.charging = null;
+      runtimeStatus.batteryError = null;
+    }
+    runtimeStatus.connection = backend.connection || null;
     runtimeStatus.turboSupported = false;
     runtimeStatus.turboMode = null;
     runtimeStatus.turboError = null;
@@ -1853,10 +1882,13 @@ async function checkPollingRate(firstRun) {
     }
     if (!detectionEnabled) return;
     let pollingRate = await backend.getPollingRate();
+    // Read-only wired status still shows the reported rate and battery;
+    // wireless rate/Turbo writes retain the hardware-validated behavior.
+    const statusOnly = backend.canWrite === false;
     const backendSupports8k = typeof backend.is8kCompatible === 'function'
       ? backend.is8kCompatible()
       : Array.isArray(backend.supportedRates) && backend.supportedRates.includes(8000);
-    const resolvedTarget = resolveSupportedPollingRate(requestedTarget, {
+    const resolvedTarget = statusOnly ? { rate: pollingRate } : resolveSupportedPollingRate(requestedTarget, {
       is8kCompatible: backendSupports8k,
     });
     if (!resolvedTarget.rate) {
@@ -1901,7 +1933,7 @@ async function checkPollingRate(firstRun) {
       });
     }
 
-    if (targetRate !== pollingRate) {
+    if (!statusOnly && targetRate !== pollingRate) {
       recordDiagnosticEvent('polling_rate_change_requested', {
         from: pollingRate,
         to: targetRate,
@@ -1917,8 +1949,14 @@ async function checkPollingRate(firstRun) {
       });
     }
 
-    const isActive = Boolean(selected.matchedProcess && pollingRate === targetRate);
-    if (setRate[0] !== pollingRate || setRate[1] !== isActive) {
+    Object.assign(runtimeStatus, await readMouseTelemetry(backend));
+    if (!runtimeStatus.deviceName) {
+      runtimeStatus.batteryPercent = null;
+      runtimeStatus.charging = null;
+    }
+    const telemetryKey = `${runtimeStatus.connection}:${runtimeStatus.batteryPercent}:${runtimeStatus.charging}`;
+    const isActive = Boolean(!statusOnly && selected.matchedProcess && pollingRate === targetRate);
+    if (setRate[0] !== pollingRate || setRate[1] !== isActive || setRate[2] !== telemetryKey) {
       if (pollingRate !== targetRate) {
         setTrayStatus({
           icon: 'loading.png',
@@ -1928,9 +1966,11 @@ async function checkPollingRate(firstRun) {
       } else {
         setTrayStatus({
           icon: getPollingRateIcon(pollingRate, isActive),
-          tooltip: `Current ${pollingRate} Hz; target ${targetRate} Hz; ${modeText}; ${matchedText}`,
+          tooltip: statusOnly
+            ? `Current ${pollingRate} Hz; automatic switching unavailable while wired`
+            : `Current ${pollingRate} Hz; target ${targetRate} Hz; ${modeText}; ${matchedText}`,
         });
-        setRate = [pollingRate, isActive];
+        setRate = [pollingRate, isActive, telemetryKey];
       }
     }
 
@@ -1941,6 +1981,11 @@ async function checkPollingRate(firstRun) {
     setRate = [0, false];
     runtimeStatus.error = errorMessage;
     runtimeStatus.deviceName = null;
+    runtimeStatus.connection = null;
+    runtimeStatus.batteryPercent = null;
+    runtimeStatus.charging = null;
+    runtimeStatus.batteryError = null;
+    readMouseTelemetry.reset();
     runtimeStatus.turboSupported = false;
 
     if (lastPollingError !== errorMessage) {

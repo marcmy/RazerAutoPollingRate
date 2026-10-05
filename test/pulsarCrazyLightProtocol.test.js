@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 
 const {
   CMD_GET_ACTIVE_PROFILE,
+  CMD_GET_BATTERY,
   CMD_READ_MEMORY,
   CMD_WRITE_MEMORY,
   REPORT_ID,
@@ -13,6 +14,7 @@ const {
   decodePollingRate,
   encodePollingRate,
   parseActiveProfileReply,
+  parseBatteryReply,
   parseMemoryReadReply,
 } = require('../src/lib/mouseBackends/pulsarCrazyLightProtocol');
 
@@ -30,6 +32,22 @@ function makeReply(command, fields = {}) {
   reply[16] = checksum(reply);
   return reply;
 }
+
+test('battery reply decodes percentage and charging with checksum and range validation', () => {
+  for (const batteryPercent of [0, 95, 100]) {
+    for (const flag of [0, 1]) {
+      assert.deepEqual(parseBatteryReply(makeReply(CMD_GET_BATTERY, { 5: 2, 6: batteryPercent, 7: flag })),
+        { batteryPercent, charging: flag === 1 });
+    }
+  }
+  for (const fields of [{ 5: 1 }, { 5: 2, 6: 255 }, { 5: 2, 6: 95, 7: 255 }]) {
+    assert.throws(() => parseBatteryReply(makeReply(CMD_GET_BATTERY, fields)), /unsupported battery/);
+  }
+  const damaged = makeReply(CMD_GET_BATTERY, { 5: 2, 6: 95, 7: 1 });
+  damaged[6] = 94;
+  assert.throws(() => parseBatteryReply(damaged), /checksum/);
+  assert.throws(() => parseBatteryReply(makeReply(0x0a)), /command/);
+});
 
 test('buildCommandPacket creates a 17-byte Nordic report with checksum', () => {
   const packet = buildCommandPacket(CMD_GET_ACTIVE_PROFILE);

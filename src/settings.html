@@ -1570,11 +1570,17 @@
 
     function renderMouse() {
       const runtime = state.runtime;
+      const power = [];
+      if (runtime?.connection === 'wired') power.push('Wired');
+      if (runtime?.connection === 'wireless') power.push('Wireless');
+      if (Number.isInteger(runtime?.batteryPercent)) power.push(`${runtime.batteryPercent}% battery`);
+      if (runtime?.charging === true) power.push('Charging');
+      if (runtime?.charging === false && runtime.connection === 'wired') power.push('Not charging');
       byId('detected-mouse').textContent = runtime?.deviceName
-        ? `Mouse: ${runtime.deviceName}${runtime.turboSupported && runtime.turboMode != null ? (runtime.turboMode ? ' · Turbo on' : ' · Turbo off') : ''}`
+        ? `Mouse: ${runtime.deviceName}${power.length ? ` · ${power.join(' · ')}` : ''}${runtime.turboSupported && runtime.turboMode != null ? (runtime.turboMode ? ' · Turbo on' : ' · Turbo off') : ''}`
         : (runtime?.enabled === false ? 'Mouse detection paused' : 'No supported mouse connected');
       if (runtime?.backend === 'pulsar-x2-crazylight' && runtime.turboError) byId('detected-mouse').textContent += ' · Turbo unavailable';
-      byId('detected-mouse').title = runtime?.turboError || runtime?.error || '';
+      byId('detected-mouse').title = runtime?.error || runtime?.batteryError || runtime?.turboError || '';
       if (state.modalCard) byId('modal-turbo-row').classList.toggle('hidden', !runtime?.turboSupported);
     }
 
