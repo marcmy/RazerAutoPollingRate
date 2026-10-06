@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- Fixed protected games such as Apex Legends being unable to distinguish Steam and EA installations when Windows hides the usual process path. A limited-access Windows lookup now resolves the exact installation, applies its polling rate and Turbo setting, and highlights only its game card. Cards now distinguish focused games from inactive or unidentified copies.
+- Fixed differing Turbo settings on same-name game copies blocking their shared polling rate. If both path lookups fail, the agreed polling rate still applies and conflicting Turbo stays off with an explanation in the tray and Settings hover details.
 - Fixed CrazyLight battery estimates jumping when the charging cable is connected. Estimates now use Pulsar's voltage calibration and gradual changes, with battery history saved for the same mouse across wired/wireless connections and app restarts instead of directly displaying the coarse firmware percentage.
 - Updated Electron Forge packaging tools to remove vulnerable transitive dependencies that blocked the Windows build audit.
 - Fixed customized copies of the same game (such as Steam and EA Apex Legends) falling back to the desktop rate when Windows hides the executable path. Matching now accepts same-name rules whose effective polling rate, Turbo setting, and detection mode agree; conflicting rules still require an exact path.

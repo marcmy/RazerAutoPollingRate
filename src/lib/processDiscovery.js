@@ -30,21 +30,33 @@ function normalizeDiscoveredProcess(item) {
   };
 }
 
-function getRunningProcesses() {
+function getRunningLookupCommand() {
+  return `${getWindowsProcessHelpersCommand()}
+Get-CimInstance Win32_Process | ForEach-Object {
+  $path = $_.ExecutablePath
+  if (-not $path) {
+    try { $path = [Win32ForegroundWindow]::GetExecutablePath($_.ProcessId) } catch {}
+  }
+  [pscustomobject]@{ Name = $_.Name; ExecutablePath = $path }
+} | ConvertTo-Json -Compress
+`;
+}
+
+function getRunningProcesses(commandRunner = execFileSync) {
   try {
-    const output = execFileSync('powershell.exe', [
+    const output = commandRunner('powershell.exe', [
       '-NoProfile',
       '-ExecutionPolicy',
       'Bypass',
       '-Command',
-      'Get-CimInstance Win32_Process | Select-Object Name,ExecutablePath | ConvertTo-Json -Compress',
+      getRunningLookupCommand(),
     ], { encoding: 'utf8', windowsHide: true });
 
     return parseJsonOutput(output)
       .map(normalizeDiscoveredProcess)
       .filter(Boolean);
   } catch (error) {
-    const output = execFileSync('tasklist', ['/fo', 'csv', '/nh'], { encoding: 'utf8', windowsHide: true });
+    const output = commandRunner('tasklist', ['/fo', 'csv', '/nh'], { encoding: 'utf8', windowsHide: true });
     return parseTasklistCsv(output);
   }
 }
@@ -58,76 +70,38 @@ function parseForegroundProcessOutput(output) {
   return normalizeDiscoveredProcess(processes[0]);
 }
 
-function getForegroundLookupCommand() {
+function getWindowsProcessHelpersCommand() {
   return `
 Add-Type @"
 using System;
+using System.Text;
 using System.Runtime.InteropServices;
 public class Win32ForegroundWindow {
   [DllImport("user32.dll")]
   public static extern IntPtr GetForegroundWindow();
   [DllImport("user32.dll")]
   public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-}
-"@
-$handle = [Win32ForegroundWindow]::GetForegroundWindow()
-$processId = 0
-[void][Win32ForegroundWindow]::GetWindowThreadProcessId($handle, [ref]$processId)
-if ($processId -eq 0) { return }
-$name = $null
-$path = $null
-try {
-  $processInfo = Get-CimInstance Win32_Process -Filter "ProcessId = $processId" -ErrorAction Stop
-  if ($processInfo) {
-    $name = $processInfo.Name
-    $path = $processInfo.ExecutablePath
-  }
-} catch {}
-if (-not $name) {
-  try {
-    $process = Get-Process -Id $processId -ErrorAction Stop
-    $name = $process.ProcessName + ".exe"
+  [DllImport("kernel32.dll", SetLastError = true)]
+  private static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);
+  [DllImport("kernel32.dll", EntryPoint = "QueryFullProcessImageNameW", ExactSpelling = true, CharSet = CharSet.Unicode, SetLastError = true)]
+  private static extern bool QueryFullProcessImageName(IntPtr handle, uint flags, StringBuilder path, ref uint size);
+  [DllImport("kernel32.dll")]
+  private static extern bool CloseHandle(IntPtr handle);
+
+  public static string GetExecutablePath(uint processId) {
+    // Only query the image name; protected games may deny broader WMI queries.
+    IntPtr handle = OpenProcess(0x1000, false, processId);
+    if (handle == IntPtr.Zero) return null;
     try {
-      $path = $process.Path
-    } catch {
-      $path = $null
+      StringBuilder path = new StringBuilder(32768);
+      uint size = (uint)path.Capacity;
+      return QueryFullProcessImageName(handle, 0, path, ref size) ? path.ToString() : null;
+    } finally {
+      CloseHandle(handle);
     }
-  } catch {}
-}
-if (-not $name) {
-  try {
-    $rows = tasklist /FI "PID eq $processId" /FO CSV /NH 2>$null |
-      ConvertFrom-Csv -Header ImageName,PID,SessionName,SessionNumber,MemUsage
-    $row = $rows | Where-Object { $_.PID -eq [string]$processId } | Select-Object -First 1
-    if ($row -and $row.ImageName -and $row.ImageName -notmatch '^INFO:') {
-      $name = $row.ImageName
-    }
-  } catch {}
-}
-if (-not $name) { return }
-[pscustomobject]@{ Name = $name; ExecutablePath = $path } | ConvertTo-Json -Compress
-`;
-}
-
-function getForegroundWatcherCommand(pollMilliseconds = FOREGROUND_WATCH_INTERVAL_MS) {
-  return `
-Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public class Win32ForegroundWindow {
-  [DllImport("user32.dll")]
-  public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")]
-  public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+  }
 }
 "@
-
-function Get-ForegroundProcessId {
-  $handle = [Win32ForegroundWindow]::GetForegroundWindow()
-  $processId = 0
-  [void][Win32ForegroundWindow]::GetWindowThreadProcessId($handle, [ref]$processId)
-  return $processId
-}
 
 function Get-ProcessJsonById($processId) {
   if ($processId -eq 0) { return $null }
@@ -161,8 +135,32 @@ function Get-ProcessJsonById($processId) {
       }
     } catch {}
   }
+  if (-not $path) {
+    try { $path = [Win32ForegroundWindow]::GetExecutablePath($processId) } catch {}
+  }
+  if (-not $name -and $path) { $name = [IO.Path]::GetFileName($path) }
   if (-not $name) { return $null }
   [pscustomobject]@{ Name = $name; ExecutablePath = $path } | ConvertTo-Json -Compress
+}
+`;
+}
+
+function getForegroundLookupCommand() {
+  return `${getWindowsProcessHelpersCommand()}
+$handle = [Win32ForegroundWindow]::GetForegroundWindow()
+$processId = 0
+[void][Win32ForegroundWindow]::GetWindowThreadProcessId($handle, [ref]$processId)
+Get-ProcessJsonById $processId
+`;
+}
+
+function getForegroundWatcherCommand(pollMilliseconds = FOREGROUND_WATCH_INTERVAL_MS) {
+  return `${getWindowsProcessHelpersCommand()}
+function Get-ForegroundProcessId {
+  $handle = [Win32ForegroundWindow]::GetForegroundWindow()
+  $processId = 0
+  [void][Win32ForegroundWindow]::GetWindowThreadProcessId($handle, [ref]$processId)
+  return $processId
 }
 
 $lastProcessId = -1
@@ -344,6 +342,7 @@ module.exports = {
   getRunningProcesses,
   getForegroundLookupCommand,
   getForegroundWatcherCommand,
+  getWindowsProcessHelpersCommand,
   handleForegroundWatcherLine,
   parseForegroundProcessOutput,
   parseJsonOutput,

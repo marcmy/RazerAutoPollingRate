@@ -9,7 +9,8 @@ function supportsTurboMode(backend) {
 
 async function applyTurboMode(backend, selection, enabled) {
   if (!supportsTurboMode(backend)) return null;
-  const target = enabled && selection.matchedRule?.turboMode === true;
+  const target = enabled && selection.turboModeAmbiguous !== true
+    && selection.matchedRule?.turboMode === true;
   const profile = await backend.getActiveProfile();
   const current = await backend.getTurboMode();
   if (await backend.getActiveProfile() !== profile) {

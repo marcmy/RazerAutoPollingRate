@@ -191,15 +191,47 @@ test('same-name copies can agree through inherited rate and detection mode', () 
   }).matchedRule, null);
 });
 
-test('pathless same-name rules still refuse conflicting rate, Turbo, or detection mode', () => {
+test('pathless same-name rules still refuse conflicting rate or detection mode', () => {
   for (const settings of [
     ['4000 turbo=on', '1000 turbo=on'],
-    ['4000 turbo=on', '4000'],
     ['4000 foreground turbo=on', '4000 running turbo=on'],
   ]) {
     const selected = selectApexCopies(settings);
     assert.equal(selected.targetRate, 125);
     assert.equal(selected.matchedRule, null);
+  }
+});
+
+test('a Turbo-only disagreement preserves the shared polling rate in either rule order and detection mode', () => {
+  for (const mode of ['foreground', 'running']) {
+    for (const settings of [
+      [`default ${mode} turbo=on`, `4000 ${mode}`],
+      [`4000 ${mode}`, `default ${mode} turbo=on`],
+    ]) {
+      const selected = selectApexCopies(settings, {
+        runningProcesses: [{ processName: 'r5apex_dx12.exe', executablePath: null }],
+      });
+      assert.equal(selected.targetRate, 4000);
+      assert.ok(selected.matchedRule);
+      assert.equal(selected.turboModeAmbiguous, true);
+      assert.equal(selected.matchedDetectionMode, mode);
+    }
+  }
+});
+
+test('exact Apex paths resolve Turbo-only conflicts and outrank a pathless running copy', () => {
+  for (const mode of ['foreground', 'running']) {
+    for (let index = 0; index < apexPaths.length; index += 1) {
+      const known = { processName: 'r5apex_dx12.exe', executablePath: apexPaths[index] };
+      const selected = selectApexCopies([`4000 ${mode} turbo=on`, `4000 ${mode}`], {
+        foregroundProcess: known,
+        runningProcesses: [{ processName: 'r5apex_dx12.exe', executablePath: null }, known],
+      });
+      assert.equal(selected.targetRate, 4000);
+      assert.equal(selected.matchedRule.turboMode === true, index === 0);
+      assert.equal(selected.matchedRule.executablePath, apexPaths[index].toLowerCase());
+      assert.equal(selected.turboModeAmbiguous, false);
+    }
   }
 });
 

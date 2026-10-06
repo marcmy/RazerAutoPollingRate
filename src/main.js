@@ -144,6 +144,8 @@ let runtimeStatus = {
   enabled: true,
   processName: null,
   executablePath: null,
+  matchedProcessName: null,
+  matchedExecutablePath: null,
   matchedProcess: null,
   source: 'inactive',
   detectionMode: null,
@@ -159,6 +161,7 @@ let runtimeStatus = {
   batteryPercent: null,
   charging: null,
   batteryError: null,
+  turboModeAmbiguous: false,
   error: null,
 };
 
@@ -222,7 +225,9 @@ function setTrayStatus(status) {
     ? createPollingBatteryIcon(rate, runtimeStatus.batteryPercent, runtimeStatus.charging)
     : nativeImage.createFromPath(path.join(appPath, assetsFolder + iconName)));
   const mouseDetails = runtimeStatus.deviceName ? formatMouseTelemetry(runtimeStatus) : '';
-  tray.setToolTip(mouseDetails ? `${status.tooltip}\n${mouseDetails}` : status.tooltip);
+  const turboDetails = runtimeStatus.turboSupported && runtimeStatus.turboModeAmbiguous
+    ? 'Turbo off: matching game copies have different Turbo settings' : '';
+  tray.setToolTip([status.tooltip, mouseDetails, turboDetails].filter(Boolean).join('\n'));
 }
 
 function getPollingRateIcon(pollingRate, isActive) {
@@ -1735,6 +1740,8 @@ function updateRuntimeSelection(selected, foregroundProcess, requestedTarget) {
     processName: foregroundProcess ? foregroundProcess.processName : null,
     executablePath: foregroundProcess ? foregroundProcess.executablePath : null,
     matchedProcess: selected.matchedProcess,
+    matchedProcessName: selected.matchedProcessInfo?.processName || selected.game?.processName || null,
+    matchedExecutablePath: selected.matchedProcessInfo?.executablePath || selected.game?.executablePath || null,
     source: selected.source,
     detectionMode: selected.matchedDetectionMode,
     requestedTarget,
@@ -1742,6 +1749,7 @@ function updateRuntimeSelection(selected, foregroundProcess, requestedTarget) {
     gameId: selected.game ? selected.game.id : null,
     gameName: selected.game ? selected.game.name : null,
     provider: selected.game ? selected.game.provider : null,
+    turboModeAmbiguous: selected.turboModeAmbiguous === true,
     error: null,
   };
 }
@@ -1813,12 +1821,15 @@ async function checkPollingRate(firstRun) {
       selectedProcess: selected.matchedProcess || 'inactive',
       requestedTarget,
       game: selected.game ? selected.game.name : null,
+      turboModeAmbiguous: selected.turboModeAmbiguous === true,
     }, {
       key: [
         detectionEnabled ? getDetectionMode() : 'disabled',
         selected.matchedDetectionMode || 'none',
         selected.source,
         selected.matchedProcess || 'inactive',
+        selected.matchedProcessInfo?.executablePath || 'path unavailable',
+        selected.turboModeAmbiguous === true,
         requestedTarget,
       ].join('|'),
     });
@@ -1958,7 +1969,7 @@ async function checkPollingRate(firstRun) {
       runtimeStatus.batteryPercent = null;
       runtimeStatus.charging = null;
     }
-    const telemetryKey = `${runtimeStatus.connection}:${runtimeStatus.batteryPercent}:${runtimeStatus.charging}`;
+    const telemetryKey = `${runtimeStatus.connection}:${runtimeStatus.batteryPercent}:${runtimeStatus.charging}:${runtimeStatus.turboModeAmbiguous}`;
     const isActive = Boolean(!statusOnly && selected.matchedProcess && pollingRate === targetRate);
     if (setRate[0] !== pollingRate || setRate[1] !== isActive || setRate[2] !== telemetryKey) {
       if (pollingRate !== targetRate) {

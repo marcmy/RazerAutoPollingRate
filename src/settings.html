@@ -943,6 +943,7 @@
     </div>
   </dialog>
 
+  <script src="lib/gameActivity.js"></script>
   <script>
     const validRates = [125, 250, 500, 1000, 2000, 4000, 8000];
     const inactiveRates = [125, 250, 500, 1000];
@@ -1095,23 +1096,7 @@
     }
 
     function cardMatchesRuntime(card) {
-      const runtime = state.runtime;
-      if (!runtime || !runtime.enabled || !runtime.matchedProcess) {
-        return false;
-      }
-
-      if (card.id && runtime.gameId && card.id === runtime.gameId) {
-        return true;
-      }
-
-      if (card.executablePath && runtime.executablePath
-        && normalizedPath(card.executablePath) === normalizedPath(runtime.executablePath)) {
-        return true;
-      }
-
-      const cardProcess = String(card.processName || '').toLowerCase();
-      const runtimeProcess = String(runtime.processName || runtime.matchedProcess || '').toLowerCase();
-      return Boolean(cardProcess && runtimeProcess && cardProcess === runtimeProcess);
+      return gameActivity.getGameActivity(card, state.runtime, state.games) === 'active';
     }
 
     function createGameIcon(card, large = false) {
@@ -1176,7 +1161,8 @@
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'game-card';
-        const running = cardMatchesRuntime(card);
+        const activity = gameActivity.getGameActivity(card, state.runtime, state.games);
+        const running = activity === 'active';
         button.classList.toggle('running', running);
 
         const top = document.createElement('div');
@@ -1235,8 +1221,13 @@
         liveText.textContent = card.hidden
           ? 'Ignored'
           : (running
-            ? `Running · ${state.runtime.targetRate || state.runtime.requestedTarget || getRateLabel(card)} Hz active`
-            : 'Not running');
+            ? `${state.runtime.detectionMode === 'running' ? 'Running' : 'Focused'} · ${state.runtime.targetRate || state.runtime.requestedTarget || getRateLabel(card)} Hz active`
+            : (activity === 'ambiguous'
+              ? `Copy unknown · ${state.runtime.targetRate || state.runtime.requestedTarget} Hz shared`
+              : 'Not active'));
+        if (activity === 'ambiguous') {
+          live.title = 'Windows did not expose the executable path, so the running installation cannot be identified. The shared polling rate still applies.';
+        }
         live.append(dot, liveText);
 
         summary.append(rate, detection, live);
@@ -1582,7 +1573,9 @@
       const batteryDetails = Number.isInteger(runtime?.batteryPercent)
         ? `${runtime.batteryPercent}% battery`
         : (runtime?.charging === true ? 'Battery percentage unavailable' : '');
-      byId('detected-mouse').title = [batteryDetails, runtime?.error, runtime?.batteryError, runtime?.turboError].filter(Boolean).join(' · ');
+      const turboDetails = runtime?.turboSupported && runtime.turboModeAmbiguous
+        ? 'Turbo off: matching game copies have different Turbo settings' : '';
+      byId('detected-mouse').title = [batteryDetails, turboDetails, runtime?.error, runtime?.batteryError, runtime?.turboError].filter(Boolean).join(' · ');
       if (state.modalCard) byId('modal-turbo-row').classList.toggle('hidden', !runtime?.turboSupported);
     }
 
