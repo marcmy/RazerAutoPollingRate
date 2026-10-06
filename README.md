@@ -95,11 +95,13 @@ Full-path rule:
 "C:\Program Files (x86)\Steam\steamapps\common\Apex Legends\r5apex_dx12.exe" pollingRate
 ```
 
-Elevated or protected games may hide their full executable path from unelevated apps. If a full-path rule does not match an elevated game, add a bare `.exe` rule for the same game:
+Elevated or protected games may hide their full executable path from Windows' usual process query. RAPR also tries Windows' limited-access image-path lookup to identify the exact installation, even when Task Manager cannot show its command line. If both lookups fail, a bare `.exe` rule can match the game by name:
 
 ```text
 r5apex_dx12.exe 4000
 ```
+
+When the path remains unavailable, copies with the same executable name can share a polling-rate match if their effective rate and detection mode agree. Different Turbo settings do not block that shared rate: Turbo stays off until the installation can be identified. If both copies should use Turbo even without a path, give them the same Turbo setting.
 
 Valid polling rates:
 
@@ -124,7 +126,7 @@ cs2.exe 4000
 
 Matching rules:
 
-- Full executable path matches beat bare process-name matches.
+- Exact executable path matches beat name fallbacks and bare process-name matches.
 - When rules have the same specificity, config order wins.
 - Windows path matching is case-insensitive.
 - Paths with spaces must be quoted.
@@ -141,6 +143,8 @@ When the focused app does not match any rule, the app switches to the inactive p
 
 This behaves closer to Synapse app-profile switching and avoids keeping the mouse at a high polling rate just because a game is still running in the background.
 
+Game cards show **Focused** for the selected game and **Not active** for other games. With duplicate installations whose path cannot be identified, cards show **Copy unknown** for the shared rate instead of highlighting both copies as active.
+
 ### Running Processes
 
 This keeps the older behavior. If any configured process is running, it can match even if it is minimized or unfocused.
@@ -155,8 +159,7 @@ If Windows exposes the full executable path, the picked rule uses the full path.
 
 ## Notes And Limitations
 
-- Foreground-window detection depends on Windows exposing the focused process path.
-- Some elevated or protected apps may only be matchable by bare process name; full-path rules are best-effort unless the app can read the target process path.
+- Foreground-window detection uses the focused process name and, when available, its executable path. Some protected apps may still deny both path lookups; conflicting rate or detection rules then require an identifiable path or a bare process-name rule.
 - The tray Enabled/Disabled toggle is runtime-only and always starts enabled.
 - Razer Synapse may display stale polling-rate values while this app controls the dongle.
 - If Synapse also tries to change polling rate, the two apps may fight over the setting.

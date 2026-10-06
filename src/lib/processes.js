@@ -81,10 +81,10 @@ function canSafelyFallbackPathRuleByName(entries, entry, processInfo, options = 
     && candidate.processName === process.processName);
 
   // Windows can hide protected games' paths. Multiple installs are safe to
-  // match by name only when choosing any of them has the same behavior.
+  // share a polling-rate match when rate and detection agree. Resolve an
+  // ambiguous optional Turbo setting separately instead of losing that match.
   return matchingPathRules.length > 0 && matchingPathRules.every((candidate) =>
     resolveRulePollingRate(candidate, options) === resolveRulePollingRate(entry, options)
-    && (candidate.turboMode === true) === (entry.turboMode === true)
     && getRuleDetectionMode(candidate, options.defaultDetectionMode)
       === getRuleDetectionMode(entry, options.defaultDetectionMode));
 }
@@ -115,6 +115,8 @@ function buildSelection(match, inactivePollingRate, details = {}) {
       matchedRule: match,
       matchedDetectionMode: details.matchedDetectionMode || null,
       source: details.source || 'rule',
+      turboModeAmbiguous: details.turboModeAmbiguous === true,
+      matchedProcessInfo: details.matchedProcessInfo || null,
     };
   }
 
@@ -124,6 +126,8 @@ function buildSelection(match, inactivePollingRate, details = {}) {
     matchedRule: null,
     matchedDetectionMode: null,
     source: 'inactive',
+    turboModeAmbiguous: false,
+    matchedProcessInfo: null,
   };
 }
 
@@ -162,9 +166,11 @@ function findConfiguredMatch(entries, options = {}) {
   const runningProcesses = Array.isArray(options.runningProcesses) ? options.runningProcesses : [];
   const defaultDetectionMode = options.defaultDetectionMode === 'running' ? 'running' : 'foreground';
 
-  for (const wantsPath of [true, false]) {
+  // Check every exact path before accepting any name fallback. In running
+  // mode, a pathless process must not hide another copy's known exact path.
+  for (const matchKind of ['exact-path', 'path-name', 'name']) {
     for (const entry of entries) {
-      if (Boolean(entry.executablePath) !== wantsPath) {
+      if (Boolean(entry.executablePath) !== (matchKind !== 'name')) {
         continue;
       }
 
@@ -173,12 +179,21 @@ function findConfiguredMatch(entries, options = {}) {
         ? runningProcesses
         : (foregroundProcess ? [foregroundProcess] : []);
 
-      if (candidates.some((candidate) => entryMatchesProcess(entry, candidate, {
-        allowPathNameFallback: canSafelyFallbackPathRuleByName(entries, entry, candidate, options),
-      }))) {
+      const matched = candidates.find((candidate) => {
+        if (matchKind === 'path-name') {
+          return canSafelyFallbackPathRuleByName(entries, entry, candidate, options)
+            && entryMatchesProcess(entry, candidate, { allowPathNameFallback: true });
+        }
+        return entryMatchesProcess(entry, candidate);
+      });
+      if (matched) {
         return {
           entry,
           detectionMode: mode,
+          matchedProcessInfo: normalizeProcessInfo(matched),
+          turboModeAmbiguous: matchKind === 'path-name' && entries.some((candidate) =>
+            candidate.executablePath && candidate.processName === entry.processName
+            && (candidate.turboMode === true) !== (entry.turboMode === true)),
         };
       }
     }
@@ -198,6 +213,8 @@ function selectConfiguredPollingRate(entries, options = {}) {
     matchedDetectionMode: match.detectionMode,
     source: 'rule',
     defaultGamePollingRate: options.defaultGamePollingRate,
+    turboModeAmbiguous: match.turboModeAmbiguous,
+    matchedProcessInfo: match.matchedProcessInfo,
   });
 }
 

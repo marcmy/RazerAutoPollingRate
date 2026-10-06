@@ -96,3 +96,33 @@ test('equivalent Steam and EA Apex rules enable Turbo and disable it after Alt-T
   assert.equal(await applyTurboMode(backend, desktop, true), false);
   assert.deepEqual(backend.writes, [true, false]);
 });
+
+test('Turbo conflicts never block the shared Apex rate or leave Turbo on from a previous game', async () => {
+  for (const mode of ['foreground', 'running']) {
+    for (const reversed of [false, true]) {
+      const paths = ['C:\\Steam\\Apex\\r5apex_dx12.exe', 'C:\\EA Games\\Apex\\r5apex_dx12.exe'];
+      const rules = [`"${paths[0]}" 4000 ${mode} turbo=on`, `"${paths[1]}" 4000 ${mode}`];
+      const entries = parseProcessConfig((reversed ? rules.reverse() : rules).join('\n')).entries;
+      const backend = fakeBackend();
+      const select = (path, playing = true) => selectConfiguredPollingRate(entries, {
+        foregroundProcess: { processName: playing ? 'r5apex_dx12.exe' : 'explorer.exe', executablePath: path },
+        runningProcesses: playing ? [{ processName: 'r5apex_dx12.exe', executablePath: path }] : [],
+        inactivePollingRate: 125, defaultGamePollingRate: 1000,
+      });
+      const steam = select(paths[0]);
+      assert.equal(steam.targetRate, 4000);
+      assert.equal(await applyTurboMode(backend, steam, true), true);
+      const pathless = select(null);
+      assert.equal(pathless.targetRate, 4000);
+      assert.equal(pathless.turboModeAmbiguous, true);
+      assert.equal(await applyTurboMode(backend, pathless, true), false);
+      assert.equal(await applyTurboMode(backend, select(paths[1]), true), false);
+      assert.equal(await applyTurboMode(backend, select(paths[0]), true), true);
+      const desktop = select(null, false);
+      assert.equal(desktop.targetRate, 125);
+      assert.equal(desktop.turboModeAmbiguous, false);
+      assert.equal(await applyTurboMode(backend, desktop, true), false);
+      assert.deepEqual(backend.writes, [true, false, true, false]);
+    }
+  }
+});

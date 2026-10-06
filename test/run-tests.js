@@ -5,6 +5,7 @@ require('./config.test');
 require('./diagnosticLogger.test');
 require('./devices.test');
 require('./gameLibraries.test');
+require('./gameActivity.test');
 require('./githubReleaseClient.test');
 require('./mainBackendIntegration.test');
 require('./mouseBackendRuntime.test');

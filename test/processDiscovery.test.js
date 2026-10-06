@@ -1,15 +1,56 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 
 const {
   FOREGROUND_MISS_GRACE_MS,
   getLatestForegroundProcess,
   getForegroundProcessSnapshot,
   getForegroundWatcherCommand,
+  getRunningProcesses,
+  getWindowsProcessHelpersCommand,
   handleForegroundWatcherLine,
   parseForegroundProcessOutput,
   resetForegroundProcessCache,
 } = require('../src/lib/processDiscovery');
+
+test('Windows native lookup recovers a path when CIM exposes only the name and handles missing processes', {
+  skip: process.platform !== 'win32',
+}, () => {
+  const output = execFileSync('powershell.exe', ['-NoProfile', '-Command', `
+${getWindowsProcessHelpersCommand()}
+$ErrorActionPreference = 'Stop'
+function Get-CimInstance { [pscustomobject]@{ Name = 'HiddenGame.exe'; ExecutablePath = $null } }
+Get-ProcessJsonById $PID
+Get-ProcessJsonById ([uint32]::MaxValue)
+function Get-CimInstance { [pscustomobject]@{ Name = 'KnownGame.exe'; ExecutablePath = 'D:\\Games\\KnownGame.exe' } }
+Get-ProcessJsonById ([uint32]::MaxValue)
+`], { encoding: 'utf8', windowsHide: true, timeout: 30000 });
+  const [recovered, missing, known] = output.trim().split(/\r?\n/).map(parseForegroundProcessOutput);
+  assert.equal(recovered.processName, 'HiddenGame.exe');
+  assert.match(recovered.executablePath, /^[a-z]:\\.*\\powershell\.exe$/i);
+  assert.deepEqual(missing, { processName: 'HiddenGame.exe', executablePath: null });
+  assert.deepEqual(known, { processName: 'KnownGame.exe', executablePath: 'D:\\Games\\KnownGame.exe' });
+});
+
+test('running-process lookup uses the same native fallback and preserves name-only tasklist recovery', {
+  skip: process.platform !== 'win32',
+}, () => {
+  const running = getRunningProcesses((command, args, options) => {
+    // Simulate a game whose CIM image path is hidden, using this PowerShell process as the native query target.
+    const script = `function Get-CimInstance { [pscustomobject]@{ Name = 'HiddenGame.exe'; ProcessId = $PID; ExecutablePath = $null } }\n${args[4]}`;
+    return execFileSync(command, [...args.slice(0, 4), script], { ...options, timeout: 30000 });
+  });
+  assert.equal(running.length, 1);
+  assert.match(running[0].executablePath, /^[a-z]:\\.*\\powershell\.exe$/i);
+  assert.equal(running[0].processName, 'HiddenGame.exe');
+
+  const nameOnly = getRunningProcesses((command) => {
+    if (command === 'powershell.exe') throw new Error('CIM unavailable');
+    return '"HiddenGame.exe","123","Console","1","1024 K"';
+  });
+  assert.deepEqual(nameOnly, [{ processName: 'hiddengame.exe', executablePath: null }]);
+});
 
 test('foreground process lookup failure returns null', () => {
   const foregroundProcess = getForegroundProcessSnapshot(() => {
