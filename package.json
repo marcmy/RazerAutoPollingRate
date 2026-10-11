@@ -25,7 +25,7 @@
     "@electron-forge/maker-squirrel": "8.0.1",
     "@electron-forge/publisher-github": "8.0.1",
     "electron": "^42.10.0",
-    "node-abi": "^4.30.0"
+    "node-abi": "^4.37.0"
   },
   "repository": {
     "type": "git",
