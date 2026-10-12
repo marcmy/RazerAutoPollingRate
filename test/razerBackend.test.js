@@ -72,6 +72,117 @@ function createBackend(deviceOrDevices, diagnostics = [], options = {}) {
   });
 }
 
+let windowsFixtureId = 0;
+function windowsFixture(productId = 0x00e5, interfaceNumber = 3) {
+  const calls = [];
+  const replies = [];
+  const info = { vendorId: 0x1532, productId, interface: interfaceNumber,
+    path: `razer-hid-test-${windowsFixtureId++}`, serialNumber: 'B', product: 'Razer HID test',
+    usagePage: 0xff00, usage: 1, release: 1 };
+  const hidApi = {
+    devicesAsync: async () => [info],
+    HIDAsync: { open: async (path) => {
+      calls.push(['open', path]);
+      return {
+        sendFeatureReport: async (bytes) => { calls.push(['send', Buffer.from(bytes)]); return bytes.length; },
+        getFeatureReport: async (reportId, length) => { calls.push(['read', reportId, length]); return replies.shift(); },
+        close: async () => { calls.push(['close']); },
+      };
+    } },
+  };
+  const backend = createRazerBackend({
+    platform: 'win32', hidApi,
+    inspectHidCaps: async () => ({ usagePage: 0xff00, usage: 1,
+      inputReportByteLength: 0, outputReportByteLength: 0, featureReportByteLength: 91 }),
+    createWebUsb: () => assert.fail('standard Windows HID must not use WinUSB'),
+    preferredProductId: productId, preferredSerialNumber: 'B',
+    sleep: async () => {},
+  });
+  return { backend, hidApi, info, calls, replies };
+}
+
+test('Windows Razer uses HID feature reports without a driver replacement', async () => {
+  const { backend, calls, replies } = windowsFixture();
+  const response = Buffer.alloc(91);
+  response[10] = 0x02; // leading report ID, then protocol polling byte 9
+  replies.push(response);
+  await backend.discover();
+  await backend.open();
+  assert.equal(await backend.getPollingRate(), 4000);
+  await backend.close();
+  assert.equal(backend.deviceInfo.interfaceNumber, 3);
+  const send = calls.find(([name]) => name === 'send')[1];
+  assert.equal(send.length, 91);
+  assert.equal(send[0], 0); // unnumbered HID feature report ID
+  assert.deepEqual([...send.subarray(1, 9)], [0, 0x1f, 0, 0, 0, 1, 0, 0xc0]);
+  assert.deepEqual(calls.find(([name]) => name === 'read'), ['read', 0, 91]);
+  assert.equal(calls.filter(([name]) => name === 'close').length, 1);
+});
+
+test('Windows Razer keeps the two-stage rate write and subsequent readback', async () => {
+  const { backend, calls, replies } = windowsFixture();
+  const readback = Buffer.alloc(91);
+  readback[10] = 0x02;
+  replies.push(Buffer.alloc(91), Buffer.alloc(91), readback);
+  await backend.discover();
+  await backend.open();
+  assert.equal(await backend.setPollingRate(4000), 4000);
+  await backend.close();
+  const sends = calls.filter(([name]) => name === 'send').map(([, bytes]) => bytes);
+  assert.equal(sends.length, 3);
+  assert.deepEqual([...sends[0].subarray(1, 9)], [0, 0x1f, 0, 0, 0, 2, 0, 0x40]);
+  assert.equal(sends[0][9], 0);
+  assert.equal(sends[0][10], 0x02);
+  assert.deepEqual([...sends[1].subarray(1, 9)], [0, 0x1f, 0, 0, 0, 2, 0, 0x40]);
+  assert.equal(sends[1][9], 1);
+  assert.equal(sends[1][10], 0x02);
+});
+
+test('Windows Razer chooses its exact HID product, serial and protocol interface', async () => {
+  const { backend, hidApi, info, calls } = windowsFixture();
+  hidApi.devicesAsync = async () => [
+    { ...info, interface: 0, path: 'wrong-interface' },
+    { ...info, serialNumber: 'A', path: 'wrong-serial' },
+    { ...info, productId: 0x00be, path: 'wrong-product' },
+    info,
+  ];
+  await backend.discover();
+  await backend.open();
+  assert.deepEqual(calls[0], ['open', info.path]);
+  assert.equal(backend.deviceInfo.productName, 'Razer HID test');
+  await backend.close();
+});
+
+test('Windows Razer rejects short feature replies and can reopen after close', async () => {
+  const { backend, calls, replies } = windowsFixture(0x00be, 0);
+  replies.push(Buffer.alloc(5), Buffer.alloc(5), Buffer.alloc(5));
+  await backend.discover();
+  await backend.open();
+  await assert.rejects(() => backend.getPollingRate(), /short/i);
+  await backend.close();
+  const response = Buffer.alloc(91);
+  response[10] = 0x08;
+  replies.push(response);
+  await backend.discover();
+  await backend.open();
+  assert.equal(await backend.getPollingRate(), 1000);
+  await backend.close();
+  assert.equal(calls.filter(([name]) => name === 'open').length, 2);
+  assert.equal(calls.filter(([name]) => name === 'close').length, 2);
+});
+
+test('Windows Razer retains WebUSB for a device bound to WinUSB rather than HID', async () => {
+  const device = createFakeDevice(0x00e5, [dataViewWithPollingByte(0x02)]);
+  const backend = createBackend(device, [], {
+    platform: 'win32',
+    hidApi: { devicesAsync: async () => [] },
+  });
+  await backend.discover();
+  await backend.open();
+  assert.equal(await backend.getPollingRate(), 4000);
+  await backend.close();
+});
+
 test('Razer backend honors the active mouse product identity when multiple known dongles are connected', async () => {
   const viper = createFakeDevice(0x00e5, [], 'viper');
   const deathadder = createFakeDevice(0x00be, [], 'deathadder');

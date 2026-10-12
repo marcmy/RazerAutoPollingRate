@@ -1,6 +1,7 @@
 'use strict';
 
 const { WebUSB } = require('usb');
+const { findRazerHidDevice } = require('./razerHid');
 const { dongles } = require('../devices');
 const { retryImmediately } = require('../retryImmediately');
 const {
@@ -34,6 +35,7 @@ function createRazerBackend(options = {}) {
   const sleep = options.sleep || defaultSleep;
   const log = options.log || (() => {});
   const onDiagnostic = options.onDiagnostic || (() => {});
+  const platform = options.platform || (options.createWebUsb ? 'webusb' : process.platform);
   const preferredProductId = Number.isInteger(options.preferredProductId)
     ? options.preferredProductId
     : null;
@@ -73,10 +75,16 @@ function createRazerBackend(options = {}) {
   }
 
   async function discover() {
-    const webUsb = createWebUsb(selectSupportedDevice);
-
     try {
-      const discovered = await webUsb.requestDevice({ filters: [{}] });
+      // nusb in USB v3 cannot claim standard Windows HID drivers. Continue
+      // sending the same feature reports through HIDAPI for those devices.
+      const hidDevice = platform === 'win32' ? await findRazerHidDevice({
+        hidApi: options.hidApi,
+        inspectHidCaps: options.inspectHidCaps,
+        devicesFound: selectSupportedDevice,
+        log,
+      }) : null;
+      const discovered = hidDevice || await createWebUsb(selectSupportedDevice).requestDevice({ filters: [{}] });
       if (!isSupportedRazerDevice(discovered)) {
         throw new Error('No compatible Razer HyperPolling dongle found');
       }

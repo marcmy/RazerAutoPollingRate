@@ -5,6 +5,7 @@
 const assert = require('node:assert/strict');
 const { version } = require('usb/package.json');
 const { usb, WebUSB } = require('usb');
+const hid = require('node-hid');
 const { listUsbDevices } = require('../src/lib/mouseBackends/usbDiscovery');
 const { createPreferredMouseBackend } = require('../src/lib/mouseBackends/runtime');
 const { getUsbIdentity } = require('../src/lib/mouseBackends/discovery');
@@ -21,6 +22,8 @@ async function smoke() {
     assert.ok(Number.isInteger(identity.vendorId));
     assert.ok(Number.isInteger(identity.productId));
   }
+  // Both Windows mouse transports depend on the shipped HID native binary.
+  assert.ok(Array.isArray(await hid.devicesAsync(0x1532, 0)));
 
   // Exercise production selection and backend construction without a mouse
   // attached to CI; neither backend sends commands until discover/open.

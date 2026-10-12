@@ -22,6 +22,7 @@ require('./pulsarCrazyLightProtocol.test');
 require('./pulsarDiscovery.test');
 require('./pulsarStartupProbe.test');
 require('./usbV3Discovery.test');
+require('./usbDiscovery.test');
 require('./pulsarWriteValidation.test');
 require('./razerBackend.test');
 require('./rates.test');

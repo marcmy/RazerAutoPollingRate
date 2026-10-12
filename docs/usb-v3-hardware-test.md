@@ -2,8 +2,10 @@
 
 The migration uses `usb.getDevices()` for asynchronous enumeration and keeps
 the current selection rules and hardware transports. Windows CrazyLight
-communication continues through the existing HID bridge. USB enumeration does
-not open or claim devices. No USB v2 fallback is shipped.
+communication continues through the existing HID bridge. Razer devices using
+Windows' HID driver send the same feature reports through node-hid; devices
+bound to WinUSB retain WebUSB. USB enumeration returns only vendor/product IDs,
+without invoking native getters that open devices. No USB v2 fallback is shipped.
 
 ## Run the portable build
 
