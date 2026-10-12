@@ -30,6 +30,12 @@ function isSupportedRazerDevice(device) {
     && dongles[device.productId] !== undefined);
 }
 
+function optionalSerialNumber(device) {
+  // nusb's serial getter may try to open a HID-bound device. Failure to read
+  // optional metadata must not hide an accessible exact match later in a list.
+  try { return device.serialNumber || null; } catch { return null; }
+}
+
 function createRazerBackend(options = {}) {
   const createWebUsb = options.createWebUsb || defaultCreateWebUsb;
   const sleep = options.sleep || defaultSleep;
@@ -66,7 +72,7 @@ function createRazerBackend(options = {}) {
 
     if (preferredSerialNumber) {
       const exactSerial = matchingProduct.find(
-        (candidate) => candidate.serialNumber === preferredSerialNumber,
+        (candidate) => optionalSerialNumber(candidate) === preferredSerialNumber,
       );
       if (exactSerial) return exactSerial;
     }
@@ -84,7 +90,18 @@ function createRazerBackend(options = {}) {
         devicesFound: selectSupportedDevice,
         log,
       }) : null;
-      const discovered = hidDevice || await createWebUsb(selectSupportedDevice).requestDevice({ filters: [{}] });
+      let discovered = hidDevice;
+      if (!hidDevice || (preferredSerialNumber && hidDevice.serialNumber !== preferredSerialNumber)) {
+        try {
+          discovered = await createWebUsb(selectSupportedDevice).requestDevice({ filters: [{}] });
+          // Keep a usable HID fallback when neither transport has the exact
+          // serial. Never choose a HID-bound nusb device that cannot be claimed.
+          if (hidDevice && optionalSerialNumber(discovered) !== preferredSerialNumber) discovered = hidDevice;
+        } catch (error) {
+          if (!hidDevice || error.name !== 'NotFoundError') throw error;
+          discovered = hidDevice;
+        }
+      }
       if (!isSupportedRazerDevice(discovered)) {
         throw new Error('No compatible Razer HyperPolling dongle found');
       }
@@ -94,7 +111,7 @@ function createRazerBackend(options = {}) {
       onDiagnostic('razer_device_selected', {
         vendorId: device.vendorId,
         productId: device.productId,
-        serialNumber: device.serialNumber || null,
+        serialNumber: optionalSerialNumber(device),
         preferredProductId,
         preferredSerialNumber,
       });

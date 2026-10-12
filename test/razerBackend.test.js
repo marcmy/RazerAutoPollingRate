@@ -183,6 +183,21 @@ test('Windows Razer retains WebUSB for a device bound to WinUSB rather than HID'
   await backend.close();
 });
 
+test('an exact Razer serial on WinUSB takes priority over a different HID mouse', async () => {
+  const { hidApi, info } = windowsFixture();
+  hidApi.devicesAsync = async () => [{ ...info, serialNumber: 'A' }];
+  const preferred = createFakeDevice(0x00e5, [dataViewWithPollingByte(0x02)], 'B');
+  const backend = createBackend(preferred, [], {
+    platform: 'win32', hidApi,
+    preferredProductId: 0x00e5, preferredSerialNumber: 'B',
+    inspectHidCaps: async () => ({ featureReportByteLength: 91 }),
+  });
+  assert.equal(await backend.discover(), preferred);
+  await backend.open();
+  assert.equal(await backend.getPollingRate(), 4000);
+  await backend.close();
+});
+
 test('Razer backend honors the active mouse product identity when multiple known dongles are connected', async () => {
   const viper = createFakeDevice(0x00e5, [], 'viper');
   const deathadder = createFakeDevice(0x00be, [], 'deathadder');

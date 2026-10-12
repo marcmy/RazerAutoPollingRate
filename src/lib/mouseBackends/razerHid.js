@@ -17,6 +17,7 @@ function interfaceNumber(device) {
 async function findRazerHidDevice(options) {
   const hidApi = options.hidApi || require('node-hid');
   const inspectCaps = options.inspectHidCaps || inspectWindowsHidCaps;
+  const cache = options.hidApi || options.inspectHidCaps ? new Map() : capsCache;
   const log = options.log || (() => {});
   const infos = await hidApi.devicesAsync(0x1532, 0);
   const candidates = [];
@@ -25,10 +26,10 @@ async function findRazerHidDevice(options) {
     if (info.vendorId !== 0x1532 || !model || !info.path
       || interfaceNumber(info) !== (model.interfaceIndex ?? 0)) continue;
     try {
-      let caps = capsCache.get(info.path);
+      let caps = cache.get(info.path);
       if (!caps) {
         caps = await inspectCaps(info.path);
-        capsCache.set(info.path, caps);
+        cache.set(info.path, caps);
       }
       if (caps.featureReportByteLength < REPORT_LENGTH + 1) continue;
       candidates.push({ ...info, productName: info.product || null, caps });
@@ -66,7 +67,7 @@ async function findRazerHidDevice(options) {
       try {
         handle = await hidApi.HIDAsync.open(selected.path);
       } catch (error) {
-        capsCache.delete(selected.path);
+        cache.delete(selected.path);
         throw error;
       }
     },
