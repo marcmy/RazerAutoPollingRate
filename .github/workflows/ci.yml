@@ -33,6 +33,8 @@ jobs:
           node --check src/bootstrap.js
           node --check src/main.js
       - run: npm test
+      - name: Smoke-test electron-store ESM with real Electron
+        run: npx --no-install electron scripts/smoke-electron-store.cjs
 
   build-windows:
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')

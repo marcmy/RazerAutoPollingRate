@@ -13,7 +13,7 @@ const {
 } = require('electron');
 
 const fs = require('fs');
-const Store = require('electron-store');
+const { loadLegacyStore } = require('./lib/legacyStore');
 const path = require('path');
 const AutoLaunch = require('auto-launch');
 const { execFile, spawn } = require('child_process');
@@ -93,7 +93,8 @@ const {
 } = require('./lib/updateInstaller');
 
 const appPath = app.getAppPath();
-const legacyStore = new Store();
+// Initialized before any startup reads; the import is native ESM from a CommonJS main process.
+let legacyStore;
 const assetsFolder = 'src/assets/';
 const checkGuard = createCheckGuard();
 const readMouseTelemetry = createMouseTelemetryReader({
@@ -1351,7 +1352,10 @@ function setupSettingsIpc() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // electron-store v11 is ESM-only. Wait for the store before config migration,
+  // telemetry, update bookkeeping or any user-facing windows can access it.
+  legacyStore = await loadLegacyStore();
   autolaunch = new AutoLaunch({ name: 'Razer Auto Polling Rate' });
 
   const { settings, gameFolders } = loadConfig((message) => log(message, true));
@@ -1369,6 +1373,10 @@ app.whenReady().then(() => {
   scheduleUpdateChecks();
   showPendingUpdateChangelog().catch((error) => log(`failed to show update changelog: ${error.message}`, true));
   runLoop();
+}).catch((error) => {
+  // Never launch with an uninitialized store or overwrite legacy user settings.
+  console.error('Unable to initialize persisted settings:', error);
+  app.quit();
 });
 
 setupSettingsIpc();
