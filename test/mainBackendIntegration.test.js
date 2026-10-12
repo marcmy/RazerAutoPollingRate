@@ -27,6 +27,13 @@ test('main delegates mouse transport lifecycle to the preferred backend', () => 
   assert.doesNotMatch(main, /getRazerReport\s*\(/);
 });
 
+test('main initializes electron-store v11 before consuming saved settings', () => {
+  const main = source(mainPath);
+  assert.doesNotMatch(main, /require\(['"]electron-store['"]\)/);
+  assert.match(main, /app\.whenReady\(\)\.then\(async\s*\(\)\s*=>\s*\{[\s\S]*?legacyStore\s*=\s*await loadLegacyStore\(\);[\s\S]*?loadConfig\(/);
+  assert.match(main, /Unable to initialize persisted settings/);
+});
+
 test('bootstrap no longer launches an independent CrazyLight startup probe', () => {
   const bootstrap = source(bootstrapPath);
 

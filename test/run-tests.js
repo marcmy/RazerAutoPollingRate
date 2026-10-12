@@ -8,6 +8,7 @@ require('./gameLibraries.test');
 require('./gameActivity.test');
 require('./githubReleaseClient.test');
 require('./mainBackendIntegration.test');
+require('./legacyStore.test');
 require('./mouseBackendRuntime.test');
 require('./mouseStatusPresentation.test');
 require('./mouseTelemetry.test');
