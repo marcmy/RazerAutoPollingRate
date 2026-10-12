@@ -17,7 +17,7 @@ test('startup probe reports unknown Pulsar identity without constructing a proto
   const lines = [];
 
   const result = await runCrazyLightProbe({
-    getDeviceList: () => [rawUsb(0x3710, 0x7777)],
+    getDevices: () => [rawUsb(0x3710, 0x7777)],
     createBackend: () => {
       backendConstructed = true;
       throw new Error('must not be called');
@@ -36,7 +36,7 @@ test('startup probe queries validated CrazyLight and reports profile and polling
   let probeCalls = 0;
 
   const result = await runCrazyLightProbe({
-    getDeviceList: () => [rawUsb(0x3710, 0x5406)],
+    getDevices: () => [rawUsb(0x3710, 0x5406)],
     createBackend: () => ({
       async probe() {
         probeCalls += 1;
@@ -63,7 +63,7 @@ test('startup probe queries validated CrazyLight and reports profile and polling
 test('startup probe preserves probe errors as diagnostics instead of hiding them', async () => {
   const lines = [];
   const result = await runCrazyLightProbe({
-    getDeviceList: () => [rawUsb(0x3710, 0x5406)],
+    getDevices: () => [rawUsb(0x3710, 0x5406)],
     createBackend: () => ({
       async probe() {
         throw new Error('claimInterface failed');

@@ -18,7 +18,7 @@
     "electron-squirrel-startup": "^1.0.0",
     "electron-store": "^11.0.2",
     "node-hid": "3.4.0",
-    "usb": "^2.11.0"
+    "usb": "^3.2.1"
   },
   "devDependencies": {
     "@electron-forge/cli": "8.0.1",
@@ -44,7 +44,6 @@
     "extract-zip": "npm:@electron-internal/extract-zip@^1.0.4"
   },
   "allowScripts": {
-    "usb@2.18.0": true,
     "electron-winstaller@5.4.0": true
   }
 }

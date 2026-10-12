@@ -1,6 +1,6 @@
 'use strict';
 
-const { getDeviceList } = require('usb');
+const { listUsbDevices } = require('./usbDiscovery');
 const { classifyUsbDevices } = require('./discovery');
 const { createPulsarCrazyLightBackend } = require('./pulsarCrazyLight');
 const { crazyLightConnection } = require('./pulsarCrazyLightIdentity');
@@ -16,11 +16,11 @@ function formatUsbId(identity) {
 }
 
 async function runCrazyLightProbe(options = {}) {
-  const listDevices = options.getDeviceList || getDeviceList;
+  const listDevices = options.getDevices || listUsbDevices;
   const makeBackend = options.createBackend || createPulsarCrazyLightBackend;
   const log = options.log || (() => {});
 
-  const devices = listDevices();
+  const devices = await listDevices();
   const discovery = classifyUsbDevices(devices);
 
   for (const entry of discovery.unknownPulsar) {

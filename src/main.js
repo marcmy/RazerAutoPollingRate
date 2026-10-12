@@ -1867,7 +1867,7 @@ async function checkPollingRate(firstRun) {
       return;
     }
 
-    const backendSelection = createPreferredMouseBackend({
+    const backendSelection = await createPreferredMouseBackend({
       log,
       onDiagnostic: (event, details) => recordDiagnosticEvent(event, details, { verbose: true }),
     });
