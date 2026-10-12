@@ -20,10 +20,10 @@ function fakeBackend(id) {
   return { id, canWrite: true };
 }
 
-test('runtime selects the wired CrazyLight ahead of its receiver and passes its exact identity', () => {
+test('runtime selects the wired CrazyLight ahead of its receiver and passes its exact identity', async () => {
   let created;
-  const result = createPreferredMouseBackend({
-    getDeviceList: () => [rawUsb(0x3710, 0x5406), rawUsb(0x3710, 0x3524, 'wire-serial')],
+  const result = await createPreferredMouseBackend({
+    getDevices: () => [rawUsb(0x3710, 0x5406), rawUsb(0x3710, 0x3524, 'wire-serial')],
     createPulsarBackend: (options) => { created = options; return fakeBackend('pulsar-x2-crazylight'); },
   });
   assert.equal(result.selectedMouse.productId, 0x3524);
@@ -31,10 +31,10 @@ test('runtime selects the wired CrazyLight ahead of its receiver and passes its 
   assert.equal(created.preferredSerialNumber, 'wire-serial');
 });
 
-test('runtime falls back to the first supported Razer identity when no activity is known', () => {
+test('runtime falls back to the first supported Razer identity when no activity is known', async () => {
   const created = [];
-  const result = createPreferredMouseBackend({
-    getDeviceList: () => [
+  const result = await createPreferredMouseBackend({
+    getDevices: () => [
       rawUsb(0x3710, 0x5406),
       rawUsb(0x1532, 0x00e5),
     ],
@@ -56,10 +56,10 @@ test('runtime falls back to the first supported Razer identity when no activity 
   assert.equal(created[0][1].preferredProductId, 0x00e5);
 });
 
-test('runtime targets the exact active Razer model instead of any Razer dongle', () => {
+test('runtime targets the exact active Razer model instead of any Razer dongle', async () => {
   const created = [];
-  const result = createPreferredMouseBackend({
-    getDeviceList: () => [
+  const result = await createPreferredMouseBackend({
+    getDevices: () => [
       rawUsb(0x1532, 0x00e5),
       rawUsb(0x1532, 0x00be),
       rawUsb(0x3710, 0x5406),
@@ -91,10 +91,10 @@ test('runtime targets the exact active Razer model instead of any Razer dongle',
   assert.equal(created[0][1].preferredSerialNumber, 'deathadder-1');
 });
 
-test('runtime prefers the Pulsar identity selected by mouse activity', () => {
+test('runtime prefers the Pulsar identity selected by mouse activity', async () => {
   const created = [];
-  const result = createPreferredMouseBackend({
-    getDeviceList: () => [
+  const result = await createPreferredMouseBackend({
+    getDevices: () => [
       rawUsb(0x3710, 0x5406),
       rawUsb(0x1532, 0x00e5),
     ],
@@ -122,10 +122,10 @@ test('runtime prefers the Pulsar identity selected by mouse activity', () => {
   assert.equal(created.filter(([kind]) => kind === 'pulsar').length, 1);
 });
 
-test('runtime enables writes only for the hardware-validated CrazyLight identity', () => {
+test('runtime enables writes only for the hardware-validated CrazyLight identity', async () => {
   let factoryOptions = null;
-  const result = createPreferredMouseBackend({
-    getDeviceList: () => [rawUsb(0x3710, 0x5406)],
+  const result = await createPreferredMouseBackend({
+    getDevices: () => [rawUsb(0x3710, 0x5406)],
     createRazerBackend: () => {
       throw new Error('Razer backend must not be created');
     },
@@ -140,12 +140,12 @@ test('runtime enables writes only for the hardware-validated CrazyLight identity
   assert.equal(factoryOptions.allowHardwareValidationWrites, true);
 });
 
-test('runtime never constructs a protocol backend for an unknown Pulsar PID', () => {
+test('runtime never constructs a protocol backend for an unknown Pulsar PID', async () => {
   const diagnostics = [];
   let factoryCalls = 0;
 
-  assert.throws(() => createPreferredMouseBackend({
-    getDeviceList: () => [rawUsb(0x3710, 0x9999)],
+  await assert.rejects(() => createPreferredMouseBackend({
+    getDevices: () => [rawUsb(0x3710, 0x9999)],
     createRazerBackend: () => {
       factoryCalls += 1;
       return fakeBackend('razer');
@@ -208,7 +208,7 @@ test('presentation-aware backend keeps probing but hides identity after a failed
   assert.equal(backend.deviceInfo.productName, null);
 });
 
-test('presentation-aware backend becomes visible again only after activity clears the latch', () => {
+test('presentation-aware backend becomes visible again only after activity clears the latch', async () => {
   let suppressed = true;
   const selectedMouse = {
     backend: 'razer',

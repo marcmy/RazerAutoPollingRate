@@ -1,6 +1,6 @@
 'use strict';
 
-const { getDeviceList } = require('usb');
+const { listUsbDevices } = require('./usbDiscovery');
 const { classifyUsbDevices, choosePreferredMousePath } = require('./discovery');
 const { createPulsarCrazyLightBackend } = require('./pulsarCrazyLight');
 const { createRazerBackend } = require('./razer');
@@ -92,14 +92,14 @@ function fallbackMouseFromDiscovery(discovery) {
   return null;
 }
 
-function createPreferredMouseBackend(options = {}) {
-  const listDevices = options.getDeviceList || getDeviceList;
+async function createPreferredMouseBackend(options = {}) {
+  const listDevices = options.getDevices || listUsbDevices;
   const makeRazerBackend = options.createRazerBackend || createRazerBackend;
   const makePulsarBackend = options.createPulsarBackend || createPulsarCrazyLightBackend;
   const log = options.log || (() => {});
   const onDiagnostic = options.onDiagnostic || (() => {});
 
-  const discovery = classifyUsbDevices(listDevices());
+  const discovery = classifyUsbDevices(await listDevices());
 
   for (const entry of discovery.unknownPulsar) {
     onDiagnostic('pulsar_usb_detected', {
@@ -111,7 +111,7 @@ function createPreferredMouseBackend(options = {}) {
 
   const fallbackMouse = fallbackMouseFromDiscovery(discovery);
   const activityTracker = options.activityTracker
-    || (!options.getDeviceList ? getSharedMouseActivityTracker({
+    || (!options.getDevices ? getSharedMouseActivityTracker({
       log,
       onDiagnostic,
       onActiveMouseChanged: options.onActiveMouseChanged,

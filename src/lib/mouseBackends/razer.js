@@ -1,6 +1,7 @@
 'use strict';
 
 const { WebUSB } = require('usb');
+const { findRazerHidDevice } = require('./razerHid');
 const { dongles } = require('../devices');
 const { retryImmediately } = require('../retryImmediately');
 const {
@@ -29,11 +30,18 @@ function isSupportedRazerDevice(device) {
     && dongles[device.productId] !== undefined);
 }
 
+function optionalSerialNumber(device) {
+  // nusb's serial getter may try to open a HID-bound device. Failure to read
+  // optional metadata must not hide an accessible exact match later in a list.
+  try { return device.serialNumber || null; } catch { return null; }
+}
+
 function createRazerBackend(options = {}) {
   const createWebUsb = options.createWebUsb || defaultCreateWebUsb;
   const sleep = options.sleep || defaultSleep;
   const log = options.log || (() => {});
   const onDiagnostic = options.onDiagnostic || (() => {});
+  const platform = options.platform || (options.createWebUsb ? 'webusb' : process.platform);
   const preferredProductId = Number.isInteger(options.preferredProductId)
     ? options.preferredProductId
     : null;
@@ -64,7 +72,7 @@ function createRazerBackend(options = {}) {
 
     if (preferredSerialNumber) {
       const exactSerial = matchingProduct.find(
-        (candidate) => candidate.serialNumber === preferredSerialNumber,
+        (candidate) => optionalSerialNumber(candidate) === preferredSerialNumber,
       );
       if (exactSerial) return exactSerial;
     }
@@ -73,10 +81,27 @@ function createRazerBackend(options = {}) {
   }
 
   async function discover() {
-    const webUsb = createWebUsb(selectSupportedDevice);
-
     try {
-      const discovered = await webUsb.requestDevice({ filters: [{}] });
+      // nusb in USB v3 cannot claim standard Windows HID drivers. Continue
+      // sending the same feature reports through HIDAPI for those devices.
+      const hidDevice = platform === 'win32' ? await findRazerHidDevice({
+        hidApi: options.hidApi,
+        inspectHidCaps: options.inspectHidCaps,
+        devicesFound: selectSupportedDevice,
+        log,
+      }) : null;
+      let discovered = hidDevice;
+      if (!hidDevice || (preferredSerialNumber && hidDevice.serialNumber !== preferredSerialNumber)) {
+        try {
+          discovered = await createWebUsb(selectSupportedDevice).requestDevice({ filters: [{}] });
+          // Keep a usable HID fallback when neither transport has the exact
+          // serial. Never choose a HID-bound nusb device that cannot be claimed.
+          if (hidDevice && optionalSerialNumber(discovered) !== preferredSerialNumber) discovered = hidDevice;
+        } catch (error) {
+          if (!hidDevice || error.name !== 'NotFoundError') throw error;
+          discovered = hidDevice;
+        }
+      }
       if (!isSupportedRazerDevice(discovered)) {
         throw new Error('No compatible Razer HyperPolling dongle found');
       }
@@ -86,7 +111,7 @@ function createRazerBackend(options = {}) {
       onDiagnostic('razer_device_selected', {
         vendorId: device.vendorId,
         productId: device.productId,
-        serialNumber: device.serialNumber || null,
+        serialNumber: optionalSerialNumber(device),
         preferredProductId,
         preferredSerialNumber,
       });
