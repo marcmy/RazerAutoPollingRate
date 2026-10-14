@@ -417,6 +417,11 @@ jobs:
   publish:
     needs: prepare-release
     runs-on: windows-2022
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     env:
       RELEASE_TAG: ${{ needs.prepare-release.outputs.release_tag }}
       RELEASE_VERSION: ${{ needs.prepare-release.outputs.release_version }}
@@ -493,6 +498,10 @@ jobs:
               "$($hash.Hash.ToLower())  $relativePath"
             } | Set-Content -Encoding ASCII SHA256SUMS.txt
 
+      - name: Attest installer artifacts before publication
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: out/make/**/*
       - name: Generate release notes from changelog
         shell: pwsh
         run: |
