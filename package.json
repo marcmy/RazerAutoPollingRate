@@ -24,7 +24,7 @@
     "@electron-forge/cli": "8.0.1",
     "@electron-forge/maker-squirrel": "8.0.1",
     "@electron-forge/publisher-github": "8.0.1",
-    "electron": "^44.7.0",
+    "electron": "^44.8.0",
     "node-abi": "^4.37.0"
   },
   "repository": {
