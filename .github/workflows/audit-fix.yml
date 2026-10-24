@@ -1,0 +1,39 @@
+name: Temporary security lockfile refresh
+on:
+  push:
+    branches: [fix/security-dependency-refresh-20261024]
+permissions:
+  contents: write
+jobs:
+  refresh:
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: true
+      - name: Setup Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - name: Resolve and fix lockfile vulnerabilities
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm install --package-lock-only --ignore-scripts --no-audit
+          if ($LASTEXITCODE -ne 0) { throw 'Lockfile resolution failed' }
+          npm audit fix --package-lock-only --ignore-scripts
+          if ($LASTEXITCODE -ne 0) { throw 'Security advisory remediation failed' }
+          npm audit --audit-level=high
+          if ($LASTEXITCODE -ne 0) { throw 'High-severity advisories remain' }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm -f .github/workflows/audit-fix.yml
+          git add package.json package-lock.json
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { throw 'No dependency changes were generated' }
+          git commit -m 'fix(deps): resolve npm security advisories and refresh lockfile'
+          if ($LASTEXITCODE -ne 0) { throw 'Commit failed' }
+          git push origin HEAD:refs/heads/fix/security-dependency-refresh-20261024
+          if ($LASTEXITCODE -ne 0) { throw 'Push failed' }
