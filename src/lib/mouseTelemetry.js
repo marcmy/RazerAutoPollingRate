@@ -51,7 +51,7 @@ function formatMouseTelemetry(status) {
   const parts = [];
   if (status.connection === 'wired') parts.push('Wired');
   if (status.connection === 'wireless') parts.push('Wireless');
-  if (Number.isInteger(status.batteryPercent)) parts.push(`${status.batteryPercent}% battery`);
+  if (Number.isInteger(status.batteryPercent)) parts.push(`${status.batteryPercent}% battery${status.queriesPaused ? ' (cached while idle)' : ''}`);
   if (status.charging === true) parts.push('Charging');
   if (status.charging === true && !Number.isInteger(status.batteryPercent)) parts.push('Battery percentage unavailable');
   if (status.charging === false && status.connection === 'wired') parts.push('Not charging');

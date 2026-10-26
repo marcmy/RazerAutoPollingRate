@@ -49,7 +49,11 @@ Right-click or click the tray icon to access:
 
 The tray tooltip shows the current rate, target rate, detection mode, and matched rule/process.
 
-For a supported CrazyLight, the tray icon shows a larger rate above a green battery graphic (red at 20% or lower when discharging). Hover over the tray icon or the detected mouse in Settings to see the percentage. The estimate uses Pulsar's voltage calibration and gradual changes, with history saved per mouse across cable changes and restarts. Battery is read once a minute using the existing HID helper. Starting while charging without a recent baseline shows a striped battery with Charging until a percentage can be established; unavailable readings leave the regular rate icon in place. Battery reporting is currently supported for the CrazyLight only.
+For a supported CrazyLight, the tray icon shows a larger rate above a green battery graphic (red at 20% or lower when discharging). Hover over the tray icon or the detected mouse in Settings to see the percentage. The estimate uses Pulsar's voltage calibration and gradual changes, with history saved per mouse across cable changes and restarts. Battery is normally read once a minute using the existing HID helper. Starting while charging without a recent baseline shows a striped battery with Charging until a percentage can be established; unavailable readings leave the regular rate icon in place. Battery reporting is currently supported for the CrazyLight only.
+
+On Windows, the validated wireless CrazyLight (`3710:5406`) stops configuration and battery queries after ten seconds without real mouse input, once the requested rate and Turbo state have been verified. This gives its firmware an uninterrupted opportunity to enter sleep using its existing Auto Sleep setting. The tray shows the last verified rate, and battery hover details say **cached while idle**. RAPR does not change the mouse's sleep timer or claim to measure its actual sleep state.
+
+Real movement, buttons or scrolling resume checks immediately. Changes to the requested game/desktop rate or Turbo setting, receiver reconnects and cable changes also trigger fresh verification; battery data is refreshed after resuming. If passive input monitoring is unavailable or settings verification fails, normal checking continues. Razer, wired CrazyLight and unknown Pulsar device handling retain their existing behavior.
 
 ## Settings
 

@@ -36,6 +36,7 @@ const {
 } = require('./lib/githubReleaseClient');
 const { supportsTurboMode, applyTurboMode } = require('./lib/mouseBackends/turboAutomation');
 const { createPreferredMouseBackend } = require('./lib/mouseBackends/runtime');
+const { createMouseIdlePolicy } = require('./lib/mouseIdle');
 const { createMouseTelemetryReader, formatMouseTelemetry } = require('./lib/mouseTelemetry');
 const { createPollingBatteryIconFactory, getPollingRateFromIconPath } = require('./lib/trayIcons');
 const {
@@ -97,6 +98,7 @@ const appPath = app.getAppPath();
 let legacyStore;
 const assetsFolder = 'src/assets/';
 const checkGuard = createCheckGuard();
+const mouseIdlePolicy = createMouseIdlePolicy();
 const readMouseTelemetry = createMouseTelemetryReader({
   loadBatteryHistory: () => legacyStore.get('mouseBatteryHistory', {}),
   saveBatteryHistory: (history) => legacyStore.set('mouseBatteryHistory', history),
@@ -162,6 +164,7 @@ let runtimeStatus = {
   batteryPercent: null,
   charging: null,
   batteryError: null,
+  queriesPaused: false,
   turboModeAmbiguous: false,
   error: null,
 };
@@ -1438,6 +1441,7 @@ async function quit() {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
+  mouseIdlePolicy.reset();
   if (turboAutomationUsed) {
     detectionEnabled = false;
     // The polling loop has stopped, so cleanup cannot race a game transition.
@@ -1764,6 +1768,7 @@ function updateRuntimeSelection(selected, foregroundProcess, requestedTarget) {
 
 async function checkPollingRate(firstRun) {
   let backend;
+  let idleDecision;
 
   try {
     const {
@@ -1775,6 +1780,7 @@ async function checkPollingRate(firstRun) {
     applySettings(settings);
     syncGameLibraries(settings, gameFolders);
     const activeEntries = entries.filter((entry) => !isRuleHidden(entry, gameMetadata));
+    runtimeStatus.queriesPaused = false;
 
     let runningProcesses = null;
     let runningProcessesError = null;
@@ -1850,6 +1856,7 @@ async function checkPollingRate(firstRun) {
       readMouseTelemetry.reset();
     }
     if (!detectionEnabled && !manageTurbo) {
+      mouseIdlePolicy.reset();
       runtimeStatus.currentRate = null;
       runtimeStatus.backend = null;
       runtimeStatus.deviceName = null;
@@ -1873,6 +1880,41 @@ async function checkPollingRate(firstRun) {
     });
     backend = backendSelection.backend;
     if (!detectionEnabled && backend.id !== 'pulsar-x2-crazylight') return;
+    const activity = backendSelection.activityTracker;
+    const turboTarget = detectionEnabled && selected.turboModeAmbiguous !== true
+      && selected.matchedRule?.turboMode === true;
+    idleDecision = mouseIdlePolicy.decide({
+      mouse: backendSelection.selectedMouse,
+      connectionToken: backendSelection.connectionToken
+        ? `${backendSelection.connectionToken}:${activity?.getConnectionGeneration() ?? 0}` : null,
+      lastInput: activity?.getLastActivity(backendSelection.selectedMouse) || 0,
+      monitorReady: activity?.isMonitoringReady() === true,
+      targetRate: requestedTarget,
+      turboTarget,
+      enabled: detectionEnabled,
+    });
+    if (idleDecision.pause) {
+      runtimeStatus.queriesPaused = true;
+      const cachedRate = runtimeStatus.currentRate;
+      const active = Boolean(selected.matchedProcess && cachedRate === requestedTarget);
+      if (idleDecision.enteredIdle) {
+        await closeAllWindowsHidOutputBridges();
+        recordDiagnosticEvent('mouse_queries_paused', { idleAgeMs: idleDecision.idleAgeMs, lastVerifiedRate: cachedRate });
+      }
+      const idleKey = `idle:${runtimeStatus.connection}:${runtimeStatus.batteryPercent}:${runtimeStatus.charging}`;
+      if (idleDecision.enteredIdle || setRate[1] !== active || setRate[2] !== idleKey) {
+        setTrayStatus({
+          icon: getPollingRateIcon(cachedRate || lowerRate, active),
+          tooltip: `Mouse idle; configuration checks paused${Number.isInteger(cachedRate) ? `; last verified ${cachedRate} Hz` : ''}`,
+        });
+        setRate = [cachedRate, active, idleKey];
+      }
+      return;
+    }
+    if (idleDecision.resumed) {
+      readMouseTelemetry.reset();
+      recordDiagnosticEvent('mouse_queries_resumed', { requestedTarget });
+    }
     await backend.discover();
     await backend.open();
 
@@ -1903,7 +1945,10 @@ async function checkPollingRate(firstRun) {
         recordDiagnosticEvent('turbo_mode_error', { error: error.message });
       }
     }
-    if (!detectionEnabled) return;
+    if (!detectionEnabled) {
+      if (runtimeStatus.turboMode === false) mouseIdlePolicy.markVerified(idleDecision.signature);
+      return;
+    }
     let pollingRate = await backend.getPollingRate();
     // Read-only wired status still shows the reported rate and battery;
     // wireless rate/Turbo writes retain the hardware-validated behavior.
@@ -1973,11 +2018,14 @@ async function checkPollingRate(firstRun) {
     }
 
     Object.assign(runtimeStatus, await readMouseTelemetry(backend));
+    if (pollingRate === targetRate && (!manageTurbo || runtimeStatus.turboMode === turboTarget)) {
+      mouseIdlePolicy.markVerified(idleDecision.signature);
+    }
     if (!runtimeStatus.deviceName) {
       runtimeStatus.batteryPercent = null;
       runtimeStatus.charging = null;
     }
-    const telemetryKey = `${runtimeStatus.connection}:${runtimeStatus.batteryPercent}:${runtimeStatus.charging}:${runtimeStatus.turboModeAmbiguous}`;
+    const telemetryKey = `${runtimeStatus.connection}:${runtimeStatus.batteryPercent}:${runtimeStatus.charging}:${runtimeStatus.turboModeAmbiguous}:${runtimeStatus.queriesPaused}`;
     const isActive = Boolean(!statusOnly && selected.matchedProcess && pollingRate === targetRate);
     if (setRate[0] !== pollingRate || setRate[1] !== isActive || setRate[2] !== telemetryKey) {
       if (pollingRate !== targetRate) {
@@ -2000,6 +2048,8 @@ async function checkPollingRate(firstRun) {
     lastPollingError = null;
     runtimeStatus.error = null;
   } catch (error) {
+    mouseIdlePolicy.reset();
+    runtimeStatus.queriesPaused = false;
     const errorMessage = error && error.message ? error.message : String(error);
     setRate = [0, false];
     runtimeStatus.error = errorMessage;

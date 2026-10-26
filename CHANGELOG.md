@@ -14,6 +14,7 @@
 
 ### Fixed
 
+- Fixed repeated wireless CrazyLight configuration reads interfering with entry into idle. After ten seconds without real mouse input and successful rate/Turbo verification, RAPR pauses configuration and battery queries and closes the HID helper. Input, requested settings changes and receiver reconnects resume checks; idle battery readings are labelled as cached. Razer and wired-device behavior is unchanged.
 - Fixed protected games such as Apex Legends being unable to distinguish Steam and EA installations when Windows hides the usual process path. A limited-access Windows lookup now resolves the exact installation, applies its polling rate and Turbo setting, and highlights only its game card. Cards now distinguish focused games from inactive or unidentified copies.
 - Fixed differing Turbo settings on same-name game copies blocking their shared polling rate. If both path lookups fail, the agreed polling rate still applies and conflicting Turbo stays off with an explanation in the tray and Settings hover details.
 - Fixed CrazyLight battery estimates jumping when the charging cable is connected. Estimates now use Pulsar's voltage calibration and gradual changes, with battery history saved for the same mouse across wired/wireless connections and app restarts instead of directly displaying the coarse firmware percentage.
