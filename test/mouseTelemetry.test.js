@@ -49,6 +49,13 @@ test('a wire alone never implies charging and a real empty battery remains visib
   assert.equal(formatMouseTelemetry({ connection: 'wired', batteryPercent: 95, charging: true }), 'Wired · 95% battery · Charging');
 });
 
+test('idle cached battery readings retain their value and are labelled as cached in the tray tooltip', () => {
+  assert.equal(formatMouseTelemetry({ connection: 'wireless', batteryPercent: 0, charging: false, queriesPaused: true }),
+    'Wireless · 0% battery (cached while idle)');
+  assert.equal(formatMouseTelemetry({ connection: 'wireless', batteryPercent: 75, queriesPaused: false }),
+    'Wireless · 75% battery');
+});
+
 test('telemetry retains one baseline across cable, receiver, failures and app restart', async () => {
   let timestamp = 1000;
   let saved = {};

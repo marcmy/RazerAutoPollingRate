@@ -73,15 +73,20 @@ function createWindowsRawMouseMonitor(options = {}) {
       onDiagnostic('raw_mouse_monitor_ready', {});
       return;
     }
+    if (text === 'DEVICE_CHANGE') {
+      onDiagnostic('raw_mouse_device_change', {});
+      return;
+    }
 
-    if (!text.startsWith('MOUSE\t')) return;
+    const heartbeat = text.startsWith('INPUT\t');
+    if (!heartbeat && !text.startsWith('MOUSE\t')) return;
     const parsed = parseRawMouseDevicePath(text.slice(6));
     if (!parsed) {
       onDiagnostic('raw_mouse_unknown_device_path', { devicePath: text.slice(6) });
       return;
     }
 
-    onActivity(parsed);
+    onActivity(heartbeat ? { ...parsed, heartbeat: true } : parsed);
   }
 
   function start() {

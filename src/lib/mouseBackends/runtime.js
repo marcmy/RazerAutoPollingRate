@@ -120,11 +120,14 @@ async function createPreferredMouseBackend(options = {}) {
     ? activityTracker.choosePreferredMouse(discovery, fallbackMouse)
     : fallbackMouse;
   const path = selectedMouse ? selectedMouse.backend : null;
+  const connectionToken = mouseConnectionToken(discovery, selectedMouse);
 
   if (path === 'razer') {
     return {
       path,
       selectedMouse,
+      activityTracker,
+      connectionToken,
       discovery,
       backend: createPresentationAwareBackend(makeRazerBackend({
         log,
@@ -144,6 +147,8 @@ async function createPreferredMouseBackend(options = {}) {
     return {
       path,
       selectedMouse,
+      activityTracker,
+      connectionToken,
       discovery,
       backend: createPresentationAwareBackend(makePulsarBackend({
         log,
@@ -160,8 +165,23 @@ async function createPreferredMouseBackend(options = {}) {
   throw new Error('No supported Razer or Pulsar mouse found');
 }
 
+function mouseConnectionToken(discovery, mouse) {
+  if (!mouse) return null;
+  const entries = mouse.backend === 'razer' ? discovery.supportedRazer : discovery.knownCrazyLight;
+  const matches = (entries || []).filter(({ identity, device }) =>
+    identity.vendorId === mouse.vendorId && identity.productId === mouse.productId
+    && (!mouse.serialNumber || !device?.serialNumber || mouse.serialNumber === device.serialNumber));
+  if (matches.length === 0) return null;
+  // Presence comes from descriptor-only enumeration. The activity tracker
+  // supplies a separate passive generation for rapid unplug/replug events.
+  return JSON.stringify(matches.map(({ identity }) => [
+    identity.vendorId, identity.productId,
+  ]).sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right))));
+}
+
 module.exports = {
   createPreferredMouseBackend,
   createPresentationAwareBackend,
   fallbackMouseFromDiscovery,
+  mouseConnectionToken,
 };

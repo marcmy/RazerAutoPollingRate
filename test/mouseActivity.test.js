@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('events');
 
 const { dongles } = require('../src/lib/devices');
+const { createCheckGuard } = require('../src/lib/checkGuard');
 const {
   backendForHidMouse,
   createMouseActivityTracker,
@@ -273,4 +274,41 @@ test('real Raw Input clears a sleeping/off presentation latch for that mouse', (
   raw.emit(0x3710, 0x5406, 'pulsar');
   assert.equal(tracker.isPresentationSuppressed(pulsar), false);
   tracker.close();
+});
+
+test('input heartbeats keep idle time current without triggering checks or stealing selection', async () => {
+  let callbacks;
+  let time = 1000;
+  let checks = 0;
+  const guard = createCheckGuard();
+  await guard.run(() => { checks++; });
+  const tracker = createMouseActivityTracker({
+    platform: 'win32', now: () => time,
+    rawMouseMonitorFactory: (options) => { callbacks = options; return { close() {} }; },
+  });
+  const fallback = { backend: 'pulsar', vendorId: 0x3710, productId: 0x5406, serialNumber: null };
+  tracker.choosePreferredMouse(discovery(rawUsb(0x3710, 0x5406)), fallback);
+  assert.equal(tracker.isMonitoringReady(), false);
+  callbacks.onDiagnostic('raw_mouse_monitor_ready', {});
+  callbacks.onActivity({ vendorId: 0x3710, productId: 0x5406 });
+  await new Promise(setImmediate);
+  const before = checks;
+  time = 15000;
+  callbacks.onActivity({ vendorId: 0x3710, productId: 0x5406, heartbeat: true });
+  callbacks.onActivity({ vendorId: 0x1532, productId: 0x00e5, heartbeat: true });
+  await new Promise(setImmediate);
+  assert.equal(checks, before);
+  assert.equal(tracker.getLastActivity(fallback), time);
+  assert.equal(tracker.getSelectedMouse().productId, 0x5406);
+  const generation = tracker.getConnectionGeneration();
+  callbacks.onDiagnostic('raw_mouse_device_change', {});
+  await new Promise(setImmediate);
+  assert.equal(tracker.getConnectionGeneration(), generation + 1);
+  assert.equal(checks, before + 1);
+  callbacks.onDiagnostic('raw_mouse_monitor_exit', {});
+  assert.equal(tracker.isMonitoringReady(), false);
+  callbacks.onDiagnostic('raw_mouse_monitor_ready', {});
+  assert.equal(tracker.getConnectionGeneration(), generation + 2);
+  tracker.close();
+  assert.equal(tracker.isMonitoringReady(), false);
 });

@@ -2,10 +2,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { EventEmitter } = require('node:events');
+const { PassThrough } = require('node:stream');
 
 const {
   getDefaultScriptPath,
   parseRawMouseDevicePath,
+  createWindowsRawMouseMonitor,
 } = require('../src/lib/mouseBackends/windowsRawMouseActivity');
 
 const { getDefaultPowerShellPath } = require('../src/lib/mouseBackends/windowsHidCaps');
@@ -49,4 +52,27 @@ test('Windows Raw Input PowerShell helper compiles on Windows', { skip: process.
   });
 
   assert.match(output, /COMPILED/);
+});
+
+test('passive helper messages distinguish input heartbeats from device changes and real resume input', async (t) => {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.kill = () => {};
+  const activity = [];
+  const diagnostic = [];
+  const monitor = createWindowsRawMouseMonitor({
+    spawn: () => child,
+    onActivity: (input) => activity.push(input),
+    onDiagnostic: (event) => diagnostic.push(event),
+  });
+  t.after(() => monitor.close());
+  const device = '\\\\?\\HID#VID_3710&PID_5406&MI_00#test';
+  child.stdout.write(`READY\nMOUSE\t${device}\nINPUT\t${device}\nDEVICE_CHANGE\n`);
+  await new Promise(setImmediate);
+  assert.deepEqual(diagnostic, ['raw_mouse_monitor_ready', 'raw_mouse_device_change']);
+  assert.equal(activity.length, 2);
+  assert.equal(activity[0].heartbeat, undefined);
+  assert.equal(activity[1].heartbeat, true);
+  assert.equal(activity[1].productId, 0x5406);
 });

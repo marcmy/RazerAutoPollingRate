@@ -4,7 +4,17 @@ const assert = require('node:assert/strict');
 const {
   createPreferredMouseBackend,
   createPresentationAwareBackend,
+  mouseConnectionToken,
 } = require('../src/lib/mouseBackends/runtime');
+
+test('idle connection tokens use enumeration presence without opening native devices', () => {
+  const mouse = { backend: 'pulsar', vendorId: 0x3710, productId: 0x5406 };
+  const device = { get busNumber() { throw new Error('native accessor'); }, get deviceAddress() { throw new Error('native accessor'); } };
+  const identity = { vendorId: 0x3710, productId: 0x5406 };
+  assert.ok(mouseConnectionToken({ knownCrazyLight: [{ device, identity }] }, mouse));
+  assert.equal(mouseConnectionToken({ knownCrazyLight: [] }, mouse), null);
+  assert.equal(mouseConnectionToken({ knownCrazyLight: [{ device, identity }] }, { ...mouse, productId: 0x3524 }), null);
+});
 
 function rawUsb(vendorId, productId, serialNumber = null) {
   return {

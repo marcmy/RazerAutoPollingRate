@@ -14,9 +14,11 @@ using System.Windows.Forms;
 public sealed class RaprRawMouseWindow : NativeWindow, IDisposable
 {
     private const int WM_INPUT = 0x00FF;
+    private const int WM_INPUT_DEVICE_CHANGE = 0x00FE;
     private const uint RID_INPUT = 0x10000003;
     private const uint RIDI_DEVICENAME = 0x20000007;
     private const uint RIDEV_INPUTSINK = 0x00000100;
+    private const uint RIDEV_DEVNOTIFY = 0x00002000;
     private const uint RIM_TYPEMOUSE = 0;
 
     // A single isolated one-count motion packet can be sensor/desk noise.
@@ -90,6 +92,7 @@ public sealed class RaprRawMouseWindow : NativeWindow, IDisposable
 
     private string activeDeviceName;
     private DateTime activeDeviceLastInputUtc = DateTime.MinValue;
+    private DateTime lastHeartbeatUtc = DateTime.MinValue;
     private string candidateDeviceName;
     private DateTime candidateStartedUtc = DateTime.MinValue;
     private long candidateMotion;
@@ -108,7 +111,7 @@ public sealed class RaprRawMouseWindow : NativeWindow, IDisposable
         RAWINPUTDEVICE[] devices = new RAWINPUTDEVICE[1];
         devices[0].usUsagePage = 0x01;
         devices[0].usUsage = 0x02;
-        devices[0].dwFlags = RIDEV_INPUTSINK;
+        devices[0].dwFlags = RIDEV_INPUTSINK | RIDEV_DEVNOTIFY;
         devices[0].hwndTarget = Handle;
 
         if (!RegisterRawInputDevices(
@@ -125,6 +128,13 @@ public sealed class RaprRawMouseWindow : NativeWindow, IDisposable
         if (message.Msg == WM_INPUT)
         {
             ProcessRawInput(message.LParam);
+        }
+        else if (message.Msg == WM_INPUT_DEVICE_CHANGE)
+        {
+            Console.WriteLine("DEVICE_CHANGE");
+            Console.Out.Flush();
+            message.Result = IntPtr.Zero;
+            return;
         }
         base.WndProc(ref message);
     }
@@ -188,6 +198,13 @@ public sealed class RaprRawMouseWindow : NativeWindow, IDisposable
                 if (gap >= ResumeGap)
                 {
                     Emit(deviceName);
+                    lastHeartbeatUtc = now;
+                }
+                else if (now - lastHeartbeatUtc >= TimeSpan.FromSeconds(1))
+                {
+                    Console.WriteLine("INPUT\t" + deviceName);
+                    Console.Out.Flush();
+                    lastHeartbeatUtc = now;
                 }
                 return;
             }
@@ -226,6 +243,7 @@ public sealed class RaprRawMouseWindow : NativeWindow, IDisposable
     {
         activeDeviceName = deviceName;
         activeDeviceLastInputUtc = now;
+        lastHeartbeatUtc = now;
         ResetCandidate();
         Emit(deviceName);
     }

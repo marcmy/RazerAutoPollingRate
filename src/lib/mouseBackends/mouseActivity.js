@@ -123,6 +123,8 @@ function createMouseActivityTracker(options = {}) {
   const presentationSuppressed = new Set();
   const lastReports = new Map();
   let rawMouseMonitor = null;
+  let rawInputReady = false;
+  let connectionGeneration = 0;
   let selectedMouse = null;
   let lastRefresh = Number.NEGATIVE_INFINITY;
   let onActiveMouseChanged = typeof options.onActiveMouseChanged === 'function'
@@ -183,7 +185,18 @@ function createMouseActivityTracker(options = {}) {
 
     rawMouseMonitor = rawMouseMonitorFactory({
       log,
-      onDiagnostic,
+      onDiagnostic: (event, details) => {
+        if (event === 'raw_mouse_monitor_ready') {
+          rawInputReady = true;
+          connectionGeneration++;
+        }
+        if (event === 'raw_mouse_device_change') {
+          connectionGeneration++;
+          if (selectedMouse?.backend === 'pulsar') requestLatestCheck();
+        }
+        if (event === 'raw_mouse_monitor_exit' || event === 'raw_mouse_monitor_error') rawInputReady = false;
+        onDiagnostic(event, details);
+      },
       onActivity: (activity) => {
         const mouse = knownMouseForIdentity(activity.vendorId, activity.productId, {
           devicePath: activity.devicePath,
@@ -197,7 +210,13 @@ function createMouseActivityTracker(options = {}) {
           });
           return;
         }
-        recordActivity(mouse);
+        if (activity.heartbeat) {
+          // Continuous real input updates idle time without scheduling USB work
+          // or changing the selected mouse. The normal MOUSE event owns handoffs.
+          if (sameKnownMouse(mouse, selectedMouse)) lastActivity.set(mouseKey(selectedMouse), now());
+        } else {
+          recordActivity(mouse);
+        }
       },
     });
   }
@@ -370,6 +389,7 @@ function createMouseActivityTracker(options = {}) {
   }
 
   function close() {
+    rawInputReady = false;
     for (const entry of handles.values()) closeEntry(entry);
     handles.clear();
     lastReports.clear();
@@ -387,6 +407,8 @@ function createMouseActivityTracker(options = {}) {
     getLastActivity(mouse) {
       return lastActivity.get(typeof mouse === 'string' ? mouse : mouseKey(mouse)) || 0;
     },
+    isMonitoringReady() { return rawInputReady; },
+    getConnectionGeneration() { return connectionGeneration; },
     getSelectedMouse() {
       return selectedMouse;
     },

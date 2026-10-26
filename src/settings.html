@@ -1571,7 +1571,7 @@
         : (runtime?.enabled === false ? 'Mouse detection paused' : 'No supported mouse connected');
       if (runtime?.backend === 'pulsar-x2-crazylight' && runtime.turboError) byId('detected-mouse').textContent += ' · Turbo unavailable';
       const batteryDetails = Number.isInteger(runtime?.batteryPercent)
-        ? `${runtime.batteryPercent}% battery`
+        ? `${runtime.batteryPercent}% battery${runtime.queriesPaused ? ' (cached while idle)' : ''}`
         : (runtime?.charging === true ? 'Battery percentage unavailable' : '');
       const turboDetails = runtime?.turboSupported && runtime.turboModeAmbiguous
         ? 'Turbo off: matching game copies have different Turbo settings' : '';
