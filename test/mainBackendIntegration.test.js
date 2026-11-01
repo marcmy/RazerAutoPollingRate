@@ -84,5 +84,8 @@ test('error.log rotates at its size cap instead of growing without bound', () =>
 test('overlapping polling checks are diagnostic events, not error.log writes', () => {
   const main = source(mainPath);
   const guarded = main.slice(main.indexOf('async function guardedCheckPollingRate'));
-  assert.doesNotMatch(guarded.slice(0, guarded.indexOf('\n}\n')), /\blog\(/);
+  // CI checks out with CRLF endings; find the function's closing brace either way.
+  const body = guarded.slice(0, guarded.search(/\r?\n\}\r?\n/));
+  assert.match(body, /recordDiagnosticEvent\('polling_check_skipped'/);
+  assert.doesNotMatch(body, /\blog\(/);
 });
