@@ -170,3 +170,20 @@ test('disabling detection verifies Turbo off once, then can pause without furthe
   assert.equal(context.runtimeStatus.queriesPaused, true);
   assert.doesNotMatch(state.tooltips.at(-1), /last verified/);
 });
+
+test('an unsupported 8000 Hz request logs its fallback once, not on every check', async () => {
+  const { state, context, check } = harness();
+  const logs = [];
+  context.log = (message) => logs.push(message);
+  context.lastRateWarning = null;
+  state.ready = false; // keep checking each cycle, as during active play
+  state.selected = { targetRate: 8000, matchedProcess: 'game.exe', matchedRule: {}, source: 'rule', game: null };
+  context.createPreferredMouseBackend = ((original) => async () => {
+    const selection = await original();
+    selection.backend.supportedRates = [125, 250, 500, 1000, 2000, 4000];
+    return selection;
+  })(context.createPreferredMouseBackend);
+  for (let index = 0; index < 50; index += 1) await check();
+  assert.equal(state.rate, 4000);
+  assert.deepEqual(logs, ['8000 Hz is not supported by this dongle; falling back to 4000 Hz.']);
+});

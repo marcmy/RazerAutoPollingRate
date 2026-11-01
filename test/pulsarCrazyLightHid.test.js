@@ -244,3 +244,37 @@ test('Windows HID transport reuses validated collection caps across backend inst
   assert.equal(inspectionsAfterFirstDiscovery, 2);
   assert.equal(inspections, inspectionsAfterFirstDiscovery);
 });
+
+test('HID collection selection is logged once per path, not on every polling check', async () => {
+  const hidApi = createFakeHidApi();
+  const discoveryCache = new Map();
+  const logs = [];
+  const transport = () => createCrazyLightHidTransport({
+    hidApi,
+    inspectHidCaps: createCapsInspector(),
+    discoveryCache,
+    log: (message, error) => logs.push({ message, error }),
+  });
+
+  // Repeated checks reuse the cache; a cleared cache re-discovers the same path.
+  for (let check = 0; check < 1000; check += 1) await transport().discover();
+  discoveryCache.clear();
+  await transport().discover();
+  assert.equal(logs.length, 1);
+  assert.match(logs[0].message, /CrazyLight HID selected consumer-collection/);
+  assert.notEqual(logs[0].error, true, 'informational selection must not be logged as an error');
+
+  // A different collection after replug or re-enumeration is still recorded.
+  discoveryCache.clear();
+  await createCrazyLightHidTransport({
+    hidApi,
+    inspectHidCaps: createCapsInspector({
+      'consumer-collection': { usagePage: 0x0c, usage: 0x01, inputReportByteLength: 8, outputReportByteLength: 0, featureReportByteLength: 0 },
+      'vendor-collection': { usagePage: 0xff05, usage: 0x00, inputReportByteLength: 17, outputReportByteLength: 17, featureReportByteLength: 0 },
+    }),
+    discoveryCache,
+    log: (message, error) => logs.push({ message, error }),
+  }).discover();
+  assert.equal(logs.length, 2);
+  assert.match(logs[1].message, /vendor-collection/);
+});

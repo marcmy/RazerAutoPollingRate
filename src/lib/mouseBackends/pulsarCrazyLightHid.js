@@ -12,6 +12,10 @@ const CRAZYLIGHT_INTERFACE = 0x01;
 const REPORT_SIZE = 17;
 const READ_TIMEOUT_MS = 2000;
 const sharedDiscoveryCache = new Map();
+// Last collection path reported per cache and device key. Discovery repeats on
+// every polling check (and after cache-clearing failures), so only a changed
+// selection belongs in the persistent log.
+const loggedSelections = new WeakMap();
 
 function loadNodeHid() {
   // Lazy-load so hardware-independent tests can inject a fake HID API.
@@ -105,13 +109,16 @@ function createCrazyLightHidTransport(options = {}) {
     }
   }
 
-  function logSelectedCollection(cached = false) {
+  function logSelectedCollection() {
+    if (!loggedSelections.has(discoveryCache)) loggedSelections.set(discoveryCache, new Map());
+    const logged = loggedSelections.get(discoveryCache);
+    if (logged.get(discoveryCacheKey) === selected.path) return;
+    logged.set(discoveryCacheKey, selected.path);
     log(
       `CrazyLight HID selected ${selected.path} `
       + `(UsagePage=${hex16(selectedCaps.usagePage)}, Usage=${hex16(selectedCaps.usage)}, `
       + `Input=${selectedCaps.inputReportByteLength}, Output=${selectedCaps.outputReportByteLength}, `
-      + `Feature=${selectedCaps.featureReportByteLength}${cached ? ', cached' : ''})`,
-      true,
+      + `Feature=${selectedCaps.featureReportByteLength})`,
     );
   }
 
@@ -146,7 +153,6 @@ function createCrazyLightHidTransport(options = {}) {
       if (currentDevice) {
         selected = currentDevice;
         selectedCaps = cached.caps;
-        logSelectedCollection(true);
         return normalizeInfo(selected, selectedCaps);
       }
       // Unplug/replug or USB topology change: discard the stale path and do a
@@ -187,7 +193,7 @@ function createCrazyLightHidTransport(options = {}) {
       path: selected.path,
       caps: selectedCaps,
     });
-    logSelectedCollection(false);
+    logSelectedCollection();
     return normalizeInfo(selected, selectedCaps);
   }
 
