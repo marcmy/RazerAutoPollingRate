@@ -44,6 +44,7 @@ function createMouseTelemetryReader({ now = Date.now, refreshMs = BATTERY_REFRES
     return cached;
   }
   readMouseTelemetry.reset = () => { cachedKey = null; checkedAt = -Infinity; };
+  readMouseTelemetry.isDue = () => now() - checkedAt >= refreshMs;
   return readMouseTelemetry;
 }
 
