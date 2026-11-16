@@ -58,3 +58,34 @@ test('main closes persistent Windows HID bridges before quitting', () => {
   assert.match(main, /closeAllWindowsHidOutputBridges/);
   assert.match(main, /async function quit\(\)[\s\S]*await closeAllWindowsHidOutputBridges\(\)[\s\S]*app\.quit\(\)/);
 });
+
+test('error.log rotates at its size cap instead of growing without bound', () => {
+  const vm = require('node:vm');
+  const os = require('node:os');
+  const main = source(mainPath);
+  const start = main.indexOf('const ERROR_LOG_MAX_BYTES');
+  const end = main.indexOf('function getConfigDirectory');
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'rapr-log-'));
+  try {
+    const context = vm.createContext({ fs, path, app: { getPath: () => userData } });
+    vm.runInContext(`${main.slice(start, end)}\nthis.log = log; this.max = ERROR_LOG_MAX_BYTES;`, context);
+    const logPath = path.join(userData, 'error.log');
+    fs.writeFileSync(logPath, 'x'.repeat(context.max));
+    context.log('after cap', true);
+    assert.match(fs.readFileSync(logPath, 'utf8'), /^\[ .+ \] ERROR: after cap\n$/);
+    assert.equal(fs.statSync(`${logPath}.old`).size, context.max);
+    context.log('below cap');
+    assert.equal(fs.readFileSync(logPath, 'utf8').split('\n').filter(Boolean).length, 2);
+  } finally {
+    fs.rmSync(userData, { recursive: true, force: true });
+  }
+});
+
+test('overlapping polling checks are diagnostic events, not error.log writes', () => {
+  const main = source(mainPath);
+  const guarded = main.slice(main.indexOf('async function guardedCheckPollingRate'));
+  // CI checks out with CRLF endings; find the function's closing brace either way.
+  const body = guarded.slice(0, guarded.search(/\r?\n\}\r?\n/));
+  assert.match(body, /recordDiagnosticEvent\('polling_check_skipped'/);
+  assert.doesNotMatch(body, /\blog\(/);
+});

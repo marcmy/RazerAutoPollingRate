@@ -131,6 +131,7 @@ let stop = false;
 let settingsWindow = null;
 let diagnosticLogger = null;
 let lastPollingError = null;
+let lastRateWarning = null;
 let gameLibraries = [];
 let scannedGames = [];
 let libraryConfigurationKey = '';
@@ -170,9 +171,18 @@ let runtimeStatus = {
   error: null,
 };
 
+const ERROR_LOG_MAX_BYTES = 1024 * 1024;
+
 function log(out, error = false) {
   const date = new Date().toLocaleTimeString('en-US', { hour12: false, hour: 'numeric', minute: 'numeric' });
-  fs.appendFileSync(path.join(app.getPath('userData'), 'error.log'), `[ ${date} ] ${error ? 'ERROR: ' : 'LOG: '}${out}\n`);
+  const logPath = path.join(app.getPath('userData'), 'error.log');
+  try {
+    // Keep one previous file so a repeating message can never fill the disk.
+    if (fs.statSync(logPath).size >= ERROR_LOG_MAX_BYTES) fs.renameSync(logPath, `${logPath}.old`);
+  } catch {
+    // Missing log, or rotation failed: still attempt the append below.
+  }
+  fs.appendFileSync(logPath, `[ ${date} ] ${error ? 'ERROR: ' : 'LOG: '}${out}\n`);
 }
 
 function getConfigDirectory() {
@@ -1652,7 +1662,6 @@ async function handlePickWindowShortcut() {
 async function guardedCheckPollingRate(firstRun) {
   const result = await checkGuard.run(() => checkPollingRate(firstRun));
   if (result.skipped) {
-    log('polling check skipped because the previous check is still running');
     recordDiagnosticEvent('polling_check_skipped', {
       reason: 'previous check still running',
     }, { verbose: true });
@@ -1981,9 +1990,12 @@ async function checkPollingRate(firstRun) {
     if (!resolvedTarget.rate) {
       throw new Error(resolvedTarget.warning);
     }
-    if (resolvedTarget.warning) {
+    // A fallback such as 8000 -> 4000 Hz recurs on every check while the game
+    // stays active; record it once per change instead of each polling cycle.
+    if (resolvedTarget.warning && resolvedTarget.warning !== lastRateWarning) {
       log(resolvedTarget.warning, true);
     }
+    lastRateWarning = resolvedTarget.warning;
 
     const targetRate = resolvedTarget.rate;
     runtimeStatus.targetRate = targetRate;
