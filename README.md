@@ -53,6 +53,8 @@ For a supported CrazyLight, the tray icon shows a larger rate above a green batt
 
 On Windows, the validated wireless CrazyLight (`3710:5406`) stops configuration and battery queries after ten seconds without real mouse input, once the requested rate and Turbo state have been verified. This gives its firmware an uninterrupted opportunity to enter sleep using its existing Auto Sleep setting. The tray shows the last verified rate, and battery hover details say **cached while idle**. RAPR does not change the mouse's sleep timer or claim to measure its actual sleep state.
 
+While the mouse is in use, verified CrazyLight settings are not re-read every check: unlike Razer mice, where Synapse can change the rate behind RAPR's back, nothing else rewrites them. Rate and Turbo are read again only when the target rate, Turbo setting, matched game, or receiver connection changes, after a failed check, and on the first check after idle. The only routine traffic while the mouse moves is the once-a-minute battery read.
+
 Real movement, buttons or scrolling resume checks immediately. Changes to the requested game/desktop rate or Turbo setting, receiver reconnects and cable changes also trigger fresh verification; battery data is refreshed after resuming. If passive input monitoring is unavailable or settings verification fails, normal checking continues. Razer, wired CrazyLight and unknown Pulsar device handling retain their existing behavior.
 
 ## Settings

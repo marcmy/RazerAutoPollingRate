@@ -71,10 +71,13 @@ test('Razer, wired and unknown mice, missing receivers and unavailable input mon
 test('failed checks, disconnects and explicit reset cannot reuse previously verified settings', () => {
   const { policy, state, time } = fixture();
   policy.markVerified(policy.decide(state).signature);
-  time(2000);
-  policy.decide(state); // Attempt failed: do not mark it verified.
   time(20000);
+  assert.equal(policy.decide(state).pause, true);
+  time(21000);
+  assert.equal(policy.decide({ ...state, lastInput: 21000 }).resumed, true); // Attempt failed: not marked.
+  time(40000);
   assert.equal(policy.decide(state).pause, false);
+  assert.equal(policy.decide({ ...state, lastInput: 40000 }).skipVerification, false);
   policy.markVerified(policy.decide(state).signature);
   assert.equal(policy.decide(state).pause, true);
   assert.equal(policy.decide({ ...state, connectionToken: null }).resumed, true);
@@ -82,4 +85,33 @@ test('failed checks, disconnects and explicit reset cannot reuse previously veri
   policy.markVerified(policy.decide(state).signature);
   policy.reset();
   assert.equal(policy.decide(state).pause, false);
+});
+
+test('verified wireless CrazyLight settings are trusted while the mouse is in use', () => {
+  const { policy, state, time } = fixture();
+  const first = policy.decide(state);
+  assert.equal(first.skipVerification, false);
+  policy.markVerified(first.signature);
+  for (let value = 2500; value <= 3600000; value += 1500) {
+    time(value);
+    const result = policy.decide({ ...state, lastInput: value - 500 });
+    assert.equal(result.pause, false);
+    assert.equal(result.skipVerification, true);
+  }
+});
+
+test('a changed selection or the first check after idle performs full verification', () => {
+  const { policy, state, time } = fixture();
+  policy.markVerified(policy.decide(state).signature);
+  time(2500);
+  assert.equal(policy.decide({ ...state, lastInput: 2000, selectionKey: 'game.exe' }).skipVerification, false);
+  policy.markVerified(policy.decide({ ...state, lastInput: 2000 }).signature);
+  time(20000);
+  assert.equal(policy.decide(state).pause, true);
+  const resumed = policy.decide({ ...state, lastInput: 20000 });
+  assert.equal(resumed.resumed, true);
+  assert.equal(resumed.skipVerification, false);
+  policy.markVerified(resumed.signature);
+  time(21500);
+  assert.equal(policy.decide({ ...state, lastInput: 21000 }).skipVerification, true);
 });

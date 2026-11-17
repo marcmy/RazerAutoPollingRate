@@ -18,7 +18,7 @@ function harness() {
   const readMouseTelemetry = createMouseTelemetryReader({ now: () => state.time });
   const context = vm.createContext({
     console: { error() {} }, lowerRate: 125, detectionEnabled: true, diagnosticLoggingEnabled: false,
-    turboAutomationUsed: false, settingsWindow: null, lastPollingError: null, setRate: [0, false],
+    turboAutomationUsed: false, verifiedTrayStatus: null, settingsWindow: null, lastPollingError: null, setRate: [0, false],
     runtimeStatus: {}, updateCoordinator: null, gameLibraries: [],
     mouseIdlePolicy: createMouseIdlePolicy({ now: () => state.time }), readMouseTelemetry,
     loadConfig: () => ({ settings: {}, entries: [{ turboMode: true }], gameFolders: [], gameMetadata: [] }),
@@ -169,6 +169,30 @@ test('disabling detection verifies Turbo off once, then can pause without furthe
   assert.equal(state.calls.length, count);
   assert.equal(context.runtimeStatus.queriesPaused, true);
   assert.doesNotMatch(state.tooltips.at(-1), /last verified/);
+});
+
+test('continuous use reads only battery once a minute after a single verified check', async () => {
+  const { state, context, check } = harness();
+  await check();
+  assert.deepEqual(state.calls.filter((call) => ['profile', 'turbo', 'rate'].includes(call)),
+    ['profile', 'turbo', 'profile', 'rate'], 'one Turbo read per full check');
+  const verifiedCalls = state.calls.length;
+  for (let time = 2500; time <= 301000; time += 1500) {
+    state.time = time;
+    state.lastInput = time - 500;
+    await check();
+  }
+  const later = state.calls.slice(verifiedCalls);
+  assert.equal(later.filter((call) => ['profile', 'turbo', 'rate'].includes(call)).length, 0);
+  assert.equal(later.filter((call) => call === 'battery').length, 5);
+  assert.equal(context.runtimeStatus.currentRate, 125);
+  assert.equal(context.runtimeStatus.error, null);
+
+  state.selected = { targetRate: 4000, matchedProcess: 'game.exe', matchedRule: { turboMode: true }, source: 'rule', game: null };
+  await check();
+  assert.equal(state.rate, 4000);
+  assert.equal(state.turbo, true);
+  assert.match(state.tooltips.at(-1), /target 4000 Hz/);
 });
 
 test('an unsupported 8000 Hz request logs its fallback once, not on every check', async () => {

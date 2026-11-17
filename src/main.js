@@ -124,6 +124,7 @@ let verboseDiagnosticLoggingEnabled = false;
 let pollingCheckIntervalMs = DEFAULT_SETTINGS.pollingCheckIntervalMs;
 let detectionEnabled = true;
 let turboAutomationUsed = false;
+let verifiedTrayStatus = null;
 let pickingWindow = false;
 let hasStopped = false;
 let stop = false;
@@ -1901,6 +1902,9 @@ async function checkPollingRate(firstRun) {
       targetRate: requestedTarget,
       turboTarget,
       enabled: detectionEnabled,
+      // Tray active state and tooltip text depend on the selection, not only the target.
+      selectionKey: JSON.stringify([selected.matchedProcess || null, selected.source || null,
+        selected.matchedDetectionMode || null, selected.turboModeAmbiguous === true]),
     });
     if (idleDecision.pause) {
       runtimeStatus.queriesPaused = true;
@@ -1920,10 +1924,23 @@ async function checkPollingRate(firstRun) {
       }
       return;
     }
+    if (idleDecision.skipVerification) {
+      // Rate/Turbo were verified for this exact state and nothing else rewrites
+      // CrazyLight settings, so only the once-a-minute battery read reaches the mouse.
+      if (!readMouseTelemetry.isDue()) return;
+      await backend.discover();
+      await backend.open();
+      const before = `${runtimeStatus.batteryPercent}:${runtimeStatus.charging}`;
+      Object.assign(runtimeStatus, await readMouseTelemetry(backend));
+      if (verifiedTrayStatus && before !== `${runtimeStatus.batteryPercent}:${runtimeStatus.charging}`) {
+        setTrayStatus(verifiedTrayStatus);
+      }
+      return;
+    }
     if (idleDecision.resumed) {
-      readMouseTelemetry.reset();
       recordDiagnosticEvent('mouse_queries_resumed', { requestedTarget });
     }
+    verifiedTrayStatus = null;
     await backend.discover();
     await backend.open();
 
@@ -1941,12 +1958,14 @@ async function checkPollingRate(firstRun) {
     if (supportsTurboMode(backend) && (manageTurbo || (settingsWindow && !settingsWindow.isDestroyed()))) {
       try {
         // A model match alone is insufficient: require a valid device read.
-        runtimeStatus.turboMode = await backend.getTurboMode();
-        runtimeStatus.turboSupported = true;
+        // applyTurboMode performs that read itself, so avoid a duplicate one.
         if (manageTurbo) {
           turboAutomationUsed = true;
           runtimeStatus.turboMode = await applyTurboMode(backend, selected, detectionEnabled);
+        } else {
+          runtimeStatus.turboMode = await backend.getTurboMode();
         }
+        runtimeStatus.turboSupported = true;
       } catch (error) {
         runtimeStatus.turboSupported = false;
         runtimeStatus.turboMode = null;
@@ -2039,6 +2058,12 @@ async function checkPollingRate(firstRun) {
     }
     const telemetryKey = `${runtimeStatus.connection}:${runtimeStatus.batteryPercent}:${runtimeStatus.charging}:${runtimeStatus.turboModeAmbiguous}:${runtimeStatus.queriesPaused}`;
     const isActive = Boolean(!statusOnly && selected.matchedProcess && pollingRate === targetRate);
+    const verifiedStatus = {
+      icon: getPollingRateIcon(pollingRate, isActive),
+      tooltip: statusOnly
+        ? `Current ${pollingRate} Hz; automatic switching unavailable while wired`
+        : `Current ${pollingRate} Hz; target ${targetRate} Hz; ${modeText}; ${matchedText}`,
+    };
     if (setRate[0] !== pollingRate || setRate[1] !== isActive || setRate[2] !== telemetryKey) {
       if (pollingRate !== targetRate) {
         setTrayStatus({
@@ -2047,20 +2072,18 @@ async function checkPollingRate(firstRun) {
         });
         setRate = [0, false];
       } else {
-        setTrayStatus({
-          icon: getPollingRateIcon(pollingRate, isActive),
-          tooltip: statusOnly
-            ? `Current ${pollingRate} Hz; automatic switching unavailable while wired`
-            : `Current ${pollingRate} Hz; target ${targetRate} Hz; ${modeText}; ${matchedText}`,
-        });
+        setTrayStatus(verifiedStatus);
         setRate = [pollingRate, isActive, telemetryKey];
       }
     }
+    // Reused by battery-only refreshes while the verified state is trusted.
+    verifiedTrayStatus = pollingRate === targetRate ? verifiedStatus : null;
 
     lastPollingError = null;
     runtimeStatus.error = null;
   } catch (error) {
     mouseIdlePolicy.reset();
+    verifiedTrayStatus = null;
     runtimeStatus.queriesPaused = false;
     const errorMessage = error && error.message ? error.message : String(error);
     setRate = [0, false];
