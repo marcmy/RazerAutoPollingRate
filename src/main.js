@@ -90,7 +90,7 @@ const {
   buildSquirrelInstallScript,
   isSquirrelInstall,
   quotePowerShellLiteral,
-  validateStagedAppPackage,
+  stageUpdatePackage,
 } = require('./lib/updateInstaller');
 
 const appPath = app.getAppPath();
@@ -543,32 +543,12 @@ async function launchDetachedUpdate(command, updateDirectory) {
 }
 
 async function stageInPlaceUpdatePackage(packagePath, updateDirectory, targetVersion) {
-  const archivePath = path.join(updateDirectory, 'package.zip');
-  const stagingRoot = path.join(updateDirectory, 'stage');
-  fs.copyFileSync(packagePath, archivePath);
-  fs.rmSync(stagingRoot, { recursive: true, force: true });
-  fs.mkdirSync(stagingRoot, { recursive: true });
-
-  const command = [
-    'Expand-Archive',
-    '-LiteralPath',
-    quotePowerShellLiteral(archivePath),
-    '-DestinationPath',
-    quotePowerShellLiteral(stagingRoot),
-    '-Force',
-  ].join(' ');
-  await execFileText('powershell.exe', [
-    '-NoLogo',
-    '-NoProfile',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-Command',
-    command,
-  ]);
-
-  const stagedAppDirectory = path.join(stagingRoot, 'lib', 'net45');
-  validateStagedAppPackage(stagedAppDirectory, targetVersion, path.basename(process.execPath));
-  return stagedAppDirectory;
+  return stageUpdatePackage({
+    packagePath,
+    updateDirectory,
+    expectedVersion: targetVersion,
+    executableName: path.basename(process.execPath),
+  });
 }
 
 function verifyInstallDirectoryWritable(installDirectory) {

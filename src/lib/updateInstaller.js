@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const { execFile } = require('node:child_process');
 
 function quotePowerShellLiteral(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
@@ -25,7 +26,7 @@ function isSquirrelInstall(executablePath, existsSync = fs.existsSync) {
   return Boolean(existsSync(updateExecutable));
 }
 
-function validateStagedAppPackage(stagedAppDirectory, expectedDisplayVersion, executableName) {
+function validateStagedAppPackage(stagedAppDirectory, expectedDisplayVersion, executableName, versionField = 'buildDisplayVersion') {
   if (!stagedAppDirectory || !expectedDisplayVersion || !executableName) {
     throw new Error('Staged app directory, target version, and executable name are required');
   }
@@ -42,8 +43,8 @@ function validateStagedAppPackage(stagedAppDirectory, expectedDisplayVersion, ex
     throw new Error(`Staged update metadata is invalid: ${error.message}`);
   }
 
-  if (String(metadata.buildDisplayVersion || '') !== String(expectedDisplayVersion)) {
-    throw new Error(`Staged update version ${metadata.buildDisplayVersion || 'unknown'} does not match ${expectedDisplayVersion}`);
+  if (String(metadata[versionField] || '') !== String(expectedDisplayVersion)) {
+    throw new Error(`Staged update version ${metadata[versionField] || 'unknown'} does not match ${expectedDisplayVersion}`);
   }
 
   const executablePath = path.join(stagedAppDirectory, executableName);
@@ -52,6 +53,56 @@ function validateStagedAppPackage(stagedAppDirectory, expectedDisplayVersion, ex
   }
 
   return { metadata, executablePath };
+}
+
+// Stage only an already verified package; never modify the installed application here.
+async function stageUpdatePackage({
+  packagePath,
+  updateDirectory,
+  expectedVersion,
+  executableName,
+  versionField = 'buildDisplayVersion',
+  tarExecutable = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe'),
+  execFileImpl = execFile,
+}) {
+  const stagingRoot = path.join(updateDirectory, 'stage');
+  const logPath = path.join(updateDirectory, 'updater-extraction.log');
+  const writeLog = (message) => {
+    try {
+      fs.appendFileSync(logPath, `[${new Date().toISOString()}] ${message}\n`, 'utf8');
+    } catch {
+      // Logging must not mask the original staging error.
+    }
+  };
+
+  try {
+    fs.rmSync(stagingRoot, { recursive: true, force: true });
+    fs.mkdirSync(stagingRoot, { recursive: true });
+    const args = ['-xf', path.resolve(packagePath), '-C', path.resolve(stagingRoot)];
+    writeLog(`Extracting with ${JSON.stringify([tarExecutable, ...args])}`);
+
+    const { error, stdout, stderr } = await new Promise((resolve) => {
+      execFileImpl(tarExecutable, args, {
+        windowsHide: true,
+        timeout: 120_000,
+        maxBuffer: 2 * 1024 * 1024,
+      }, (error, stdout, stderr) => resolve({ error, stdout, stderr }));
+    });
+    writeLog(`Extraction exit code: ${error ? error.code ?? 'unknown' : 0}; signal: ${error?.signal || 'none'}`);
+    if (stdout?.trim()) writeLog(`stdout: ${stdout.trim()}`);
+    if (stderr?.trim()) writeLog(`stderr: ${stderr.trim()}`);
+    if (error) {
+      throw new Error(`Update extraction failed (code ${error.code ?? 'unknown'}): ${(stderr?.trim() || error.message).slice(0, 2000)}`);
+    }
+
+    const stagedAppDirectory = path.join(stagingRoot, 'lib', 'net45');
+    validateStagedAppPackage(stagedAppDirectory, expectedVersion, executableName, versionField);
+    writeLog(`Validated application payload for ${expectedVersion}`);
+    return stagedAppDirectory;
+  } catch (error) {
+    writeLog(`Staging failed: ${error.message}`);
+    throw new Error(`${error.message} (extraction log: ${logPath})`, { cause: error });
+  }
 }
 
 function buildSquirrelInstallScript({
@@ -156,5 +207,6 @@ module.exports = {
   buildSquirrelInstallScript,
   isSquirrelInstall,
   quotePowerShellLiteral,
+  stageUpdatePackage,
   validateStagedAppPackage,
 };
