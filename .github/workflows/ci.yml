@@ -160,6 +160,14 @@ jobs:
       - name: Build Windows installer
         run: npm run make
 
+      - name: Validate real Windows update package
+        shell: pwsh
+        run: |
+          $packages = @(Get-ChildItem -LiteralPath 'out/make' -Recurse -File -Filter '*-full.nupkg')
+          if ($packages.Count -ne 1) { throw "Expected exactly one full update package; found $($packages.Count)" }
+          node scripts/validate-update-package.js $packages[0].FullName
+          if ($LASTEXITCODE -ne 0) { throw 'Update package validation failed' }
+
       - name: Smoke-test USB v3 from packaged Electron
         shell: pwsh
         run: |

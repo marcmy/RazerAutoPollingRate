@@ -54,8 +54,13 @@ test('runtime updater preserves the current install directory outside Squirrel',
   assert.match(main, /selectFullPackageAsset\(release\)/);
   assert.match(main, /buildInPlaceInstallScript/);
   assert.match(main, /path\.dirname\(process\.execPath\)/);
-  assert.match(main, /Expand-Archive/);
-  assert.match(main, /validateStagedAppPackage/);
+  const installer = source(updateInstallerPath);
+  assert.doesNotMatch(main, /Expand-Archive/);
+  assert.match(main, /stageUpdatePackage/);
+  assert.match(installer, /tar\.exe/);
+  assert.match(installer, /validateStagedAppPackage/);
+  assert.match(source(ciPath), /node scripts\/validate-update-package\.js/);
+  assert.match(source(path.join(__dirname, '..', '.github', 'workflows', 'release.yml')), /node scripts\/validate-update-package\.js/);
 });
 test('updater destroys its non-closable progress window before quitting the Electron app', () => {
   const main = source(mainPath);
